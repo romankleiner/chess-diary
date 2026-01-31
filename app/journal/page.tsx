@@ -1,0 +1,360 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+
+interface JournalEntry {
+  id: number;
+  date: string;
+  gameId: string | null;
+  entryType: string;
+  content: string;
+  moveNumber?: number;
+  moveNotation?: string;
+  timestamp: string;
+}
+
+interface Game {
+  id: string;
+  opponent: string;
+  white: string;
+  black: string;
+  url?: string;
+  result: string | null;
+}
+
+export default function JournalPage() {
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [entries, setEntries] = useState<JournalEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [activeGames, setActiveGames] = useState<Game[]>([]);
+  const [currentGameId, setCurrentGameId] = useState<string | null>(null);
+  const [thought, setThought] = useState('');
+  const [moveNumber, setMoveNumber] = useState('');
+  const [moveNotation, setMoveNotation] = useState('');
+  const [entryMode, setEntryMode] = useState<'general' | 'game'>('general');
+
+  useEffect(() => {
+    loadEntries();
+    loadActiveGames();
+  }, [selectedDate]);
+
+  const loadEntries = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/journal?date=${selectedDate}`);
+      const data = await response.json();
+      setEntries(data.entries || []);
+      
+      // Find the most recent game being tracked
+      const gameEntries = data.entries.filter((e: JournalEntry) => e.gameId);
+      if (gameEntries.length > 0) {
+        setCurrentGameId(gameEntries[gameEntries.length - 1].gameId);
+      }
+    } catch (error) {
+      console.error('Error loading entries:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadActiveGames = async () => {
+    try {
+      const response = await fetch('/api/games');
+      const data = await response.json();
+      
+      // Filter for games without a result (still in progress)
+      const active = data.games.filter((g: Game) => !g.result || g.result === 'null');
+      setActiveGames(active);
+    } catch (error) {
+      console.error('Error loading active games:', error);
+    }
+  };
+
+  const selectGame = (gameId: string) => {
+    setCurrentGameId(gameId);
+    setEntryMode('game');
+    
+    // Add a journal entry marking that we're now focusing on this game
+    addGameFocusEntry(gameId);
+  };
+
+  const addGameFocusEntry = async (gameId: string) => {
+    const game = activeGames.find(g => g.id === gameId);
+    if (!game) return;
+    
+    try {
+      await fetch('/api/journal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: selectedDate,
+          gameId: gameId,
+          entryType: 'game_start',
+          content: `Now focusing on game vs ${game.opponent} (${game.white} vs ${game.black})`,
+        }),
+      });
+      
+      loadEntries();
+    } catch (error) {
+      console.error('Error adding game focus entry:', error);
+    }
+  };
+
+  const addEntry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!thought.trim()) {
+      alert('Please enter your thoughts');
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/journal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: selectedDate,
+          gameId: entryMode === 'game' ? currentGameId : null,
+          entryType: moveNotation ? 'move' : 'thought',
+          content: thought,
+          moveNumber: moveNumber ? parseInt(moveNumber) : null,
+          moveNotation: moveNotation || null,
+        }),
+      });
+      
+      if (response.ok) {
+        setThought('');
+        setMoveNumber('');
+        setMoveNotation('');
+        loadEntries();
+      } else {
+        alert('Failed to save entry');
+      }
+    } catch (error) {
+      console.error('Error saving entry:', error);
+      alert('Failed to save entry');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-3xl font-bold">Chess Journal</h2>
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
+          className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+        />
+      </div>
+
+      {/* Entry Mode Toggle */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-xl font-semibold mb-4">What would you like to record?</h3>
+        <div className="flex gap-4">
+          <button
+            onClick={() => setEntryMode('general')}
+            className={`flex-1 py-3 px-4 rounded-lg border-2 transition ${
+              entryMode === 'general'
+                ? 'border-blue-600 bg-blue-50 dark:bg-blue-900'
+                : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
+            }`}
+          >
+            <div className="font-semibold">📝 General Thoughts</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">
+              Daily reflections, feelings, or general chess thoughts
+            </div>
+          </button>
+          
+          <button
+            onClick={() => setEntryMode('game')}
+            className={`flex-1 py-3 px-4 rounded-lg border-2 transition ${
+              entryMode === 'game'
+                ? 'border-blue-600 bg-blue-50 dark:bg-blue-900'
+                : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
+            }`}
+          >
+            <div className="font-semibold">♟️ Game-Specific</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">
+              Thoughts about a specific move or position
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* Select Active Game (only in game mode) */}
+      {entryMode === 'game' && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <h3 className="text-xl font-semibold mb-4">Select Game</h3>
+          
+          {activeGames.length === 0 ? (
+            <div className="text-center py-4">
+              <p className="text-gray-600 dark:text-gray-400 mb-4">
+                No active games found. Fetch your games from Chess.com first.
+              </p>
+              <a href="/games" className="text-blue-600 hover:underline">
+                Go to Games →
+              </a>
+            </div>
+          ) : (
+            <>
+              {currentGameId && (
+                <div className="mb-4 p-3 bg-green-100 dark:bg-green-900 rounded">
+                  <p className="text-sm">
+                    Currently focused on: <strong>{activeGames.find(g => g.id === currentGameId)?.opponent || currentGameId}</strong>
+                  </p>
+                </div>
+              )}
+              
+              <div className="space-y-2">
+                {activeGames.map((game) => (
+                  <button
+                    key={game.id}
+                    onClick={() => selectGame(game.id)}
+                    className={`w-full p-4 rounded-lg border text-left transition ${
+                      currentGameId === game.id
+                        ? 'border-green-500 bg-green-50 dark:bg-green-900'
+                        : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
+                    }`}
+                  >
+                    <div className="font-semibold">vs {game.opponent}</div>
+                    <div className="text-sm text-gray-600 dark:text-gray-400">
+                      {game.white} vs {game.black}
+                    </div>
+                    {game.url && (
+                      <a
+                        href={game.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View on Chess.com →
+                      </a>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Add Entry Form */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-xl font-semibold mb-4">
+          {entryMode === 'general' ? 'Add General Thoughts' : 'Add Game Thoughts'}
+        </h3>
+        
+        <form onSubmit={addEntry} className="space-y-4">
+          {entryMode === 'game' && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Move Number (optional)
+                </label>
+                <input
+                  type="number"
+                  value={moveNumber}
+                  onChange={(e) => setMoveNumber(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+                  placeholder="5"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Move Notation (optional)
+                </label>
+                <input
+                  type="text"
+                  value={moveNotation}
+                  onChange={(e) => setMoveNotation(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+                  placeholder="Nf3"
+                />
+              </div>
+            </div>
+          )}
+          
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Your Thoughts
+            </label>
+            <textarea
+              value={thought}
+              onChange={(e) => setThought(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 h-32"
+              placeholder={
+                entryMode === 'general'
+                  ? "What's on your mind today? Any general chess thoughts or reflections..."
+                  : "What are you thinking about this position or move?"
+              }
+              required
+            />
+          </div>
+          
+          <button
+            type="submit"
+            className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700"
+          >
+            Add Entry
+          </button>
+        </form>
+      </div>
+
+      {/* Journal Entries */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-xl font-semibold mb-4">
+          Journal for {new Date(selectedDate).toLocaleDateString()}
+        </h3>
+        
+        {loading ? (
+          <p className="text-center text-gray-600">Loading...</p>
+        ) : entries.length === 0 ? (
+          <p className="text-center text-gray-600">No entries for this day yet. Start writing!</p>
+        ) : (
+          <div className="space-y-4">
+            {entries.map((entry) => (
+              <div
+                key={entry.id}
+                className={`p-4 rounded border-l-4 ${
+                  entry.entryType === 'game_start'
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900'
+                    : entry.entryType === 'move'
+                    ? 'border-green-500 bg-green-50 dark:bg-green-900'
+                    : entry.gameId
+                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-900'
+                    : 'border-gray-500 bg-gray-50 dark:bg-gray-700'
+                }`}
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    {entry.gameId && entry.entryType === 'game_start' && (
+                      <span className="font-semibold text-sm text-blue-600 dark:text-blue-400">
+                        🎯 Game Focus Changed
+                      </span>
+                    )}
+                    {entry.moveNumber && entry.moveNotation && (
+                      <span className="font-semibold text-sm">
+                        Move {entry.moveNumber}: {entry.moveNotation}
+                      </span>
+                    )}
+                    {!entry.gameId && entry.entryType === 'thought' && (
+                      <span className="font-semibold text-sm text-gray-600 dark:text-gray-400">
+                        💭 General Thoughts
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs text-gray-500">
+                    {new Date(entry.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+                <p className="text-sm whitespace-pre-wrap">{entry.content}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
