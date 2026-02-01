@@ -58,20 +58,28 @@ export default function JournalPage() {
       const startDate = new Date(selectedDate);
       startDate.setDate(startDate.getDate() - 6);
       
+      console.log('Loading entries from', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
+      
       const allEntries: JournalEntry[] = [];
       const currentDate = new Date(startDate);
       
       while (currentDate <= endDate) {
         const dateStr = currentDate.toISOString().split('T')[0];
+        console.log('Fetching entries for date:', dateStr);
         const response = await fetch(`/api/journal?date=${dateStr}`);
         const data = await response.json();
         
+        console.log('Entries for', dateStr, ':', data.entries?.length || 0);
         if (data.entries) {
+          console.log('Sample entries:', data.entries);
           allEntries.push(...data.entries);
         }
         
         currentDate.setDate(currentDate.getDate() + 1);
       }
+      
+      console.log('Total entries loaded:', allEntries.length);
+      console.log('All entries:', allEntries);
       
       allEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setEntries(allEntries);
@@ -119,6 +127,15 @@ export default function JournalPage() {
       return;
     }
     
+    // Get current FEN from the game if it's a game entry
+    let currentFen = null;
+    if (entryMode === 'game' && currentGameId) {
+      const game = allGames.find(g => g.id === currentGameId);
+      if (game) {
+        currentFen = game.fen;
+      }
+    }
+    
     try {
       const response = await fetch('/api/journal', {
         method: 'POST',
@@ -130,6 +147,7 @@ export default function JournalPage() {
           content: thought,
           moveNumber: null,
           moveNotation: null,
+          fen: currentFen,
         }),
       });
       
@@ -142,6 +160,27 @@ export default function JournalPage() {
     } catch (error) {
       console.error('Error saving entry:', error);
       alert('Failed to save entry');
+    }
+  };
+
+  const handleDeleteEntry = async (entryId: number) => {
+    if (!confirm('Are you sure you want to delete this entry? This cannot be undone.')) {
+      return;
+    }
+    
+    try {
+      const response = await fetch(`/api/journal/${entryId}`, {
+        method: 'DELETE',
+      });
+      
+      if (response.ok) {
+        loadEntries();
+      } else {
+        alert('Failed to delete entry');
+      }
+    } catch (error) {
+      console.error('Error deleting entry:', error);
+      alert('Failed to delete entry');
     }
   };
 
@@ -274,6 +313,15 @@ export default function JournalPage() {
                       const isWhite = game.white.toLowerCase() === username?.toLowerCase();
                       const isMyTurn = (isWhite && game.turn === 'white') || (!isWhite && game.turn === 'black');
                       
+                      // Get move number from FEN
+                      let moveNumber = '';
+                      if (game.fen) {
+                        const fenParts = game.fen.split(' ');
+                        if (fenParts.length >= 6) {
+                          moveNumber = fenParts[5];
+                        }
+                      }
+                      
                       return (
                         <button
                           key={game.id}
@@ -286,10 +334,17 @@ export default function JournalPage() {
                         >
                           <div className="flex justify-between items-start">
                             <div>
-                              <div className="font-semibold">vs {game.opponent}</div>
+                              <div className="font-semibold">
+                                {isWhite ? '⚪' : '⚫'} vs {game.opponent}
+                              </div>
                               <div className="text-sm text-gray-600 dark:text-gray-400">
                                 {game.white} vs {game.black}
                               </div>
+                              {moveNumber && (
+                                <div className="text-xs text-gray-500 mt-1">
+                                  Move {moveNumber}
+                                </div>
+                              )}
                             </div>
                             {isMyTurn && (
                               <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
@@ -376,23 +431,22 @@ export default function JournalPage() {
                   </h4>
                   <div className="space-y-3 ml-4">
                     {groupedEntries[date]
-                      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+                      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
                       .map((entry) => {
                         // Find game info if this is a game-specific entry
                         const game = entry.gameId ? allGames.find(g => g.id === entry.gameId) : null;
                         
-                        // Determine user's color and current move
+                        // Determine user's color and move number at time of entry
                         let userColor = '';
                         let moveInfo = '';
                         if (game && username) {
                           const isWhite = game.white.toLowerCase() === username.toLowerCase();
                           userColor = isWhite ? '⚪' : '⚫';
                           
-                          // Extract move number from FEN if available
-                          // FEN format: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
-                          // The last number is the full move number
-                          if (game.fen) {
-                            const fenParts = game.fen.split(' ');
+                          // Extract move number from the FEN (stored with entry, or fallback to current game FEN)
+                          const fenToUse = entry.fen || game.fen;
+                          if (fenToUse) {
+                            const fenParts = fenToUse.split(' ');
                             if (fenParts.length >= 6) {
                               const moveNumber = fenParts[5];
                               moveInfo = ` • Move ${moveNumber}`;
@@ -415,11 +469,15 @@ export default function JournalPage() {
                           >
                             <div className="flex justify-between items-start mb-2">
                               <div>
-                                {entry.gameId && game && (
+                                {entry.gameId && game ? (
                                   <div className="font-semibold text-sm text-purple-600 dark:text-purple-400">
                                     ♟️ {userColor} vs {game.opponent}{moveInfo}
                                   </div>
-                                )}
+                                ) : entry.gameId ? (
+                                  <div className="font-semibold text-sm text-purple-600 dark:text-purple-400">
+                                    ♟️ Game Entry (game data not loaded)
+                                  </div>
+                                ) : null}
                                 {entry.gameId && entry.entryType === 'game_start' && (
                                   <span className="font-semibold text-sm text-blue-600 dark:text-blue-400">
                                     🎯 Game Focus Changed
@@ -436,10 +494,56 @@ export default function JournalPage() {
                                   </span>
                                 )}
                               </div>
-                              <span className="text-xs text-gray-500">
-                                {new Date(entry.timestamp).toLocaleTimeString()}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-500">
+                                  {new Date(entry.timestamp).toLocaleTimeString()}
+                                </span>
+                                <button
+                                  onClick={() => handleDeleteEntry(entry.id)}
+                                  className="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900"
+                                  title="Delete entry"
+                                >
+                                  🗑️
+                                </button>
+                              </div>
                             </div>
+                            
+                            {/* Chess board visualization for game entries */}
+                            {entry.gameId && (entry.fen || (game && game.fen)) && (
+                              <div className="my-3 flex flex-col items-center">
+                                <div className="relative">
+                                  <img
+                                    src={`https://fen2image.chessvision.ai/${encodeURIComponent(entry.fen || game?.fen || '')}${(() => {
+                                      // Determine orientation based on user's color
+                                      if (game && username) {
+                                        const isWhite = game.white.toLowerCase() === username.toLowerCase();
+                                        return isWhite ? '' : '?pov=black';
+                                      }
+                                      return '';
+                                    })()}`}
+                                    alt="Chess board position"
+                                    className="rounded border-2 border-gray-300"
+                                    style={{ maxWidth: '400px', width: '100%' }}
+                                  />
+                                  {!entry.fen && (
+                                    <p className="text-xs text-gray-500 italic mt-1">
+                                      Note: Showing current position (entry created before position tracking)
+                                    </p>
+                                  )}
+                                  {game?.url && (
+                                    <a
+                                      href={game.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-blue-600 hover:underline mt-2 inline-block"
+                                    >
+                                      View full game on Chess.com →
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            
                             <p className="text-sm whitespace-pre-wrap">{entry.content}</p>
                           </div>
                         );
