@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, gameId, entryType, content, moveNumber, moveNotation, fen } = body;
+    const { date, gameId, entryType, content, moveNumber, moveNotation, fen, myMove, image } = body;
     
     if (!date || !entryType || !content) {
       return NextResponse.json(
@@ -44,7 +44,9 @@ export async function POST(request: NextRequest) {
       moveNumber: moveNumber || null,
       moveNotation: moveNotation || null,
       timestamp: new Date().toISOString(),
-      fen: fen || null
+      fen: fen || null,
+      myMove: myMove || null,
+      image: image || null
     };
     
     db.journal_entries.push(entry);

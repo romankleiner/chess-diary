@@ -41,3 +41,50 @@ export async function DELETE(
     );
   }
 }
+
+// Update a journal entry by ID
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const entryId = parseInt(params.id);
+    
+    if (isNaN(entryId)) {
+      return NextResponse.json(
+        { error: 'Invalid entry ID' },
+        { status: 400 }
+      );
+    }
+    
+    const body = await request.json();
+    const { content, myMove, image } = body;
+    
+    const db = getDb();
+    
+    // Find the entry
+    const entry = db.journal_entries.find(e => e.id === entryId);
+    
+    if (!entry) {
+      return NextResponse.json(
+        { error: 'Entry not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Update fields
+    if (content !== undefined) entry.content = content;
+    if (myMove !== undefined) entry.myMove = myMove;
+    if (image !== undefined) entry.image = image;
+    
+    saveDb(db);
+    
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error updating journal entry:', error);
+    return NextResponse.json(
+      { error: 'Failed to update journal entry' },
+      { status: 500 }
+    );
+  }
+}

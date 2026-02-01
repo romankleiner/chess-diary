@@ -33,6 +33,12 @@ export default function JournalPage() {
   const [showAllGames, setShowAllGames] = useState(false);
   const [currentGameId, setCurrentGameId] = useState<string | null>(null);
   const [thought, setThought] = useState('');
+  const [myMove, setMyMove] = useState('');
+  const [image, setImage] = useState<string>('');
+  const [editingEntry, setEditingEntry] = useState<JournalEntry | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportStartDate, setExportStartDate] = useState('');
+  const [exportEndDate, setExportEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [entryMode, setEntryMode] = useState<'general' | 'game'>('general');
 
   useEffect(() => {
@@ -137,29 +143,97 @@ export default function JournalPage() {
     }
     
     try {
-      const response = await fetch('/api/journal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: selectedDate,
-          gameId: entryMode === 'game' ? currentGameId : null,
-          entryType: 'thought',
-          content: thought,
-          moveNumber: null,
-          moveNotation: null,
-          fen: currentFen,
-        }),
-      });
-      
-      if (response.ok) {
-        setThought('');
-        loadEntries();
+      if (editingEntry) {
+        // Update existing entry
+        const response = await fetch(`/api/journal/${editingEntry.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: thought,
+            myMove: myMove.trim() || null,
+            image: image || null,
+          }),
+        });
+        
+        if (response.ok) {
+          setThought('');
+          setMyMove('');
+          setImage('');
+          setEditingEntry(null);
+          loadEntries();
+        } else {
+          alert('Failed to update entry');
+        }
       } else {
-        alert('Failed to save entry');
+        // Create new entry
+        const response = await fetch('/api/journal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: selectedDate,
+            gameId: entryMode === 'game' ? currentGameId : null,
+            entryType: 'thought',
+            content: thought,
+            moveNumber: null,
+            moveNotation: null,
+            fen: currentFen,
+            myMove: myMove.trim() || null,
+            image: image || null,
+          }),
+        });
+        
+        if (response.ok) {
+          // If a move was specified, toggle the turn in the game
+          if (myMove.trim() && currentGameId) {
+            await toggleGameTurn(currentGameId);
+          }
+          
+          setThought('');
+          setMyMove('');
+          setImage('');
+          loadEntries();
+        } else {
+          alert('Failed to save entry');
+        }
       }
     } catch (error) {
       console.error('Error saving entry:', error);
       alert('Failed to save entry');
+    }
+  };
+
+  const handleImagePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            setImage(event.target?.result as string);
+          };
+          reader.readAsDataURL(file);
+        }
+        break;
+      }
+    }
+  };
+
+  const toggleGameTurn = async (gameId: string) => {
+    try {
+      const response = await fetch(`/api/games/${gameId}/toggle-turn`, {
+        method: 'POST',
+      });
+      
+      if (response.ok) {
+        // Reload games to update the "your turn" filter
+        await loadActiveGames();
+      }
+    } catch (error) {
+      console.error('Error toggling turn:', error);
     }
   };
 
@@ -184,6 +258,48 @@ export default function JournalPage() {
     }
   };
 
+  const handleEditEntry = (entry: JournalEntry) => {
+    setEditingEntry(entry);
+    setThought(entry.content);
+    setMyMove(entry.myMove || '');
+    setImage(entry.image || '');
+    setCurrentGameId(entry.gameId);
+    setEntryMode(entry.gameId ? 'game' : 'general');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleExportJournal = async () => {
+    try {
+      const startDate = exportStartDate || '2020-01-01';
+      const endDate = exportEndDate;
+      
+      // Request Word document
+      const response = await fetch(
+        `/api/journal/export?startDate=${startDate}&endDate=${endDate}&format=docx&username=${encodeURIComponent(username)}`
+      );
+      
+      if (!response.ok) {
+        alert('Failed to export journal');
+        return;
+      }
+      
+      // Download the Word document
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chess-journal-${startDate}-to-${endDate}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      setShowExportModal(false);
+      
+    } catch (error) {
+      console.error('Error exporting journal:', error);
+      alert('Failed to export journal');
+    }
+  };
+
   const getDateRangeText = () => {
     const endDate = new Date(selectedDate);
     const startDate = new Date(selectedDate);
@@ -204,18 +320,80 @@ export default function JournalPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-3xl font-bold">Chess Journal</h2>
-        <div className="text-right">
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
-          />
-          <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-            Showing 7 days ending on this date
-          </p>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+          >
+            📥 Export Journal
+          </button>
+          <div className="text-right">
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+            />
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+              Showing 7 days ending on this date
+            </p>
+          </div>
         </div>
       </div>
+
+      {/* Export Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-semibold mb-4">Export Journal</h3>
+            
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Start Date (optional - leave empty for all entries)
+                </label>
+                <input
+                  type="date"
+                  value={exportStartDate}
+                  onChange={(e) => setExportStartDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  value={exportEndDate}
+                  onChange={(e) => setExportEndDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+                />
+              </div>
+              
+              <p className="text-xs text-gray-500">
+                Export format: Microsoft Word document (.docx) with chronological entries (oldest to newest)
+              </p>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={handleExportJournal}
+                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+              >
+                Export
+              </button>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="flex-1 bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400 dark:bg-gray-600 dark:text-white dark:hover:bg-gray-500"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h3 className="text-xl font-semibold mb-4">What would you like to record?</h3>
@@ -285,11 +463,6 @@ export default function JournalPage() {
               )}
               
               {(() => {
-                // Get username from settings
-                const username = activeGames[0]?.white === activeGames.find(g => g.id === currentGameId)?.white 
-                  ? activeGames[0].white 
-                  : activeGames[0]?.black;
-                
                 // Filter games based on checkbox
                 const filteredGames = showAllGames 
                   ? activeGames 
@@ -376,8 +549,27 @@ export default function JournalPage() {
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h3 className="text-xl font-semibold mb-4">
-          {entryMode === 'general' ? 'Add General Thoughts' : 'Add Game Thoughts'}
+          {editingEntry ? '✏️ Edit Entry' : (entryMode === 'general' ? 'Add General Thoughts' : 'Add Game Thoughts')}
         </h3>
+        
+        {editingEntry && (
+          <div className="mb-4 p-3 bg-yellow-100 dark:bg-yellow-900 rounded">
+            <p className="text-sm">
+              Editing entry from {new Date(editingEntry.timestamp).toLocaleString()}
+              <button
+                onClick={() => {
+                  setEditingEntry(null);
+                  setThought('');
+                  setMyMove('');
+                  setImage('');
+                }}
+                className="ml-4 text-xs text-blue-600 hover:underline"
+              >
+                Cancel Edit
+              </button>
+            </p>
+          </div>
+        )}
         
         <form onSubmit={addEntry} className="space-y-4">
           <div>
@@ -387,21 +579,58 @@ export default function JournalPage() {
             <textarea
               value={thought}
               onChange={(e) => setThought(e.target.value)}
+              onPaste={handleImagePaste}
               className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 h-32"
               placeholder={
                 entryMode === 'general'
-                  ? "What's on your mind today? Any general chess thoughts or reflections..."
-                  : "What are you thinking about this position or move?"
+                  ? "What's on your mind today? Any general chess thoughts or reflections... (Paste images with Ctrl+V)"
+                  : "What are you thinking about this position or move? (Paste images with Ctrl+V)"
               }
               required
             />
           </div>
           
+          {image && (
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Attached Image
+              </label>
+              <div className="relative inline-block">
+                <img src={image} alt="Pasted" className="max-w-xs rounded border" />
+                <button
+                  type="button"
+                  onClick={() => setImage('')}
+                  className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+          
+          {entryMode === 'game' && !editingEntry && (
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                My Move (optional)
+              </label>
+              <input
+                type="text"
+                value={myMove}
+                onChange={(e) => setMyMove(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+                placeholder="e.g., Nf3, e4, O-O"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                If you've decided on your move, enter it here. This will mark the game as no longer waiting on you.
+              </p>
+            </div>
+          )}
+          
           <button
             type="submit"
             className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700"
           >
-            Add Entry
+            {editingEntry ? 'Update Entry' : 'Add Entry'}
           </button>
         </form>
       </div>
@@ -496,8 +725,15 @@ export default function JournalPage() {
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-500">
-                                  {new Date(entry.timestamp).toLocaleTimeString()}
+                                  {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </span>
+                                <button
+                                  onClick={() => handleEditEntry(entry)}
+                                  className="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900"
+                                  title="Edit entry"
+                                >
+                                  ✏️
+                                </button>
                                 <button
                                   onClick={() => handleDeleteEntry(entry.id)}
                                   className="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900"
@@ -545,6 +781,20 @@ export default function JournalPage() {
                             )}
                             
                             <p className="text-sm whitespace-pre-wrap">{entry.content}</p>
+                            
+                            {entry.image && (
+                              <div className="mt-3">
+                                <img src={entry.image} alt="Entry attachment" className="max-w-md rounded border" />
+                              </div>
+                            )}
+                            
+                            {entry.myMove && (
+                              <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-600">
+                                <p className="text-sm font-bold text-green-700 dark:text-green-400">
+                                  ✓ My Move: {entry.myMove}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         );
                       })}

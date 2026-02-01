@@ -22,6 +22,9 @@ export interface JournalEntry {
   moveNumber?: number;
   moveNotation?: string;
   timestamp: string;
+  fen?: string;
+  myMove?: string;
+  image?: string; // base64 encoded image
 }
 
 export interface MoveAnalysis {
