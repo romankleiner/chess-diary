@@ -9,6 +9,8 @@ export interface Game {
   timeControl?: string;
   white: string;
   black: string;
+  turn?: string;
+  fen?: string;
 }
 
 export interface JournalEntry {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchPlayerGames, parseChessComGame } from '@/lib/chesscom';
+import { fetchPlayerGames, fetchActiveGames, parseChessComGame } from '@/lib/chesscom';
 import getDb, { saveDb } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
@@ -17,16 +17,40 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Chess.com username not configured' }, { status: 400 });
     }
     
-    // Fetch games from Chess.com
-    const data = await fetchPlayerGames(username, year, month);
+    let allGames: any[] = [];
+    
+    // Fetch archived games for the specified month
+    try {
+      const archivedData = await fetchPlayerGames(username, year, month);
+      if (archivedData.games) {
+        allGames = allGames.concat(archivedData.games);
+      }
+    } catch (error) {
+      // No archived games for this period
+    }
+    
+    // Also fetch active/ongoing games
+    try {
+      const activeData = await fetchActiveGames(username);
+      if (activeData.games) {
+        allGames = allGames.concat(activeData.games);
+      }
+    } catch (error) {
+      // No active games found
+    }
     
     // Parse and store games
-    const games = data.games
+    const games = allGames
       .map((game: any) => parseChessComGame(game, username))
       .filter((game: any) => game !== null);
     
+    // Remove duplicates by game ID
+    const uniqueGames = Array.from(
+      new Map(games.map(game => [game.id, game])).values()
+    );
+    
     // Store in database
-    for (const game of games) {
+    for (const game of uniqueGames) {
       db.games[game.id] = {
         ...game,
         analysisCompleted: game.analysisCompleted || false
@@ -35,7 +59,11 @@ export async function GET(request: NextRequest) {
     
     saveDb(db);
     
-    return NextResponse.json({ success: true, count: games.length, games });
+    return NextResponse.json({ 
+      success: true, 
+      count: uniqueGames.length, 
+      games: uniqueGames 
+    });
   } catch (error) {
     console.error('Error fetching games:', error);
     return NextResponse.json(
