@@ -37,16 +37,14 @@ export default function GamesPage() {
   const fetchFromChessCom = async () => {
     setFetching(true);
     try {
-      const now = new Date();
-      const response = await fetch(
-        `/api/games/fetch?year=${now.getFullYear()}&month=${now.getMonth() + 1}`
-      );
+      // Fetch recent games from last 3 months including finished games
+      const response = await fetch('/api/games/fetch?includeRecent=true');
       const data = await response.json();
       
       if (data.error) {
         alert(data.error);
       } else {
-        alert(`Fetched ${data.count} games from Chess.com`);
+        alert(`Fetched ${data.count} games from Chess.com (including finished games from last 3 months)`);
         loadGames();
       }
     } catch (error) {

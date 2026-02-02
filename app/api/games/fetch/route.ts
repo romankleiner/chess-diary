@@ -5,6 +5,7 @@ import getDb, { saveDb } from '@/lib/db';
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
+    const includeRecent = searchParams.get('includeRecent') === 'true';
     const year = parseInt(searchParams.get('year') || new Date().getFullYear().toString());
     const month = parseInt(searchParams.get('month') || (new Date().getMonth() + 1).toString());
     
@@ -19,14 +20,33 @@ export async function GET(request: NextRequest) {
     
     let allGames: any[] = [];
     
-    // Fetch archived games for the specified month
-    try {
-      const archivedData = await fetchPlayerGames(username, year, month);
-      if (archivedData.games) {
-        allGames = allGames.concat(archivedData.games);
+    // If includeRecent is true, fetch games from last 3 months
+    if (includeRecent) {
+      const today = new Date();
+      for (let i = 0; i < 3; i++) {
+        const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+        const fetchYear = date.getFullYear();
+        const fetchMonth = date.getMonth() + 1;
+        
+        try {
+          const archivedData = await fetchPlayerGames(username, fetchYear, fetchMonth);
+          if (archivedData.games) {
+            allGames = allGames.concat(archivedData.games);
+          }
+        } catch (error) {
+          // Continue to next month
+        }
       }
-    } catch (error) {
-      // No archived games for this period
+    } else {
+      // Fetch archived games for the specified month
+      try {
+        const archivedData = await fetchPlayerGames(username, year, month);
+        if (archivedData.games) {
+          allGames = allGames.concat(archivedData.games);
+        }
+      } catch (error) {
+        // No archived games for this period
+      }
     }
     
     // Also fetch active/ongoing games

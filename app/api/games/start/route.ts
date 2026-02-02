@@ -13,11 +13,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-<<<<<<< HEAD
-    const db = getDb();
-=======
     const db = await getDb();
->>>>>>> master
     
     // Get username from settings
     const username = db.settings.chesscom_username;
@@ -61,11 +57,7 @@ export async function POST(request: NextRequest) {
       timestamp: new Date().toISOString()
     });
     
-<<<<<<< HEAD
-    saveDb(db);
-=======
     await saveDb(db);
->>>>>>> master
     
     return NextResponse.json({ 
       success: true, 

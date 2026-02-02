@@ -1,11 +1,6 @@
 export default function Home() {
   return (
     <div className="space-y-6">
-      {/* Test element - if you see a red box with white text, Tailwind is working */}
-      <div className="bg-red-500 text-white p-4 font-bold text-2xl">
-        🔴 TEST: If this box is RED with WHITE text, Tailwind is working!
-      </div>
-      
       <h2 className="text-3xl font-bold">Welcome to Chess Diary</h2>
       
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
