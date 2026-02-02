@@ -9,6 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.37.1",
+    "chess.js": "^1.4.0",
+    "docx": "^9.5.1",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"
