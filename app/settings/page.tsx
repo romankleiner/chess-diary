@@ -16,7 +16,7 @@ export default function SettingsPage() {
     try {
       const response = await fetch('/api/settings');
       const data = await response.json();
-      setUsername(data.settings.chesscom_username || '');
+      setUsername(data.settings?.chesscom_username || '');
     } catch (error) {
       console.error('Error loading settings:', error);
     } finally {

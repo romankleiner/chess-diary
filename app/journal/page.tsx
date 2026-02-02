@@ -11,6 +11,9 @@ interface JournalEntry {
   moveNumber?: number;
   moveNotation?: string;
   timestamp: string;
+  fen?: string;
+  myMove?: string;
+  image?: string;
 }
 
 interface Game {
@@ -21,6 +24,7 @@ interface Game {
   url?: string;
   result: string | null;
   turn?: string;
+  fen?: string;
 }
 
 export default function JournalPage() {
@@ -51,7 +55,7 @@ export default function JournalPage() {
     try {
       const response = await fetch('/api/settings');
       const data = await response.json();
-      setUsername(data.settings.chesscom_username || '');
+      setUsername(data.settings?.chesscom_username || '');
     } catch (error) {
       console.error('Error loading username:', error);
     }

@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
     const year = parseInt(searchParams.get('year') || new Date().getFullYear().toString());
     const month = parseInt(searchParams.get('month') || (new Date().getMonth() + 1).toString());
     
-    const db = getDb();
+    const db = await getDb();
     
     // Get username from settings
     const username = db.settings.chesscom_username;
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     // Parse and store games
     const games = allGames
       .map((game: any) => parseChessComGame(game, username))
-      .filter((game: any) => game !== null);
+      .filter((game: any): game is NonNullable<typeof game> => game !== null);
     
     // Remove duplicates by game ID
     const uniqueGames = Array.from(
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       };
     }
     
-    saveDb(db);
+    await saveDb(db);
     
     return NextResponse.json({ 
       success: true, 

@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
     
-    const db = getDb();
+    const db = await getDb();
     const entries = db.journal_entries.filter(e => e.date === date)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const db = getDb();
+    const db = await getDb();
     const entry = {
       id: db.journal_entries.length + 1,
       date,
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     };
     
     db.journal_entries.push(entry);
-    saveDb(db);
+    await saveDb(db);
     
     return NextResponse.json({ success: true });
   } catch (error) {

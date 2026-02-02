@@ -1,0 +1,5 @@
+- Connect Claude to my repo?
+- Merge git branches
+- Fix games fetching (update also finished games)
+- Validate auth is working
+- Upload to a public service

@@ -4,12 +4,12 @@ import getDb, { saveDb } from '@/lib/db';
 // Toggle the turn for a game (switch from white to black or vice versa)
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const gameId = params.id;
+    const { id: gameId } = await params;
     
-    const db = getDb();
+    const db = await getDb();
     const game = db.games[gameId];
     
     if (!game) {
@@ -27,7 +27,7 @@ export async function POST(
     }
     
     db.games[gameId] = game;
-    saveDb(db);
+    await saveDb(db);
     
     return NextResponse.json({ success: true, turn: game.turn });
   } catch (error) {

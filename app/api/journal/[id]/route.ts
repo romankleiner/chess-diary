@@ -4,10 +4,11 @@ import getDb, { saveDb } from '@/lib/db';
 // Delete a journal entry by ID
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const entryId = parseInt(params.id);
+    const { id } = await params;
+    const entryId = parseInt(id);
     
     if (isNaN(entryId)) {
       return NextResponse.json(
@@ -16,7 +17,7 @@ export async function DELETE(
       );
     }
     
-    const db = getDb();
+    const db = await getDb();
     
     // Find the entry index
     const entryIndex = db.journal_entries.findIndex(e => e.id === entryId);
@@ -30,7 +31,7 @@ export async function DELETE(
     
     // Remove the entry
     db.journal_entries.splice(entryIndex, 1);
-    saveDb(db);
+    await saveDb(db);
     
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -45,10 +46,11 @@ export async function DELETE(
 // Update a journal entry by ID
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const entryId = parseInt(params.id);
+    const { id } = await params;
+    const entryId = parseInt(id);
     
     if (isNaN(entryId)) {
       return NextResponse.json(
@@ -60,7 +62,7 @@ export async function PUT(
     const body = await request.json();
     const { content, myMove, image } = body;
     
-    const db = getDb();
+    const db = await getDb();
     
     // Find the entry
     const entry = db.journal_entries.find(e => e.id === entryId);
@@ -77,7 +79,7 @@ export async function PUT(
     if (myMove !== undefined) entry.myMove = myMove;
     if (image !== undefined) entry.image = image;
     
-    saveDb(db);
+    await saveDb(db);
     
     return NextResponse.json({ success: true });
   } catch (error) {
