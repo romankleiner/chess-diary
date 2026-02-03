@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import getDb from '@/lib/db';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs';
-import path from 'path';
-
-const execAsync = promisify(exec);
 
 export async function GET(request: NextRequest) {
   try {
@@ -51,49 +45,101 @@ export async function GET(request: NextRequest) {
     }));
     
     if (format === 'docx') {
-      // Generate Word document using docx library via Node script
-      const scriptPath = path.join(process.cwd(), 'lib', 'export-journal.js');
-      const tmpDir = path.join(process.cwd(), 'tmp');
-      const tmpFile = path.join(tmpDir, `export-${Date.now()}.json`);
+      // Generate Word document in-memory using docx library
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import('docx');
       
-      try {
-        // Check if docx is installed
-        await execAsync('npm list docx');
-      } catch {
-        // Install docx if not present
-        await execAsync('npm install docx');
-      }
+      // Create document sections
+      const docSections: any[] = [
+        new Paragraph({
+          text: `Chess Journal Export`,
+          heading: HeadingLevel.TITLE,
+        }),
+        new Paragraph({
+          text: `Date Range: ${startDate} to ${endDate}`,
+          spacing: { after: 200 }
+        }),
+        new Paragraph({ text: '' }), // Empty line
+      ];
       
-      // Create tmp directory if it doesn't exist
-      if (!fs.existsSync(tmpDir)) {
-        fs.mkdirSync(tmpDir, { recursive: true });
-      }
-      
-      // Write data to temp file
-      const inputData = JSON.stringify({ groupedByDate: groupedData, username });
-      fs.writeFileSync(tmpFile, inputData);
-      
-      try {
-        // Run the script with the temp file
-        const { stdout } = await execAsync(`node ${scriptPath} < ${tmpFile}`);
-        const buffer = Buffer.from(stdout, 'base64');
+      // Add entries by date
+      for (const { date, entries: dateEntries } of groupedData) {
+        // Date header
+        docSections.push(
+          new Paragraph({
+            text: new Date(date).toLocaleDateString('en-US', { 
+              weekday: 'long', 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric' 
+            }),
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 }
+          })
+        );
         
-        // Clean up temp file
-        fs.unlinkSync(tmpFile);
-        
-        return new NextResponse(buffer, {
-          headers: {
-            'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'Content-Disposition': `attachment; filename="chess-journal-${startDate}-to-${endDate}.docx"`
+        // Add each entry
+        for (const entry of dateEntries) {
+          const game = entry.game;
+          
+          if (game) {
+            // Game info
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `Game: `, bold: true }),
+                  new TextRun({ text: `${game.white} vs ${game.black}` }),
+                ],
+                spacing: { before: 200 }
+              })
+            );
           }
-        });
-      } catch (error) {
-        // Clean up temp file on error
-        if (fs.existsSync(tmpFile)) {
-          fs.unlinkSync(tmpFile);
+          
+          // Entry content
+          const timestamp = new Date(entry.timestamp).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          docSections.push(
+            new Paragraph({
+              children: [
+                new TextRun({ text: `[${timestamp}] `, italics: true }),
+                new TextRun({ text: entry.content }),
+              ],
+              spacing: { after: 100 }
+            })
+          );
+          
+          if (entry.myMove) {
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `My Move: `, bold: true }),
+                  new TextRun({ text: entry.myMove }),
+                ],
+                spacing: { after: 100 }
+              })
+            );
+          }
         }
-        throw error;
       }
+      
+      // Create document
+      const doc = new Document({
+        sections: [{
+          children: docSections
+        }]
+      });
+      
+      // Generate buffer
+      const buffer = await Packer.toBuffer(doc);
+      
+      return new NextResponse(buffer, {
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'Content-Disposition': `attachment; filename="chess-journal-${startDate}-to-${endDate}.docx"`
+        }
+      });
     }
     
     // Return JSON for client-side text export
