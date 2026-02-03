@@ -1,2 +1,3 @@
-- Retest all the functionality
 - Remove the messagebox when fetching the games, show in a non-interactive floating message. Only show the count of games that were actually updated
+- Fix Word export 
+- Support diary backup
