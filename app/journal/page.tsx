@@ -137,6 +137,12 @@ export default function JournalPage() {
       return;
     }
     
+    // Validate that a game is selected when in game mode
+    if (entryMode === 'game' && !currentGameId) {
+      alert('Please select a game first');
+      return;
+    }
+    
     // Get current FEN from the game if it's a game entry
     let currentFen = null;
     if (entryMode === 'game' && currentGameId) {
@@ -187,15 +193,23 @@ export default function JournalPage() {
         });
         
         if (response.ok) {
-          // If a move was specified, toggle the turn in the game
-          if (myMove.trim() && currentGameId) {
-            await toggleGameTurn(currentGameId);
-          }
+          // Track if we should clear the game selection
+          const shouldClearGame = myMove.trim() && currentGameId;
           
+          // Clear form fields
           setThought('');
           setMyMove('');
           setImage('');
+          
+          // If a move was specified, toggle the turn in the game
+          if (shouldClearGame) {
+            await toggleGameTurn(currentGameId);
+            setCurrentGameId(null);
+          }
+          
+          // Reload entries and games
           loadEntries();
+          loadActiveGames();
         } else {
           alert('Failed to save entry');
         }
