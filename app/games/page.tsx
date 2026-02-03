@@ -17,10 +17,18 @@ export default function GamesPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
+  const [toast, setToast] = useState<{ message: string; show: boolean }>({ message: '', show: false });
 
   useEffect(() => {
     loadGames();
   }, []);
+
+  const showToast = (message: string) => {
+    setToast({ message, show: true });
+    setTimeout(() => {
+      setToast({ message: '', show: false });
+    }, 3000); // Auto-hide after 3 seconds
+  };
 
   const loadGames = async () => {
     try {
@@ -44,7 +52,7 @@ export default function GamesPage() {
       if (data.error) {
         alert(data.error);
       } else {
-        alert(`Fetched ${data.count} games from Chess.com (including finished games from last 3 months)`);
+        showToast(`Fetched ${data.count} games from Chess.com ✓`);
         loadGames();
       }
     } catch (error) {
@@ -133,6 +141,13 @@ export default function GamesPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      
+      {/* Toast notification */}
+      {toast.show && (
+        <div className="fixed bottom-4 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg transition-opacity duration-300 z-50">
+          {toast.message}
         </div>
       )}
     </div>

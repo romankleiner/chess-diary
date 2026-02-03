@@ -81,45 +81,137 @@ export async function GET(request: NextRequest) {
         for (const entry of dateEntries) {
           const game = entry.game;
           
-          if (game) {
-            // Game info
-            docSections.push(
-              new Paragraph({
-                children: [
-                  new TextRun({ text: `Game: `, bold: true }),
-                  new TextRun({ text: `${game.white} vs ${game.black}` }),
-                ],
-                spacing: { before: 200 }
-              })
-            );
-          }
-          
-          // Entry content
+          // Timestamp at the start
           const timestamp = new Date(entry.timestamp).toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit'
           });
           
+          // Timestamp + Game info on same line (if game exists)
+          if (game) {
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `[${timestamp}] `, italics: true, size: 22, color: '666666' }), // 11pt, gray
+                  new TextRun({ text: `Game: `, bold: true, size: 24 }), // 12pt
+                  new TextRun({ text: `${game.white} vs ${game.black}`, size: 24 }),
+                ],
+                spacing: { before: 300, after: 100 }
+              })
+            );
+          } else {
+            // Just timestamp if no game
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `[${timestamp}]`, italics: true, size: 22, color: '666666' }), // 11pt, gray
+                ],
+                spacing: { before: 300, after: 100 }
+              })
+            );
+          }
+          
+          // Chess board diagram (if FEN exists)
+          const fenToUse = entry.fen || (game && game.fen);
+          if (fenToUse) {
+            try {
+              const { ImageRun } = await import('docx');
+              const sharp = await import('sharp');
+              
+              // Fetch board image from chessvision.ai
+              const isWhite = game && username && game.white.toLowerCase() === username.toLowerCase();
+              const pov = isWhite ? 'white' : 'black';
+              const boardUrl = `https://fen2image.chessvision.ai/${encodeURIComponent(fenToUse)}?colors=brown&piece_set=merida&coordinates=true&orientation=${pov}`;
+              
+              const response = await fetch(boardUrl);
+              if (!response.ok) throw new Error('Failed to fetch board image');
+              
+              const arrayBuffer = await response.arrayBuffer();
+              const imageBuffer = Buffer.from(arrayBuffer);
+              
+              // Compress the board image
+              const optimizedBuffer = await sharp.default(imageBuffer)
+                .resize(400, null, { withoutEnlargement: true })
+                .jpeg({ quality: 65, chromaSubsampling: '4:2:0' })
+                .toBuffer();
+              
+              docSections.push(
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: Uint8Array.from(optimizedBuffer),
+                      transformation: { width: 300, height: 300 },
+                      type: 'jpg',
+                    }),
+                  ],
+                  spacing: { after: 150 }
+                })
+              );
+            } catch (error) {
+              console.error('Error adding chess board:', error);
+              docSections.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: '[Chess board diagram could not be generated]', italics: true, color: '999999', size: 20 }),
+                  ],
+                  spacing: { after: 100 }
+                })
+              );
+            }
+          }
+          
+          // Entry content - larger font
           docSections.push(
             new Paragraph({
               children: [
-                new TextRun({ text: `[${timestamp}] `, italics: true }),
-                new TextRun({ text: entry.content }),
+                new TextRun({ text: entry.content, size: 26 }), // 13pt - larger and more readable
               ],
-              spacing: { after: 100 }
+              spacing: { after: 120 }
             })
           );
           
+          // My Move (if exists)
           if (entry.myMove) {
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ text: `My Move: `, bold: true }),
-                  new TextRun({ text: entry.myMove }),
+                  new TextRun({ text: `My Move: `, bold: true, size: 24 }),
+                  new TextRun({ text: entry.myMove, size: 24 }),
                 ],
-                spacing: { after: 100 }
+                spacing: { after: 120 }
               })
             );
+          }
+          
+          // Manually pasted image (if exists)
+          if (entry.image) {
+            try {
+              const { ImageRun } = await import('docx');
+              const sharp = await import('sharp');
+              
+              const base64Data = entry.image.split(',')[1] || entry.image;
+              const imageBuffer = Buffer.from(base64Data, 'base64');
+              
+              const optimizedBuffer = await sharp.default(imageBuffer)
+                .resize(500, null, { withoutEnlargement: true })
+                .jpeg({ quality: 60, chromaSubsampling: '4:2:0' })
+                .toBuffer();
+              
+              docSections.push(
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: Uint8Array.from(optimizedBuffer),
+                      transformation: { width: 400, height: 300 },
+                      type: 'jpg',
+                    }),
+                  ],
+                  spacing: { after: 200 }
+                })
+              );
+            } catch (error) {
+              console.error('Error adding pasted image:', error);
+            }
           }
         }
       }
