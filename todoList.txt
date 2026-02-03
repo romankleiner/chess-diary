@@ -1,4 +1,2 @@
-- Show logged in user
-- Allow log out
-- Validate auth is working
-- Upload to a public service
+- Fix DB connectivity on Vercel KV store
+- Retest all the functionality

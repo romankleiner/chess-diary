@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import Redis from 'ioredis';
 import { auth } from '@clerk/nextjs/server';
 
 export interface DatabaseData {
@@ -8,8 +8,23 @@ export interface DatabaseData {
   settings: Record<string, string>;
 }
 
-// Get database key for current user
-async function getUserDbKey(): Promise<string> {
+// Create Redis client
+let redis: Redis | null = null;
+
+function getRedisClient(): Redis {
+  if (!redis && process.env.REDIS_URL) {
+    redis = new Redis(process.env.REDIS_URL);
+  }
+  
+  if (!redis) {
+    throw new Error('Redis not configured');
+  }
+  
+  return redis;
+}
+
+// Get user ID from Clerk
+async function getUserId(): Promise<string> {
   const authResult = await auth();
   const userId = authResult.userId;
   
@@ -17,7 +32,7 @@ async function getUserDbKey(): Promise<string> {
     throw new Error('User not authenticated');
   }
   
-  return `chess-diary:${userId}`;
+  return userId;
 }
 
 // Initialize empty database structure
@@ -32,45 +47,37 @@ function getEmptyDb(): DatabaseData {
 
 // Get database for current user
 export async function getDb(userId?: string): Promise<DatabaseData> {
-  let dbKey: string;
-  
-  if (userId) {
-    dbKey = `chess-diary:${userId}`;
-  } else {
-    dbKey = await getUserDbKey();
-  }
+  const uid = userId || await getUserId();
+  const key = `chess-diary:${uid}`;
   
   try {
-    const data = await kv.get<DatabaseData>(dbKey);
+    const client = getRedisClient();
+    const data = await client.get(key);
     
     if (!data) {
-      // Initialize new database for user
+      // Create initial empty database for user
       const emptyDb = getEmptyDb();
-      await kv.set(dbKey, emptyDb);
+      await client.set(key, JSON.stringify(emptyDb));
       return emptyDb;
     }
     
-    return data;
+    return JSON.parse(data) as DatabaseData;
   } catch (error) {
-    console.error('Error reading from KV:', error);
+    console.error('Error reading from Redis:', error);
     return getEmptyDb();
   }
 }
 
 // Save database for current user
 export async function saveDb(data: DatabaseData, userId?: string): Promise<void> {
-  let dbKey: string;
-  
-  if (userId) {
-    dbKey = `chess-diary:${userId}`;
-  } else {
-    dbKey = await getUserDbKey();
-  }
+  const uid = userId || await getUserId();
+  const key = `chess-diary:${uid}`;
   
   try {
-    await kv.set(dbKey, data);
+    const client = getRedisClient();
+    await client.set(key, JSON.stringify(data));
   } catch (error) {
-    console.error('Error saving to KV:', error);
+    console.error('Error saving to Redis:', error);
     throw new Error('Failed to save database');
   }
 }
