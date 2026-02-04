@@ -1,2 +1,5 @@
-- Add analysis support
+- Fix full diary reload whenever I remove an entry
+- Add the diagram as I type a game specific entry for reference
+- Increase the font when showing the diary
 - Support diary backup
+- Add analysis support
