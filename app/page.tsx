@@ -13,10 +13,10 @@ export default function Home() {
             <h3 className="text-xl font-semibold mb-2">How It Works</h3>
             <ol className="list-decimal list-inside space-y-2">
               <li>Configure your Chess.com username in Settings</li>
-              <li>Open your Journal for today</li>
-              <li>Start tracking a game by pasting the Chess.com game URL</li>
-              <li>Record your thoughts as you play each move</li>
-              <li>When the game finishes, analyze it to compare your thinking with the engine</li>
+              <li>Go to Games and fetch your active games from Chess.com</li>
+              <li>Open your Journal and select a game to focus on</li>
+              <li>Record your thoughts and moves as you play</li>
+              <li>Export your journal to Word whenever you want to review or share</li>
             </ol>
           </div>
           

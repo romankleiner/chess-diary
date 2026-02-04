@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     db.journal_entries.push(entry);
     await saveDb(db);
     
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, entry });
   } catch (error) {
     console.error('Error saving journal entry:', error);
     return NextResponse.json(

@@ -1,11 +1,8 @@
-- Fix the "How it works" text
-- Remove General Thoughts title from related blog entries
-- Show opponent's last move on the game diagram
-- Bullet point support in entries
-- Fix full diary reload whenever I remove an entry
-- Add the diagram as I type a game specific entry for reference
 - Increase the font when showing the diary
+- Remove debug statements from journal
 - Fix export of in-entry images for generic entries
+- Optimise requests to chessivision.ai
 - Add separator between games on export
 - Support diary backup
 - Add analysis support
+- Show opponent's last move on the game diagram

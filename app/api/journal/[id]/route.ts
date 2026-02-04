@@ -81,7 +81,7 @@ export async function PUT(
     
     await saveDb(db);
     
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, entry });
   } catch (error) {
     console.error('Error updating journal entry:', error);
     return NextResponse.json(

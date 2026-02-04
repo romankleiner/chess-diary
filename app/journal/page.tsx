@@ -166,11 +166,19 @@ export default function JournalPage() {
         });
         
         if (response.ok) {
+          const data = await response.json();
+          
           setThought('');
           setMyMove('');
           setImage('');
           setEditingEntry(null);
-          loadEntries();
+          
+          // Update the entry in state instead of reloading all entries
+          if (data.entry) {
+            setEntries(prevEntries => 
+              prevEntries.map(e => e.id === data.entry.id ? data.entry : e)
+            );
+          }
         } else {
           alert('Failed to update entry');
         }
@@ -193,6 +201,8 @@ export default function JournalPage() {
         });
         
         if (response.ok) {
+          const data = await response.json();
+          
           // Track if we should clear the game selection
           const shouldClearGame = myMove.trim() && currentGameId;
           
@@ -201,15 +211,18 @@ export default function JournalPage() {
           setMyMove('');
           setImage('');
           
+          // Add the new entry directly to state instead of reloading all entries
+          if (data.entry) {
+            setEntries(prevEntries => [...prevEntries, data.entry]);
+          }
+          
           // If a move was specified, toggle the turn in the game
           if (shouldClearGame) {
             await toggleGameTurn(currentGameId);
             setCurrentGameId(null);
+            // Only reload games to update turn status
+            loadActiveGames();
           }
-          
-          // Reload entries and games
-          loadEntries();
-          loadActiveGames();
         } else {
           alert('Failed to save entry');
         }
@@ -266,7 +279,8 @@ export default function JournalPage() {
       });
       
       if (response.ok) {
-        loadEntries();
+        // Remove entry from state instead of reloading all entries
+        setEntries(prevEntries => prevEntries.filter(e => e.id !== entryId));
       } else {
         alert('Failed to delete entry');
       }
@@ -626,6 +640,35 @@ export default function JournalPage() {
             </div>
           )}
           
+          {entryMode === 'game' && currentGameId && (() => {
+            const game = allGames.find(g => g.id === currentGameId);
+            const fenToUse = game?.fen;
+            if (fenToUse && game) {
+              // Determine orientation based on player color
+              // Compare usernames case-insensitively
+              const usernameLower = username?.toLowerCase() || '';
+              const whiteLower = game.white?.toLowerCase() || '';
+              const blackLower = game.black?.toLowerCase() || '';
+              
+              const isWhite = usernameLower === whiteLower;
+              const isBlack = usernameLower === blackLower;
+              
+              return (
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Current Position ({isWhite ? 'You are White' : 'You are Black'})
+                  </label>
+                  <img
+                    src={`https://fen2image.chessvision.ai/${encodeURIComponent(fenToUse)}${isWhite ? '' : '?pov=black'}`}
+                    alt="Chess board"
+                    className="w-80 h-80 rounded border border-gray-300"
+                  />
+                </div>
+              );
+            }
+            return null;
+          })()}
+          
           {entryMode === 'game' && !editingEntry && (
             <div>
               <label className="block text-sm font-medium mb-2">
@@ -735,11 +778,6 @@ export default function JournalPage() {
                                     Move {entry.moveNumber}: {entry.moveNotation}
                                   </span>
                                 )}
-                                {!entry.gameId && entry.entryType === 'thought' && (
-                                  <span className="font-semibold text-sm text-gray-600 dark:text-gray-400">
-                                    💭 General Thoughts
-                                  </span>
-                                )}
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-500">
@@ -798,7 +836,26 @@ export default function JournalPage() {
                               </div>
                             )}
                             
-                            <p className="text-sm whitespace-pre-wrap">{entry.content}</p>
+                            <div className="text-sm whitespace-pre-wrap">{(() => {
+                              // Convert markdown-style bullets to HTML
+                              const lines = entry.content.split('\n');
+                              return lines.map((line, idx) => {
+                                // Check if line starts with bullet markers
+                                const bulletMatch = line.match(/^(\s*)([-*•])\s+(.+)$/);
+                                if (bulletMatch) {
+                                  const [, indent, , text] = bulletMatch;
+                                  const indentLevel = indent.length / 2; // 2 spaces per indent level
+                                  return (
+                                    <div key={idx} style={{ marginLeft: `${indentLevel * 1.5}rem` }} className="flex gap-2">
+                                      <span className="text-gray-600 dark:text-gray-400">•</span>
+                                      <span>{text}</span>
+                                    </div>
+                                  );
+                                }
+                                // Regular line
+                                return line ? <div key={idx}>{line}</div> : <div key={idx} className="h-4" />;
+                              });
+                            })()}</div>
                             
                             {entry.image && (
                               <div className="mt-3">
