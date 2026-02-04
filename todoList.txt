@@ -1,5 +1,6 @@
 - Fix full diary reload whenever I remove an entry
 - Add the diagram as I type a game specific entry for reference
 - Increase the font when showing the diary
+- Fix export of in-entry images for generic entries
 - Support diary backup
 - Add analysis support
