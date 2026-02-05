@@ -135,12 +135,19 @@ export async function GET(request: NextRequest) {
                 .jpeg({ quality: 65, chromaSubsampling: '4:2:0' })
                 .toBuffer();
               
+              // Get image dimensions
+              const metadata = await sharp.default(optimizedBuffer).metadata();
+              const imgWidth = 300;
+              const imgHeight = metadata.height && metadata.width 
+                ? Math.round((metadata.height / metadata.width) * imgWidth)
+                : 300; // Fallback to square for chess boards
+              
               docSections.push(
                 new Paragraph({
                   children: [
                     new ImageRun({
                       data: Uint8Array.from(optimizedBuffer),
-                      transformation: { width: 300, height: 300 },
+                      transformation: { width: imgWidth, height: imgHeight },
                       type: 'jpg',
                     }),
                   ],
@@ -197,12 +204,19 @@ export async function GET(request: NextRequest) {
                 .jpeg({ quality: 60, chromaSubsampling: '4:2:0' })
                 .toBuffer();
               
+              // Get image dimensions to preserve aspect ratio
+              const metadata = await sharp.default(optimizedBuffer).metadata();
+              const imgWidth = 400;
+              const imgHeight = metadata.height && metadata.width 
+                ? Math.round((metadata.height / metadata.width) * imgWidth)
+                : 300; // Fallback height
+              
               docSections.push(
                 new Paragraph({
                   children: [
                     new ImageRun({
                       data: Uint8Array.from(optimizedBuffer),
-                      transformation: { width: 400, height: 300 },
+                      transformation: { width: imgWidth, height: imgHeight },
                       type: 'jpg',
                     }),
                   ],

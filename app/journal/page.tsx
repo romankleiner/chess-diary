@@ -68,28 +68,20 @@ export default function JournalPage() {
       const startDate = new Date(selectedDate);
       startDate.setDate(startDate.getDate() - 6);
       
-      console.log('Loading entries from', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
-      
       const allEntries: JournalEntry[] = [];
       const currentDate = new Date(startDate);
       
       while (currentDate <= endDate) {
         const dateStr = currentDate.toISOString().split('T')[0];
-        console.log('Fetching entries for date:', dateStr);
         const response = await fetch(`/api/journal?date=${dateStr}`);
         const data = await response.json();
         
-        console.log('Entries for', dateStr, ':', data.entries?.length || 0);
         if (data.entries) {
-          console.log('Sample entries:', data.entries);
           allEntries.push(...data.entries);
         }
         
         currentDate.setDate(currentDate.getDate() + 1);
       }
-      
-      console.log('Total entries loaded:', allEntries.length);
-      console.log('All entries:', allEntries);
       
       allEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setEntries(allEntries);
@@ -836,7 +828,7 @@ export default function JournalPage() {
                               </div>
                             )}
                             
-                            <div className="text-sm whitespace-pre-wrap">{(() => {
+                            <div className="text-base whitespace-pre-wrap">{(() => {
                               // Convert markdown-style bullets to HTML
                               const lines = entry.content.split('\n');
                               return lines.map((line, idx) => {
