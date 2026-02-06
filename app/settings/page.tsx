@@ -147,6 +147,82 @@ export default function SettingsPage() {
           </div>
         </form>
       </div>
+
+      {/* Backup & Restore Section */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 max-w-2xl">
+        <h3 className="text-xl font-semibold mb-4">Backup & Restore</h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Download a backup of your entire journal and games data, or restore from a previous backup.
+        </p>
+        
+        <div className="space-y-4">
+          <div>
+            <button
+              onClick={async () => {
+                try {
+                  const response = await fetch('/api/backup');
+                  const blob = await response.blob();
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `chess-diary-backup-${new Date().toISOString().split('T')[0]}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  window.URL.revokeObjectURL(url);
+                  document.body.removeChild(a);
+                  setMessage('Backup downloaded successfully!');
+                } catch (error) {
+                  setMessage('Failed to download backup');
+                }
+              }}
+              className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700"
+            >
+              📥 Download Backup
+            </button>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Restore from Backup
+            </label>
+            <input
+              type="file"
+              accept=".json"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                
+                try {
+                  const text = await file.text();
+                  const backup = JSON.parse(text);
+                  
+                  const response = await fetch('/api/backup/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(backup)
+                  });
+                  
+                  const result = await response.json();
+                  if (result.success) {
+                    setMessage(`Backup restored! Added ${result.stats.entries} entries and ${result.stats.games} games.`);
+                  } else {
+                    setMessage('Failed to restore backup');
+                  }
+                } catch (error) {
+                  setMessage('Invalid backup file');
+                }
+                
+                // Reset file input
+                e.target.value = '';
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              ⚠️ This will merge the backup with your current data. Existing entries won't be overwritten.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
