@@ -11,6 +11,7 @@ export interface Game {
   black: string;
   turn?: string;
   fen?: string;
+  move_by?: number; // Unix timestamp of when the next move is due
 }
 
 export interface JournalEntry {

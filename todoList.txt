@@ -1,8 +1,4 @@
-- Optimise requests to chessivision.ai
-- Add separator between games on export
-- Use Calibri (Body) 11 on export - allow font selection
 - Sort games by time remaining (highlight games where I have less than 8 hours left)
-- Add hyperlink support
 - Support diary backup
 - Add spell checker
 - Add analysis support

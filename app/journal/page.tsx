@@ -25,6 +25,7 @@ interface Game {
   result: string | null;
   turn?: string;
   fen?: string;
+  move_by?: number; // Unix timestamp of when the next move is due
 }
 
 export default function JournalPage() {
@@ -33,6 +34,7 @@ export default function JournalPage() {
   const [loading, setLoading] = useState(false);
   const [activeGames, setActiveGames] = useState<Game[]>([]);
   const [allGames, setAllGames] = useState<Game[]>([]);
+  const [gamesFetchedAt, setGamesFetchedAt] = useState<number>(Date.now());
   const [username, setUsername] = useState<string>('');
   const [showAllGames, setShowAllGames] = useState(false);
   const [currentGameId, setCurrentGameId] = useState<string | null>(null);
@@ -102,6 +104,7 @@ export default function JournalPage() {
 
   const loadActiveGames = async () => {
     try {
+      const fetchTime = Date.now();
       const response = await fetch('/api/games');
       const data = await response.json();
       
@@ -111,6 +114,9 @@ export default function JournalPage() {
       // Filter for active games for selection
       const active = data.games.filter((g: Game) => !g.result || g.result === 'null');
       setActiveGames(active);
+      
+      // Store when games were fetched for accurate time remaining calculation
+      setGamesFetchedAt(fetchTime);
     } catch (error) {
       console.error('Error loading active games:', error);
     }
@@ -487,14 +493,48 @@ export default function JournalPage() {
               )}
               
               {(() => {
-                // Filter games based on checkbox
+                // Helper function to format time remaining
+                const formatTimeRemaining = (moveBy: number | undefined) => {
+                  if (!moveBy) return null;
+                  
+                  // Use when games were fetched, not current time
+                  const deadline = moveBy * 1000; // Convert to milliseconds
+                  const remaining = deadline - gamesFetchedAt;
+                  
+                  if (remaining < 0) return 'Time expired';
+                  
+                  const days = Math.floor(remaining / (1000 * 60 * 60 * 24));
+                  const hours = Math.floor((remaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                  const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
+                  
+                  if (days > 0) return `${days}d ${hours}h`;
+                  if (hours > 0) return `${hours}h ${minutes}m`;
+                  return `${minutes}m`;
+                };
+                
+                // Filter and sort games
+                const myTurnGames = activeGames.filter(game => {
+                  const isWhite = game.white.toLowerCase() === username?.toLowerCase();
+                  return (isWhite && game.turn === 'white') || (!isWhite && game.turn === 'black');
+                });
+                
+                const notMyTurnGames = activeGames.filter(game => {
+                  const isWhite = game.white.toLowerCase() === username?.toLowerCase();
+                  return !((isWhite && game.turn === 'white') || (!isWhite && game.turn === 'black'));
+                });
+                
+                // Sort my turn games by time remaining (least time first)
+                myTurnGames.sort((a, b) => {
+                  if (!a.move_by && !b.move_by) return 0;
+                  if (!a.move_by) return 1;
+                  if (!b.move_by) return -1;
+                  return a.move_by - b.move_by;
+                });
+                
+                // Combine: my turn games first, then opponent's turn
                 const filteredGames = showAllGames 
-                  ? activeGames 
-                  : activeGames.filter(game => {
-                      // Show game if it's the user's turn
-                      const isWhite = game.white.toLowerCase() === username?.toLowerCase();
-                      return (isWhite && game.turn === 'white') || (!isWhite && game.turn === 'black');
-                    });
+                  ? [...myTurnGames, ...notMyTurnGames]
+                  : myTurnGames;
                 
                 if (filteredGames.length === 0) {
                   return (
@@ -509,6 +549,7 @@ export default function JournalPage() {
                     {filteredGames.map((game) => {
                       const isWhite = game.white.toLowerCase() === username?.toLowerCase();
                       const isMyTurn = (isWhite && game.turn === 'white') || (!isWhite && game.turn === 'black');
+                      const timeRemaining = formatTimeRemaining(game.move_by);
                       
                       // Get move number from FEN
                       let moveNumber = '';
@@ -543,11 +584,18 @@ export default function JournalPage() {
                                 </div>
                               )}
                             </div>
-                            {isMyTurn && (
-                              <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
-                                Your turn
-                              </span>
-                            )}
+                            <div className="flex flex-col items-end gap-1">
+                              {isMyTurn && timeRemaining && (
+                                <span className="text-xs font-semibold text-orange-600 dark:text-orange-400">
+                                  ⏱️ {timeRemaining}
+                                </span>
+                              )}
+                              {isMyTurn && (
+                                <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
+                                  Your turn
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {game.url && (
                             <a
@@ -651,7 +699,7 @@ export default function JournalPage() {
                     Current Position ({isWhite ? 'You are White' : 'You are Black'})
                   </label>
                   <img
-                    src={`https://fen2image.chessvision.ai/${encodeURIComponent(fenToUse)}${isWhite ? '' : '?pov=black'}`}
+                    src={`/api/board-image?fen=${encodeURIComponent(fenToUse)}${isWhite ? '' : '&pov=black'}`}
                     alt="Chess board"
                     className="w-80 h-80 rounded border border-gray-300"
                   />
@@ -726,7 +774,7 @@ export default function JournalPage() {
                           userColor = isWhite ? '⚪' : '⚫';
                           
                           // Extract move number from the FEN (stored with entry, or fallback to current game FEN)
-                          const fenToUse = entry.fen || game.fen;
+                          const fenToUse = entry.fen || (game ? game.fen : null);
                           if (fenToUse) {
                             const fenParts = fenToUse.split(' ');
                             if (fenParts.length >= 6) {
@@ -738,7 +786,7 @@ export default function JournalPage() {
                         
                         return (
                           <div
-                            key={entry.id}
+                            key={`${entry.id}-${entry.timestamp}`}
                             className={`p-4 rounded border-l-4 ${
                               entry.entryType === 'game_start'
                                 ? 'border-blue-500 bg-blue-50 dark:bg-blue-900'
@@ -797,11 +845,11 @@ export default function JournalPage() {
                               <div className="my-3 flex flex-col items-center">
                                 <div className="relative">
                                   <img
-                                    src={`https://fen2image.chessvision.ai/${encodeURIComponent(entry.fen || game?.fen || '')}${(() => {
+                                    src={`/api/board-image?fen=${encodeURIComponent(entry.fen || game?.fen || '')}${(() => {
                                       // Determine orientation based on user's color
                                       if (game && username) {
                                         const isWhite = game.white.toLowerCase() === username.toLowerCase();
-                                        return isWhite ? '' : '?pov=black';
+                                        return isWhite ? '' : '&pov=black';
                                       }
                                       return '';
                                     })()}`}
@@ -829,6 +877,29 @@ export default function JournalPage() {
                             )}
                             
                             <div className="text-base whitespace-pre-wrap">{(() => {
+                              // Function to convert URLs to links
+                              const linkifyText = (text: string) => {
+                                const urlRegex = /(https?:\/\/[^\s]+)/g;
+                                const parts = text.split(urlRegex);
+                                
+                                return parts.map((part, i) => {
+                                  if (part.match(urlRegex)) {
+                                    return (
+                                      <a
+                                        key={i}
+                                        href={part}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 hover:underline dark:text-blue-400"
+                                      >
+                                        {part}
+                                      </a>
+                                    );
+                                  }
+                                  return part;
+                                });
+                              };
+                              
                               // Convert markdown-style bullets to HTML
                               const lines = entry.content.split('\n');
                               return lines.map((line, idx) => {
@@ -840,12 +911,12 @@ export default function JournalPage() {
                                   return (
                                     <div key={idx} style={{ marginLeft: `${indentLevel * 1.5}rem` }} className="flex gap-2">
                                       <span className="text-gray-600 dark:text-gray-400">•</span>
-                                      <span>{text}</span>
+                                      <span>{linkifyText(text)}</span>
                                     </div>
                                   );
                                 }
-                                // Regular line
-                                return line ? <div key={idx}>{line}</div> : <div key={idx} className="h-4" />;
+                                // Regular line with link detection
+                                return line ? <div key={idx}>{linkifyText(line)}</div> : <div key={idx} className="h-4" />;
                               });
                             })()}</div>
                             

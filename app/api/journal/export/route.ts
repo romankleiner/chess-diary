@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import getDb from '@/lib/db';
+import { getCachedBoardImage } from '@/lib/board-image-cache';
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,6 +18,11 @@ export async function GET(request: NextRequest) {
     }
     
     const db = await getDb();
+    
+    // Get font settings
+    const exportFont = db.settings.export_font || 'Calibri';
+    const exportFontSize = parseInt(db.settings.export_font_size || '11');
+    const fontSize = exportFontSize * 2; // Convert pt to half-points for docx
     
     // Get all entries within date range, sorted chronologically (oldest first)
     const entries = db.journal_entries
@@ -55,7 +61,13 @@ export async function GET(request: NextRequest) {
           heading: HeadingLevel.TITLE,
         }),
         new Paragraph({
-          text: `Date Range: ${startDate} to ${endDate}`,
+          children: [
+            new TextRun({ 
+              text: `Date Range: ${startDate} to ${endDate}`,
+              font: exportFont,
+              size: fontSize
+            })
+          ],
           spacing: { after: 200 }
         }),
         new Paragraph({ text: '' }), // Empty line
@@ -92,9 +104,9 @@ export async function GET(request: NextRequest) {
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ text: `[${timestamp}] `, italics: true, size: 22, color: '666666' }), // 11pt, gray
-                  new TextRun({ text: `Game: `, bold: true, size: 24 }), // 12pt
-                  new TextRun({ text: `${game.white} vs ${game.black}`, size: 24 }),
+                  new TextRun({ text: `[${timestamp}] `, italics: true, size: fontSize, color: '666666', font: exportFont }),
+                  new TextRun({ text: `Game: `, bold: true, size: fontSize, font: exportFont }),
+                  new TextRun({ text: `${game.white} vs ${game.black}`, size: fontSize, font: exportFont }),
                 ],
                 spacing: { before: 300, after: 100 }
               })
@@ -104,7 +116,7 @@ export async function GET(request: NextRequest) {
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ text: `[${timestamp}]`, italics: true, size: 22, color: '666666' }), // 11pt, gray
+                  new TextRun({ text: `[${timestamp}]`, italics: true, size: fontSize, color: '666666', font: exportFont }),
                 ],
                 spacing: { before: 300, after: 100 }
               })
@@ -118,16 +130,11 @@ export async function GET(request: NextRequest) {
               const { ImageRun } = await import('docx');
               const sharp = await import('sharp');
               
-              // Fetch board image from chessvision.ai
+              // Fetch board image from cache
               const isWhite = game && username && game.white.toLowerCase() === username.toLowerCase();
               const pov = isWhite ? 'white' : 'black';
-              const boardUrl = `https://fen2image.chessvision.ai/${encodeURIComponent(fenToUse)}?colors=brown&piece_set=merida&coordinates=true&orientation=${pov}`;
               
-              const response = await fetch(boardUrl);
-              if (!response.ok) throw new Error('Failed to fetch board image');
-              
-              const arrayBuffer = await response.arrayBuffer();
-              const imageBuffer = Buffer.from(arrayBuffer);
+              const imageBuffer = await getCachedBoardImage(fenToUse, pov);
               
               // Compress the board image
               const optimizedBuffer = await sharp.default(imageBuffer)
@@ -167,12 +174,40 @@ export async function GET(request: NextRequest) {
             }
           }
           
-          // Entry content - larger font
+          // Entry content with hyperlink support
+          const contentChildren: any[] = [];
+          const urlRegex = /(https?:\/\/[^\s]+)/g;
+          const contentParts = entry.content.split(urlRegex);
+          
+          for (const part of contentParts) {
+            if (part.match(urlRegex)) {
+              // This is a URL - create a hyperlink
+              const { ExternalHyperlink } = await import('docx');
+              contentChildren.push(
+                new ExternalHyperlink({
+                  children: [
+                    new TextRun({ 
+                      text: part, 
+                      size: fontSize, 
+                      font: exportFont,
+                      color: '0563C1', // Blue color for links
+                      underline: {}
+                    })
+                  ],
+                  link: part
+                })
+              );
+            } else {
+              // Regular text
+              contentChildren.push(
+                new TextRun({ text: part, size: fontSize, font: exportFont })
+              );
+            }
+          }
+          
           docSections.push(
             new Paragraph({
-              children: [
-                new TextRun({ text: entry.content, size: 26 }), // 13pt - larger and more readable
-              ],
+              children: contentChildren,
               spacing: { after: 120 }
             })
           );
@@ -182,8 +217,8 @@ export async function GET(request: NextRequest) {
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ text: `My Move: `, bold: true, size: 24 }),
-                  new TextRun({ text: entry.myMove, size: 24 }),
+                  new TextRun({ text: `My Move: `, bold: true, size: fontSize, font: exportFont }),
+                  new TextRun({ text: entry.myMove, size: fontSize, font: exportFont }),
                 ],
                 spacing: { after: 120 }
               })

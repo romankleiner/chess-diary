@@ -35,8 +35,14 @@ export async function POST(request: NextRequest) {
     }
     
     const db = await getDb();
+    
+    // Generate ID based on max existing ID, not array length (to avoid duplicates after deletions)
+    const maxId = db.journal_entries.length > 0 
+      ? Math.max(...db.journal_entries.map(e => e.id))
+      : 0;
+    
     const entry = {
-      id: db.journal_entries.length + 1,
+      id: maxId + 1,
       date,
       gameId: gameId || null,
       entryType,

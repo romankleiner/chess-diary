@@ -89,6 +89,7 @@ export function parseChessComGame(game: any, username: string): Game | null {
     black: blackUsername,
     turn: game.turn || null,
     fen: game.fen || null,
+    move_by: game.move_by || null,
   };
 }
 
