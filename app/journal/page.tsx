@@ -46,6 +46,7 @@ export default function JournalPage() {
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [entryMode, setEntryMode] = useState<'general' | 'game'>('general');
+  const [filterGameId, setFilterGameId] = useState<string>('all'); // 'all', 'general', or specific game ID
 
   useEffect(() => {
     loadEntries();
@@ -738,9 +739,32 @@ export default function JournalPage() {
       </div>
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h3 className="text-xl font-semibold mb-4">
-          Journal Entries ({getDateRangeText()})
-        </h3>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-semibold">
+            Journal Entries ({getDateRangeText()})
+          </h3>
+          
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium">Filter:</label>
+            <select
+              value={filterGameId}
+              onChange={(e) => setFilterGameId(e.target.value)}
+              className="px-3 py-1 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:border-gray-600"
+            >
+              <option value="all">All Entries</option>
+              <option value="general">General Thoughts Only</option>
+              <optgroup label="Game-Specific">
+                {allGames
+                  .filter(g => entries.some(e => e.gameId === g.id))
+                  .map(game => (
+                    <option key={game.id} value={game.id}>
+                      {game.white} vs {game.black}
+                    </option>
+                  ))}
+              </optgroup>
+            </select>
+          </div>
+        </div>
         
         {loading ? (
           <p className="text-center text-gray-600">Loading...</p>
@@ -750,7 +774,18 @@ export default function JournalPage() {
           <div className="space-y-6">
             {Object.keys(groupedEntries)
               .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())
-              .map((date) => (
+              .map((date) => {
+                // Filter entries for this date
+                const filteredEntries = groupedEntries[date].filter((entry) => {
+                  if (filterGameId === 'all') return true;
+                  if (filterGameId === 'general') return !entry.gameId;
+                  return entry.gameId === filterGameId;
+                });
+                
+                // Skip this date if no entries match filter
+                if (filteredEntries.length === 0) return null;
+                
+                return (
                 <div key={date}>
                   <h4 className="text-lg font-semibold mb-3 text-blue-600 dark:text-blue-400 border-b pb-2">
                     {new Date(date).toLocaleDateString('en-US', { 
@@ -761,7 +796,7 @@ export default function JournalPage() {
                     })}
                   </h4>
                   <div className="space-y-3 ml-4">
-                    {groupedEntries[date]
+                    {filteredEntries
                       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
                       .map((entry) => {
                         // Find game info if this is a game-specific entry
@@ -939,7 +974,8 @@ export default function JournalPage() {
                       })}
                   </div>
                 </div>
-              ))}
+                );
+              })}
           </div>
         )}
       </div>

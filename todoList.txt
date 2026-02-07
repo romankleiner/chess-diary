@@ -1,3 +1,3 @@
-- Add spell checker
+- Filter journal entris by specific game
 - Add analysis support
 - Show opponent's last move on the game diagram
