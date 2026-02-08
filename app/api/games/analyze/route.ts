@@ -6,9 +6,16 @@ import { Stockfish } from '@se-oss/stockfish';
 function calculateAccuracy(centipawnLosses: number[]): number {
   if (centipawnLosses.length === 0) return 100;
   
+  // Chess.com-style accuracy calculation
+  // Formula: 103.1668 * exp(-0.04354 * avgLoss) - 3.1669
+  // This gives more realistic scores and heavily penalizes mistakes
   const avgLoss = centipawnLosses.reduce((a, b) => a + b, 0) / centipawnLosses.length;
-  const accuracy = Math.max(0, 100 - (avgLoss / 10));
-  return Math.round(accuracy * 10) / 10;
+  
+  // Apply exponential decay formula
+  const accuracy = 103.1668 * Math.exp(-0.04354 * avgLoss) - 3.1669;
+  
+  // Clamp between 0 and 100
+  return Math.max(0, Math.min(100, Math.round(accuracy * 10) / 10));
 }
 
 function getMoveQuality(cpLoss: number): string {
@@ -183,6 +190,11 @@ export async function POST(request: NextRequest) {
       blackAccuracy: analysis.blackAccuracy,
       moves: analysis.moves,
     };
+    
+    // Mark game as analyzed
+    if (db.games[gameId]) {
+      db.games[gameId].analysisCompleted = true;
+    }
     
     await saveDb(db);
     

@@ -10,7 +10,7 @@ interface Game {
   result: string;
   white: string;
   black: string;
-  analysis_completed: number;
+  analysisCompleted?: boolean;
 }
 
 export default function GamesPage() {
@@ -65,7 +65,13 @@ export default function GamesPage() {
   };
 
   const analyzeGame = async (gameId: string) => {
-    if (!confirm('Analyze this game with Stockfish? This may take a few minutes.')) {
+    const game = games.find(g => g.id === gameId);
+    const isReanalyze = game?.analysisCompleted;
+    
+    if (!confirm(isReanalyze 
+      ? 'Re-analyze this game? This will overwrite the existing analysis.' 
+      : 'Analyze this game with Stockfish? This may take a few minutes.'
+    )) {
       return;
     }
     
@@ -157,7 +163,7 @@ export default function GamesPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {game.analysis_completed ? 'Analyzed' : 'Not analyzed'}
+                    {game.analysisCompleted ? 'Analyzed' : 'Not analyzed'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <div className="flex gap-2">
@@ -167,17 +173,25 @@ export default function GamesPage() {
                       >
                         View
                       </Link>
-                      {game.result && game.result !== 'null' && !game.analysis_completed && (
+                      {game.analysisCompleted && (
+                        <Link
+                          href={`/games/${game.id}/analysis`}
+                          className="text-green-600 hover:underline"
+                        >
+                          Analysis
+                        </Link>
+                      )}
+                      {game.result && game.result !== 'null' && (
                         <button
                           onClick={() => analyzeGame(game.id)}
                           disabled={analyzing === game.id}
                           className="text-purple-600 hover:underline disabled:text-gray-400 disabled:cursor-not-allowed"
                         >
-                          {analyzing === game.id ? 'Analyzing...' : 'Analyze'}
+                          {analyzing === game.id ? 'Analyzing...' : (game.analysisCompleted ? 'Re-analyze' : 'Analyze')}
                         </button>
                       )}
-                      {game.analysis_completed && (
-                        <span className="text-green-600">✓ Analyzed</span>
+                      {game.analysisCompleted && analyzing !== game.id && (
+                        <span className="text-green-600">✓</span>
                       )}
                     </div>
                   </td>
