@@ -17,6 +17,7 @@ export default function GamesPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
+  const [analyzing, setAnalyzing] = useState<string | null>(null); // Track which game is being analyzed
   const [toast, setToast] = useState<{ message: string; show: boolean }>({ message: '', show: false });
 
   useEffect(() => {
@@ -60,6 +61,35 @@ export default function GamesPage() {
       alert('Failed to fetch games from Chess.com');
     } finally {
       setFetching(false);
+    }
+  };
+
+  const analyzeGame = async (gameId: string) => {
+    if (!confirm('Analyze this game with Stockfish? This may take a few minutes.')) {
+      return;
+    }
+    
+    setAnalyzing(gameId);
+    try {
+      const response = await fetch('/api/games/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        showToast(`Analysis complete! White: ${data.analysis.whiteAccuracy}% | Black: ${data.analysis.blackAccuracy}%`);
+        loadGames(); // Reload to update analysis status
+      } else {
+        alert('Failed to analyze game');
+      }
+    } catch (error) {
+      console.error('Error analyzing game:', error);
+      alert('Failed to analyze game');
+    } finally {
+      setAnalyzing(null);
     }
   };
 
@@ -130,12 +160,26 @@ export default function GamesPage() {
                     {game.analysis_completed ? 'Analyzed' : 'Not analyzed'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <Link
-                      href={`/games/${game.id}`}
-                      className="text-blue-600 hover:underline"
-                    >
-                      View
-                    </Link>
+                    <div className="flex gap-2">
+                      <Link
+                        href={`/games/${game.id}`}
+                        className="text-blue-600 hover:underline"
+                      >
+                        View
+                      </Link>
+                      {game.result && game.result !== 'null' && !game.analysis_completed && (
+                        <button
+                          onClick={() => analyzeGame(game.id)}
+                          disabled={analyzing === game.id}
+                          className="text-purple-600 hover:underline disabled:text-gray-400 disabled:cursor-not-allowed"
+                        >
+                          {analyzing === game.id ? 'Analyzing...' : 'Analyze'}
+                        </button>
+                      )}
+                      {game.analysis_completed && (
+                        <span className="text-green-600">✓ Analyzed</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

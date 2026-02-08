@@ -41,6 +41,7 @@ export interface MoveAnalysis {
 
 export interface Settings {
   chesscomUsername: string;
+  analysisDepth: number;
 }
 
 export interface DayJournal {

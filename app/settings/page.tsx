@@ -6,6 +6,7 @@ export default function SettingsPage() {
   const [username, setUsername] = useState('');
   const [exportFont, setExportFont] = useState('Calibri');
   const [exportFontSize, setExportFontSize] = useState('11');
+  const [analysisDepth, setAnalysisDepth] = useState('18');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -21,6 +22,7 @@ export default function SettingsPage() {
       setUsername(data.settings?.chesscom_username || '');
       setExportFont(data.settings?.export_font || 'Calibri');
       setExportFontSize(data.settings?.export_font_size || '11');
+      setAnalysisDepth(data.settings?.analysis_depth || '18');
     } catch (error) {
       console.error('Error loading settings:', error);
     } finally {
@@ -47,10 +49,16 @@ export default function SettingsPage() {
         body: JSON.stringify({ key: 'export_font', value: exportFont }),
       });
       
-      const response = await fetch('/api/settings', {
+      await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'export_font_size', value: exportFontSize }),
+      });
+      
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'analysis_depth', value: analysisDepth }),
       });
 
       if (response.ok) {
@@ -126,6 +134,26 @@ export default function SettingsPage() {
               <option value="13">13pt</option>
               <option value="18">18pt</option>
             </select>
+          </div>
+          
+          <div>
+            <label htmlFor="analysisDepth" className="block text-sm font-medium mb-2">
+              Stockfish Analysis Depth
+            </label>
+            <select
+              id="analysisDepth"
+              value={analysisDepth}
+              onChange={(e) => setAnalysisDepth(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
+            >
+              <option value="10">10 (Fast, ~5s per position)</option>
+              <option value="15">15 (Balanced, ~15s per position)</option>
+              <option value="18">18 (High quality, ~30s per position)</option>
+              <option value="20">20 (Excellent, ~60s per position)</option>
+            </select>
+            <p className="text-sm text-gray-500 mt-1">
+              Higher depth = more accurate analysis but slower. Start with 10 for testing.
+            </p>
           </div>
 
           <div className="flex items-center gap-4">

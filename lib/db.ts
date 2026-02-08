@@ -1,84 +1,115 @@
-import Redis from 'ioredis';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import path from 'path';
 import { auth } from '@clerk/nextjs/server';
 
-export interface DatabaseData {
+interface DatabaseData {
   games: Record<string, any>;
   journal_entries: any[];
   move_analysis: any[];
   settings: Record<string, string>;
+  game_analyses?: Record<string, any>; // Analysis results for games
 }
 
-// Create Redis client
-let redis: Redis | null = null;
+const dbCaches: Record<string, DatabaseData> = {};
 
-function getRedisClient(): Redis {
-  if (!redis && process.env.REDIS_URL) {
-    redis = new Redis(process.env.REDIS_URL);
+function getDataPath(userId: string): string {
+  const dataDir = path.join(process.cwd(), 'data');
+  if (!existsSync(dataDir)) {
+    mkdirSync(dataDir, { recursive: true });
   }
-  
-  if (!redis) {
-    throw new Error('Redis not configured');
-  }
-  
-  return redis;
+  return path.join(dataDir, `chess-diary-${userId}.json`);
 }
 
-// Get user ID from Clerk
-async function getUserId(): Promise<string> {
-  const authResult = await auth();
-  const userId = authResult.userId;
-  
-  if (!userId) {
-    throw new Error('User not authenticated');
-  }
-  
-  return userId;
-}
-
-// Initialize empty database structure
-function getEmptyDb(): DatabaseData {
-  return {
-    games: {},
-    journal_entries: [],
-    move_analysis: [],
-    settings: {}
-  };
-}
-
-// Get database for current user
+// Initialize or load database for specific user
 export async function getDb(userId?: string): Promise<DatabaseData> {
-  const uid = userId || await getUserId();
-  const key = `chess-diary:${uid}`;
-  
-  try {
-    const client = getRedisClient();
-    const data = await client.get(key);
-    
-    if (!data) {
-      // Create initial empty database for user
-      const emptyDb = getEmptyDb();
-      await client.set(key, JSON.stringify(emptyDb));
-      return emptyDb;
+  // Get user ID from Clerk if not provided
+  if (!userId) {
+    try {
+      const authResult = await auth();
+      const clerkUserId = authResult.userId;
+      
+      if (!clerkUserId) {
+        // Return empty database structure if no user (shouldn't happen in protected routes)
+        console.warn('getDb called without authenticated user');
+        return {
+          games: {},
+          journal_entries: [],
+          move_analysis: [],
+          settings: {}
+        };
+      }
+      userId = clerkUserId;
+    } catch (error) {
+      console.error('Error getting auth:', error);
+      return {
+        games: {},
+        journal_entries: [],
+        move_analysis: [],
+        settings: {}
+      };
     }
-    
-    return JSON.parse(data) as DatabaseData;
-  } catch (error) {
-    console.error('Error reading from Redis:', error);
-    return getEmptyDb();
   }
+  
+  // Return cached data if available
+  if (dbCaches[userId]) {
+    return dbCaches[userId];
+  }
+
+  const dataPath = getDataPath(userId);
+  
+  if (existsSync(dataPath)) {
+    try {
+      const data = readFileSync(dataPath, 'utf-8');
+      dbCaches[userId] = JSON.parse(data);
+    } catch (error) {
+      console.error('Error reading database file:', error);
+      dbCaches[userId] = {
+        games: {},
+        journal_entries: [],
+        move_analysis: [],
+        settings: {}
+      };
+    }
+  } else {
+    dbCaches[userId] = {
+      games: {},
+      journal_entries: [],
+      move_analysis: [],
+      settings: {}
+    };
+    try {
+      saveDb(dbCaches[userId], userId);
+    } catch (error) {
+      console.error('Error creating initial database:', error);
+    }
+  }
+  
+  return dbCaches[userId];
 }
 
-// Save database for current user
-export async function saveDb(data: DatabaseData, userId?: string): Promise<void> {
-  const uid = userId || await getUserId();
-  const key = `chess-diary:${uid}`;
+export async function saveDb(data: DatabaseData, userId?: string) {
+  if (!userId) {
+    try {
+      const authResult = await auth();
+      const clerkUserId = authResult.userId;
+      
+      if (!clerkUserId) {
+        console.error('Cannot save database: user not authenticated');
+        return;
+      }
+      userId = clerkUserId;
+    } catch (error) {
+      console.error('Error getting auth for save:', error);
+      return;
+    }
+  }
   
   try {
-    const client = getRedisClient();
-    await client.set(key, JSON.stringify(data));
+    const dataPath = getDataPath(userId);
+    writeFileSync(dataPath, JSON.stringify(data, null, 2));
+    dbCaches[userId] = data;
   } catch (error) {
-    console.error('Error saving to Redis:', error);
-    throw new Error('Failed to save database');
+    console.error('Error saving database:', error);
   }
 }
 
