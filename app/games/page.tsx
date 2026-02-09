@@ -17,7 +17,8 @@ export default function GamesPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
-  const [analyzing, setAnalyzing] = useState<string | null>(null); // Track which game is being analyzed
+  const [analyzing, setAnalyzing] = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number } | null>(null);
   const [toast, setToast] = useState<{ message: string; show: boolean }>({ message: '', show: false });
 
   useEffect(() => {
@@ -76,6 +77,21 @@ export default function GamesPage() {
     }
     
     setAnalyzing(gameId);
+    setAnalysisProgress(null);
+    
+    // Start polling for progress
+    const progressInterval = setInterval(async () => {
+      try {
+        const progressRes = await fetch(`/api/games/${gameId}/analysis/progress`);
+        const progressData = await progressRes.json();
+        if (progressData.progress) {
+          setAnalysisProgress(progressData.progress);
+        }
+      } catch (error) {
+        // Ignore errors during polling
+      }
+    }, 1000); // Poll every second
+    
     try {
       const response = await fetch('/api/games/analyze', {
         method: 'POST',
@@ -95,7 +111,9 @@ export default function GamesPage() {
       console.error('Error analyzing game:', error);
       alert('Failed to analyze game');
     } finally {
+      clearInterval(progressInterval);
       setAnalyzing(null);
+      setAnalysisProgress(null);
     }
   };
 
@@ -184,10 +202,15 @@ export default function GamesPage() {
                       {game.result && game.result !== 'null' && (
                         <button
                           onClick={() => analyzeGame(game.id)}
-                          disabled={analyzing === game.id}
+                          disabled={analyzing !== null}
                           className="text-purple-600 hover:underline disabled:text-gray-400 disabled:cursor-not-allowed"
                         >
-                          {analyzing === game.id ? 'Analyzing...' : (game.analysisCompleted ? 'Re-analyze' : 'Analyze')}
+                          {analyzing === game.id 
+                            ? (analysisProgress 
+                              ? `Analyzing... ${analysisProgress.current}/${analysisProgress.total}` 
+                              : 'Starting...')
+                            : (game.analysisCompleted ? 'Re-analyze' : 'Analyze')
+                          }
                         </button>
                       )}
                       {game.analysisCompleted && analyzing !== game.id && (

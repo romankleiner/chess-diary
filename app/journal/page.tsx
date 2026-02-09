@@ -48,6 +48,26 @@ export default function JournalPage() {
   const [entryMode, setEntryMode] = useState<'general' | 'game'>('general');
   const [filterGameId, setFilterGameId] = useState<string>('all'); // 'all', 'general', or specific game ID
 
+  // Auto-resize textarea
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setThought(e.target.value);
+    
+    // Auto-resize
+    e.target.style.height = 'auto';
+    const newHeight = Math.min(e.target.scrollHeight, 400); // Max 400px
+    e.target.style.height = `${newHeight}px`;
+  };
+
+  // Reset textarea height when thought changes externally
+  useEffect(() => {
+    const textarea = document.querySelector('textarea');
+    if (textarea) {
+      textarea.style.height = 'auto';
+      const newHeight = Math.min(textarea.scrollHeight, 400);
+      textarea.style.height = `${newHeight}px`;
+    }
+  }, [thought]);
+
   useEffect(() => {
     loadEntries();
     loadActiveGames();
@@ -651,10 +671,10 @@ export default function JournalPage() {
             </label>
             <textarea
               value={thought}
-              onChange={(e) => setThought(e.target.value)}
+              onChange={handleTextareaChange}
               onPaste={handleImagePaste}
               spellCheck={true}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 h-32"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 min-h-[8rem] resize-none overflow-y-auto"
               placeholder={
                 entryMode === 'general'
                   ? "What's on your mind today? Any general chess thoughts or reflections... (Paste images with Ctrl+V)"

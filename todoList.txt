@@ -1,4 +1,4 @@
-- Fix analysis status not showing on Vercel deployment
+- Fix analysis from Vercel
 - Increase size of entry textbox (or add auto-increase)
 - Save and display the depth setting used in analysis
 - Find diary entries for previously analysed game, and run an AI engine to provide feedback on the thought process

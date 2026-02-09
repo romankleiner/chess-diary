@@ -2,19 +2,25 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
 import getDb, { saveDb } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
+import { setProgress, clearProgress } from '../[id]/analysis/progress/route';
 
 function calculateAccuracy(centipawnLosses: number[]): number {
   if (centipawnLosses.length === 0) return 100;
   
-  // Chess.com-style accuracy calculation
-  // Formula: 103.1668 * exp(-0.04354 * avgLoss) - 3.1669
-  // This gives more realistic scores and heavily penalizes mistakes
-  const avgLoss = centipawnLosses.reduce((a, b) => a + b, 0) / centipawnLosses.length;
+  // More balanced formula: penalize mistakes but not too harshly
+  // Uses winrate-based accuracy similar to Lichess
+  let totalAccuracy = 0;
   
-  // Apply exponential decay formula
-  const accuracy = 103.1668 * Math.exp(-0.04354 * avgLoss) - 3.1669;
+  for (const loss of centipawnLosses) {
+    // Convert CP loss to move accuracy using win percentage formula
+    // Win% = 50 + 50 * (2 / (1 + exp(0.00368208 * cp)) - 1)
+    // For loss, we calculate how much worse the position got
+    const winPercentageLost = 50 * (2 / (1 + Math.exp(0.00368208 * loss)) - 1);
+    const moveAccuracy = 100 - Math.abs(winPercentageLost);
+    totalAccuracy += moveAccuracy;
+  }
   
-  // Clamp between 0 and 100
+  const accuracy = totalAccuracy / centipawnLosses.length;
   return Math.max(0, Math.min(100, Math.round(accuracy * 10) / 10));
 }
 
@@ -26,7 +32,7 @@ function getMoveQuality(cpLoss: number): string {
   return 'blunder';
 }
 
-async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' | 'black'): Promise<{ moves: any[]; whiteAccuracy: number; blackAccuracy: number }> {
+async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' | 'black', gameId: string): Promise<{ moves: any[]; whiteAccuracy: number; blackAccuracy: number }> {
   const chess = new Chess();
   chess.loadPgn(pgn);
   const history = chess.history({ verbose: true });
@@ -40,10 +46,16 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   const whiteLosses: number[] = [];
   const blackLosses: number[] = [];
   
+  // Set initial progress
+  setProgress(gameId, 0, history.length);
+  
   try {
     for (let i = 0; i < history.length; i++) {
       const move = history[i];
       const isWhiteMove = chess.turn() === 'w';
+      
+      // Update progress
+      setProgress(gameId, i + 1, history.length);
       const isUserMove = (userColor === 'white' && isWhiteMove) || (userColor === 'black' && !isWhiteMove);
       
       try {
@@ -175,7 +187,10 @@ export async function POST(request: NextRequest) {
     const username = db.settings?.chesscom_username?.toLowerCase() || '';
     const userColor: 'white' | 'black' = game.white.toLowerCase() === username ? 'white' : 'black';
     
-    const analysis = await analyzeGame(game.pgn, depth, userColor);
+    const analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
+    
+    // Clear progress when done
+    clearProgress(gameId);
     
     if (!db.game_analyses) {
       db.game_analyses = {};
