@@ -1,3 +1,6 @@
+- Prevent Vercel rebuild on todo.txt change?
+- Edit of an entry in filtered mode doesn't work
+- General entries shouldn't have line break after timestamp on export
 - Fix analysis from Vercel
 - Save and display the depth setting used in analysis
 - Find diary entries for previously analysed game, and run an AI engine to provide feedback on the thought process
