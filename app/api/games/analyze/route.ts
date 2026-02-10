@@ -49,6 +49,8 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   // Set initial progress
   setProgress(gameId, 0, history.length);
   
+  console.log(`[STOCKFISH] Starting analysis of ${history.length} moves at depth ${depth}...`);
+  
   try {
     for (let i = 0; i < history.length; i++) {
       const move = history[i];
@@ -60,7 +62,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
       
       try {
         const fenBefore = chess.fen();
-        console.log(`Analyzing move ${i + 1}/${history.length}: ${move.san}`);
+        console.log(`[STOCKFISH] Analyzing move ${i + 1}/${history.length}: ${move.san}`);
         
         // Analyze position before move - this gives us the evaluation and best move
         const analysisBefore = await engine.analyze(fenBefore, depth);
@@ -141,7 +143,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           moveQuality: getMoveQuality(cpLoss),
         });
       } catch (error) {
-        console.error(`Error analyzing move ${i + 1}:`, error);
+        console.error(`[STOCKFISH] Error analyzing move ${i + 1}:`, error);
       }
     }
   } finally {
@@ -152,7 +154,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   const whiteAccuracy = calculateAccuracy(whiteLosses);
   const blackAccuracy = calculateAccuracy(blackLosses);
   
-  console.log(`Analysis complete! White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
+  console.log(`[STOCKFISH] Analysis complete! White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
   
   return {
     moves: analyses,
@@ -187,6 +189,8 @@ export async function POST(request: NextRequest) {
     const username = db.settings?.chesscom_username?.toLowerCase() || '';
     const userColor: 'white' | 'black' = game.white.toLowerCase() === username ? 'white' : 'black';
     
+    console.log(`[ANALYZE] Starting Stockfish analysis for game ${gameId} at depth ${depth}`);
+    
     const analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
     
     // Clear progress when done
@@ -206,19 +210,37 @@ export async function POST(request: NextRequest) {
       moves: analysis.moves,
     };
     
-    // Mark game as analyzed
-    if (db.games[gameId]) {
+    // Mark game as analyzed - CRITICAL: Set this BEFORE saving
+    if (!db.games[gameId]) {
+      console.error(`[ANALYZE] Warning: Game ${gameId} not found when setting flag`);
+    } else {
       db.games[gameId].analysisCompleted = true;
+      console.log(`[ANALYZE] Set analysisCompleted=true for game ${gameId}`);
     }
     
+    // Save database
+    console.log(`[ANALYZE] Saving database...`);
     await saveDb(db);
+    console.log(`[ANALYZE] Database saved successfully`);
+    
+    // Verify the flag was set
+    const verifyDb = await getDb();
+    if (!verifyDb.games[gameId]?.analysisCompleted) {
+      console.error(`[ANALYZE] ERROR: Flag not persisted for game ${gameId}!`);
+      // Try to fix it immediately
+      verifyDb.games[gameId].analysisCompleted = true;
+      await saveDb(verifyDb);
+      console.log(`[ANALYZE] Attempted to fix flag on second save`);
+    } else {
+      console.log(`[ANALYZE] Verified: analysisCompleted flag is set`);
+    }
     
     return NextResponse.json({
       success: true,
       analysis: db.game_analyses[gameId],
     });
   } catch (error) {
-    console.error('Error analyzing game:', error);
+    console.error('[ANALYZE] Error analyzing game:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to analyze game' },
       { status: 500 }

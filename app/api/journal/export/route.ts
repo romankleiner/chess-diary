@@ -174,43 +174,72 @@ export async function GET(request: NextRequest) {
             }
           }
           
-          // Entry content with hyperlink support
-          const contentChildren: any[] = [];
-          const urlRegex = /(https?:\/\/[^\s]+)/g;
-          const contentParts = entry.content.split(urlRegex);
+          // Entry content with hyperlink support and line breaks
+          // Split by paragraphs first (double newlines)
+          const paragraphs = entry.content.split(/\n\n+/);
           
-          for (const part of contentParts) {
-            if (part.match(urlRegex)) {
-              // This is a URL - create a hyperlink
-              const { ExternalHyperlink } = await import('docx');
-              contentChildren.push(
-                new ExternalHyperlink({
-                  children: [
-                    new TextRun({ 
-                      text: part, 
-                      size: fontSize, 
-                      font: exportFont,
-                      color: '0563C1', // Blue color for links
-                      underline: {}
+          for (let p = 0; p < paragraphs.length; p++) {
+            const paragraphText = paragraphs[p];
+            
+            // Split each paragraph by single newlines to handle line breaks
+            const lines = paragraphText.split('\n');
+            
+            for (let l = 0; l < lines.length; l++) {
+              const line = lines[l];
+              const contentChildren: any[] = [];
+              const urlRegex = /(https?:\/\/[^\s]+)/g;
+              const contentParts = line.split(urlRegex);
+              
+              for (const part of contentParts) {
+                if (part.match(urlRegex)) {
+                  // This is a URL - create a hyperlink
+                  const { ExternalHyperlink } = await import('docx');
+                  contentChildren.push(
+                    new ExternalHyperlink({
+                      children: [
+                        new TextRun({ 
+                          text: part, 
+                          size: fontSize, 
+                          font: exportFont,
+                          color: '0563C1', // Blue color for links
+                          underline: {}
+                        })
+                      ],
+                      link: part
                     })
-                  ],
-                  link: part
+                  );
+                } else if (part) {
+                  // Regular text
+                  contentChildren.push(
+                    new TextRun({ text: part, size: fontSize, font: exportFont })
+                  );
+                }
+              }
+              
+              // Add paragraph with appropriate spacing
+              // Last line of last paragraph gets after spacing, others get minimal spacing
+              const isLastLineOfLastParagraph = (p === paragraphs.length - 1) && (l === lines.length - 1);
+              docSections.push(
+                new Paragraph({
+                  children: contentChildren.length > 0 ? contentChildren : [new TextRun({ text: '', size: fontSize, font: exportFont })],
+                  spacing: { 
+                    after: isLastLineOfLastParagraph ? 120 : 0,
+                    line: 276 // Single line spacing (12pt * 1.15 * 20 twips)
+                  }
                 })
               );
-            } else {
-              // Regular text
-              contentChildren.push(
-                new TextRun({ text: part, size: fontSize, font: exportFont })
+            }
+            
+            // Add extra spacing between paragraphs (double newline)
+            if (p < paragraphs.length - 1) {
+              docSections.push(
+                new Paragraph({
+                  children: [new TextRun({ text: '', size: fontSize, font: exportFont })],
+                  spacing: { after: 120 }
+                })
               );
             }
           }
-          
-          docSections.push(
-            new Paragraph({
-              children: contentChildren,
-              spacing: { after: 120 }
-            })
-          );
           
           // My Move (if exists)
           if (entry.myMove) {

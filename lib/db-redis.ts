@@ -76,10 +76,19 @@ export async function saveDb(data: DatabaseData, userId?: string): Promise<void>
   
   try {
     const client = getRedisClient();
+    console.log(`[REDIS] Saving to key: ${key}`);
     await client.set(key, JSON.stringify(data));
+    console.log(`[REDIS] Save successful`);
+    
+    // Verify write
+    const verify = await client.get(key);
+    if (!verify) {
+      throw new Error('Data verification failed - Redis returned null after save');
+    }
+    console.log(`[REDIS] Verified: data exists after save`);
   } catch (error) {
-    console.error('Error saving to Redis:', error);
-    throw new Error('Failed to save database');
+    console.error('[REDIS] Error saving to Redis:', error);
+    throw new Error(`Failed to save database: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
