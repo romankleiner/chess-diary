@@ -1,4 +1,5 @@
 - Prevent Vercel rebuild on todo.txt change?
+- Allow extending the journal range, especially if it's filtered on a specific game
 - Edit of an entry in filtered mode doesn't work
 - General entries shouldn't have line break after timestamp on export
 - Improve spell check to check for grammatical errors
