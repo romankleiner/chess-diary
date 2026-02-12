@@ -1,3 +1,4 @@
+- Test change in todoList.txt
 - Allow extending the journal range, especially if it's filtered on a specific game
 - Edit of an entry in filtered mode doesn't work
 - General entries shouldn't have line break after timestamp on export
