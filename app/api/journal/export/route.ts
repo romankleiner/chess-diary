@@ -99,8 +99,10 @@ export async function GET(request: NextRequest) {
             minute: '2-digit'
           });
           
-          // Timestamp + Game info on same line (if game exists)
-          if (game) {
+          // Chess board diagram (if FEN exists) - show before content for game entries
+          const fenToUse = entry.fen || (game && game.fen);
+          if (game && fenToUse) {
+            // For game entries, show timestamp + game info, then board
             docSections.push(
               new Paragraph({
                 children: [
@@ -111,27 +113,13 @@ export async function GET(request: NextRequest) {
                 spacing: { before: 300, after: 100 }
               })
             );
-          } else {
-            // Just timestamp if no game
-            docSections.push(
-              new Paragraph({
-                children: [
-                  new TextRun({ text: `[${timestamp}]`, italics: true, size: fontSize, color: '666666', font: exportFont }),
-                ],
-                spacing: { before: 300, after: 100 }
-              })
-            );
-          }
-          
-          // Chess board diagram (if FEN exists)
-          const fenToUse = entry.fen || (game && game.fen);
-          if (fenToUse) {
+            
             try {
               const { ImageRun } = await import('docx');
               const sharp = await import('sharp');
               
               // Fetch board image from cache
-              const isWhite = game && username && game.white.toLowerCase() === username.toLowerCase();
+              const isWhite = username && game.white.toLowerCase() === username.toLowerCase();
               const pov = isWhite ? 'white' : 'black';
               
               const imageBuffer = await getCachedBoardImage(fenToUse, pov);
@@ -147,7 +135,7 @@ export async function GET(request: NextRequest) {
               const imgWidth = 300;
               const imgHeight = metadata.height && metadata.width 
                 ? Math.round((metadata.height / metadata.width) * imgWidth)
-                : 300; // Fallback to square for chess boards
+                : 300;
               
               docSections.push(
                 new Paragraph({
@@ -178,21 +166,41 @@ export async function GET(request: NextRequest) {
           // Split by paragraphs first (double newlines)
           const paragraphs = entry.content.split(/\n\n+/);
           
-          for (let p = 0; p < paragraphs.length; p++) {
-            const paragraphText = paragraphs[p];
+          // First paragraph handling - merge with timestamp for general entries
+          const firstParagraphLines = paragraphs[0].split('\n');
+          
+          // Build first line with timestamp
+          for (let l = 0; l < firstParagraphLines.length; l++) {
+            const line = firstParagraphLines[l];
+            const contentChildren: any[] = [];
             
-            // Split each paragraph by single newlines to handle line breaks
-            const lines = paragraphText.split('\n');
+            // Add timestamp only on the very first line, and only for non-game entries
+            if (l === 0 && !game) {
+              contentChildren.push(
+                new TextRun({ text: `[${timestamp}] `, italics: true, size: fontSize, color: '666666', font: exportFont })
+              );
+            }
             
-            for (let l = 0; l < lines.length; l++) {
-              const line = lines[l];
-              const contentChildren: any[] = [];
-              const urlRegex = /(https?:\/\/[^\s]+)/g;
-              const contentParts = line.split(urlRegex);
+            // Add content for this line
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const contentParts = line.split(urlRegex);
+            
+            // Check if this line is a bullet point
+            const bulletMatch = line.match(/^(\s*)([-*•])\s+(.+)$/);
+            let isBullet = false;
+            let bulletIndent = 0;
+            let bulletText = line;
+            
+            if (bulletMatch) {
+              isBullet = true;
+              bulletIndent = Math.floor(bulletMatch[1].length / 2); // Indent level (2 spaces = 1 level)
+              bulletText = bulletMatch[3]; // Text after bullet
               
-              for (const part of contentParts) {
+              // Re-split the bullet text for URL processing
+              const bulletParts = bulletText.split(urlRegex);
+              
+              for (const part of bulletParts) {
                 if (part.match(urlRegex)) {
-                  // This is a URL - create a hyperlink
                   const { ExternalHyperlink } = await import('docx');
                   contentChildren.push(
                     new ExternalHyperlink({
@@ -201,7 +209,7 @@ export async function GET(request: NextRequest) {
                           text: part, 
                           size: fontSize, 
                           font: exportFont,
-                          color: '0563C1', // Blue color for links
+                          color: '0563C1',
                           underline: {}
                         })
                       ],
@@ -209,33 +217,153 @@ export async function GET(request: NextRequest) {
                     })
                   );
                 } else if (part) {
-                  // Regular text
                   contentChildren.push(
                     new TextRun({ text: part, size: fontSize, font: exportFont })
                   );
                 }
               }
+            } else {
+              // Not a bullet - process normally
+              for (const part of contentParts) {
+                if (part.match(urlRegex)) {
+                  const { ExternalHyperlink } = await import('docx');
+                  contentChildren.push(
+                    new ExternalHyperlink({
+                      children: [
+                        new TextRun({ 
+                          text: part, 
+                          size: fontSize, 
+                          font: exportFont,
+                          color: '0563C1',
+                          underline: {}
+                        })
+                      ],
+                      link: part
+                    })
+                  );
+                } else if (part) {
+                  contentChildren.push(
+                    new TextRun({ text: part, size: fontSize, font: exportFont })
+                  );
+                }
+              }
+            }
+            
+            // Determine spacing for first paragraph lines
+            let afterSpacing = 0;
+            if (l === firstParagraphLines.length - 1) {
+              // Last line of first paragraph
+              if (paragraphs.length === 1) {
+                afterSpacing = 120; // Only paragraph - space after entry
+              } else {
+                afterSpacing = 240; // More paragraphs - paragraph break
+              }
+            }
+            
+            docSections.push(
+              new Paragraph({
+                children: contentChildren,
+                bullet: isBullet ? { level: bulletIndent } : undefined,
+                spacing: { 
+                  before: (l === 0 && !game) ? 300 : 0, // Space before first line only for non-game entries
+                  after: afterSpacing,
+                  line: 276
+                }
+              })
+            );
+          }
+          
+          // Handle remaining paragraphs (if any)
+          for (let p = 1; p < paragraphs.length; p++) {
+            const paragraphText = paragraphs[p];
+            const lines = paragraphText.split('\n');
+            
+            for (let l = 0; l < lines.length; l++) {
+              const line = lines[l];
+              const contentChildren: any[] = [];
+              const urlRegex = /(https?:\/\/[^\s]+)/g;
+              const contentParts = line.split(urlRegex);
               
-              // Add paragraph with appropriate spacing
-              // Last line of last paragraph gets after spacing, others get minimal spacing
-              const isLastLineOfLastParagraph = (p === paragraphs.length - 1) && (l === lines.length - 1);
+              // Check if this line is a bullet point
+              const bulletMatch = line.match(/^(\s*)([-*•])\s+(.+)$/);
+              let isBullet = false;
+              let bulletIndent = 0;
+              let bulletText = line;
+              
+              if (bulletMatch) {
+                isBullet = true;
+                bulletIndent = Math.floor(bulletMatch[1].length / 2);
+                bulletText = bulletMatch[3];
+                
+                const bulletParts = bulletText.split(urlRegex);
+                
+                for (const part of bulletParts) {
+                  if (part.match(urlRegex)) {
+                    const { ExternalHyperlink } = await import('docx');
+                    contentChildren.push(
+                      new ExternalHyperlink({
+                        children: [
+                          new TextRun({ 
+                            text: part, 
+                            size: fontSize, 
+                            font: exportFont,
+                            color: '0563C1',
+                            underline: {}
+                          })
+                        ],
+                        link: part
+                      })
+                    );
+                  } else if (part) {
+                    contentChildren.push(
+                      new TextRun({ text: part, size: fontSize, font: exportFont })
+                    );
+                  }
+                }
+              } else {
+                // Not a bullet
+                for (const part of contentParts) {
+                  if (part.match(urlRegex)) {
+                    const { ExternalHyperlink } = await import('docx');
+                    contentChildren.push(
+                      new ExternalHyperlink({
+                        children: [
+                          new TextRun({ 
+                            text: part, 
+                            size: fontSize, 
+                            font: exportFont,
+                            color: '0563C1',
+                            underline: {}
+                          })
+                        ],
+                        link: part
+                      })
+                    );
+                  } else if (part) {
+                    contentChildren.push(
+                      new TextRun({ text: part, size: fontSize, font: exportFont })
+                    );
+                  }
+                }
+              }
+              
+              let afterSpacing = 0;
+              if (l === lines.length - 1) {
+                if (p === paragraphs.length - 1) {
+                  afterSpacing = 120;
+                } else {
+                  afterSpacing = 240;
+                }
+              }
+              
               docSections.push(
                 new Paragraph({
                   children: contentChildren.length > 0 ? contentChildren : [new TextRun({ text: '', size: fontSize, font: exportFont })],
+                  bullet: isBullet ? { level: bulletIndent } : undefined,
                   spacing: { 
-                    after: isLastLineOfLastParagraph ? 120 : 0,
-                    line: 276 // Single line spacing (12pt * 1.15 * 20 twips)
+                    after: afterSpacing,
+                    line: 276
                   }
-                })
-              );
-            }
-            
-            // Add extra spacing between paragraphs (double newline)
-            if (p < paragraphs.length - 1) {
-              docSections.push(
-                new Paragraph({
-                  children: [new TextRun({ text: '', size: fontSize, font: exportFont })],
-                  spacing: { after: 120 }
                 })
               );
             }

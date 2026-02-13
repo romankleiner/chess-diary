@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { GrammarCheck } from './grammar-check';
 
 interface JournalEntry {
   id: number;
@@ -47,6 +48,8 @@ export default function JournalPage() {
   const [exportEndDate, setExportEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [entryMode, setEntryMode] = useState<'general' | 'game'>('general');
   const [filterGameId, setFilterGameId] = useState<string>('all'); // 'all', 'general', or specific game ID
+  const [viewRangeDays, setViewRangeDays] = useState<number>(7); // Configurable view range
+  const [savedViewRangeDays, setSavedViewRangeDays] = useState<number>(7); // Remember non-game-filter range
 
   // Auto-resize textarea
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -72,7 +75,7 @@ export default function JournalPage() {
     loadEntries();
     loadActiveGames();
     loadUsername();
-  }, [selectedDate]);
+  }, [selectedDate, viewRangeDays]);
 
   const loadUsername = async () => {
     try {
@@ -89,22 +92,18 @@ export default function JournalPage() {
     try {
       const endDate = new Date(selectedDate);
       const startDate = new Date(selectedDate);
-      startDate.setDate(startDate.getDate() - 6);
+      startDate.setDate(startDate.getDate() - (viewRangeDays - 1));
       
-      const allEntries: JournalEntry[] = [];
-      const currentDate = new Date(startDate);
+      const startDateStr = startDate.toISOString().split('T')[0];
+      const endDateStr = endDate.toISOString().split('T')[0];
       
-      while (currentDate <= endDate) {
-        const dateStr = currentDate.toISOString().split('T')[0];
-        const response = await fetch(`/api/journal?date=${dateStr}`);
-        const data = await response.json();
-        
-        if (data.entries) {
-          allEntries.push(...data.entries);
-        }
-        
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
+      // Use smart API call instead of polling each day
+      const response = await fetch(
+        `/api/journal?startDate=${startDateStr}&endDate=${endDateStr}`
+      );
+      const data = await response.json();
+      
+      const allEntries: JournalEntry[] = data.entries || [];
       
       allEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setEntries(allEntries);
@@ -682,6 +681,24 @@ export default function JournalPage() {
               }
               required
             />
+            
+            {thought && (
+              <GrammarCheck 
+                text={thought} 
+                onApplyFix={(newText) => {
+                  setThought(newText);
+                  // Trigger textarea resize
+                  setTimeout(() => {
+                    const textarea = document.querySelector('textarea');
+                    if (textarea) {
+                      textarea.style.height = 'auto';
+                      const newHeight = Math.min(textarea.scrollHeight, 400);
+                      textarea.style.height = `${newHeight}px`;
+                    }
+                  }, 0);
+                }} 
+              />
+            )}
           </div>
           
           {image && (
@@ -764,32 +781,68 @@ export default function JournalPage() {
             Journal Entries ({getDateRangeText()})
           </h3>
           
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium">Filter:</label>
-            <select
-              value={filterGameId}
-              onChange={(e) => setFilterGameId(e.target.value)}
-              className="px-3 py-1 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:border-gray-600"
-            >
-              <option value="all">All Entries</option>
-              <option value="general">General Thoughts Only</option>
-              <optgroup label="Game-Specific">
-                {allGames
-                  .filter(g => entries.some(e => e.gameId === g.id))
-                  .map(game => (
-                    <option key={game.id} value={game.id}>
-                      {game.white} vs {game.black}
-                    </option>
-                  ))}
-              </optgroup>
-            </select>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium">View:</label>
+              <select
+                value={viewRangeDays}
+                onChange={(e) => setViewRangeDays(Number(e.target.value))}
+                className="px-3 py-1 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:border-gray-600"
+              >
+                <option value="7">Last 7 days</option>
+                <option value="14">Last 14 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="60">Last 60 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="365">Last year</option>
+                <option value="9999">All time</option>
+              </select>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium">Filter:</label>
+              <select
+                value={filterGameId}
+                onChange={(e) => {
+                  const newFilter = e.target.value;
+                  const oldFilter = filterGameId;
+                  
+                  // When switching TO a specific game filter, save current range and switch to "All time"
+                  if (newFilter !== 'all' && newFilter !== 'general' && (oldFilter === 'all' || oldFilter === 'general')) {
+                    setSavedViewRangeDays(viewRangeDays);
+                    setViewRangeDays(9999);
+                  }
+                  // When switching FROM a specific game back to all/general, restore saved range
+                  else if ((newFilter === 'all' || newFilter === 'general') && oldFilter !== 'all' && oldFilter !== 'general') {
+                    setViewRangeDays(savedViewRangeDays);
+                  }
+                  
+                  setFilterGameId(newFilter);
+                }}
+                className="px-3 py-1 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:border-gray-600"
+              >
+                <option value="all">All Entries</option>
+                <option value="general">General Thoughts Only</option>
+                <optgroup label="Game-Specific">
+                  {allGames
+                    .filter(g => entries.some(e => e.gameId === g.id))
+                    .map(game => (
+                      <option key={game.id} value={game.id}>
+                        {game.white} vs {game.black}
+                      </option>
+                    ))}
+                </optgroup>
+              </select>
+            </div>
           </div>
         </div>
         
         {loading ? (
           <p className="text-center text-gray-600">Loading...</p>
         ) : entries.length === 0 ? (
-          <p className="text-center text-gray-600">No entries in the last 7 days. Start writing!</p>
+          <p className="text-center text-gray-600">
+            No entries in the last {viewRangeDays} day{viewRangeDays !== 1 ? 's' : ''}. Start writing!
+          </p>
         ) : (
           <div className="space-y-6">
             {Object.keys(groupedEntries)

@@ -1,15 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import getDb, { saveDb } from '@/lib/db';
 
-// Get journal entries for a specific date
+// Get journal entries for a specific date, date range, or game
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const date = searchParams.get('date');
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+    const gameId = searchParams.get('gameId');
     
     const db = await getDb();
-    const entries = db.journal_entries.filter(e => e.date === date)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    let entries = db.journal_entries;
+    
+    // Filter by date or date range
+    if (date) {
+      // Single date query (legacy support)
+      entries = entries.filter(e => e.date === date);
+    } else if (startDate && endDate) {
+      // Date range query
+      entries = entries.filter(e => e.date >= startDate && e.date <= endDate);
+    } else if (startDate) {
+      // From startDate onwards
+      entries = entries.filter(e => e.date >= startDate);
+    } else if (endDate) {
+      // Up to endDate
+      entries = entries.filter(e => e.date <= endDate);
+    }
+    
+    // Filter by game ID if specified
+    if (gameId && gameId !== 'all') {
+      if (gameId === 'general') {
+        entries = entries.filter(e => !e.gameId);
+      } else {
+        entries = entries.filter(e => e.gameId === gameId);
+      }
+    }
+    
+    // Sort by timestamp
+    entries = entries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     
     return NextResponse.json({ entries });
   } catch (error) {

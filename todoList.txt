@@ -1,8 +1,4 @@
-- Allow extending the journal range, especially if it's filtered on a specific game
 - Edit of an entry in filtered mode doesn't work
-- General entries shouldn't have line break after timestamp on export
-- No bulletpoints on export
-- Improve spell check to check for grammatical errors
 - Fix analysis from Vercel
 - Save and display the depth setting used in analysis
 - Find diary entries for previously analysed game, and run an AI engine to provide feedback on the thought process
