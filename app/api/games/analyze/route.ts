@@ -413,13 +413,29 @@ export async function POST(request: NextRequest) {
       
       if (batchResult.completed) {
         db.games[gameId].analysisCompleted = true;
-        console.log('[ANALYZE] Analysis fully completed');
+        console.log('[ANALYZE] Analysis fully completed - setting flag');
         clearProgress(gameId);
       } else {
         console.log('[ANALYZE] Batch completed, more moves remaining');
       }
       
+      console.log('[ANALYZE] Saving database...');
       await saveDb(db);
+      console.log('[ANALYZE] Database saved successfully');
+      
+      // Verify the flag was set for completed analyses
+      if (batchResult.completed) {
+        const verifyDb = await getDb();
+        if (!verifyDb.games[gameId]?.analysisCompleted) {
+          console.error('[ANALYZE] ERROR: Flag not persisted for game', gameId);
+          // Try to fix it immediately
+          verifyDb.games[gameId].analysisCompleted = true;
+          await saveDb(verifyDb);
+          console.log('[ANALYZE] Attempted to fix flag on second save');
+        } else {
+          console.log('[ANALYZE] Verified: analysisCompleted flag is set');
+        }
+      }
       
       return NextResponse.json({
         success: true,
