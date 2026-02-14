@@ -93,23 +93,29 @@ export default function GamesPage() {
     }, 1000); // Poll every second
     
     try {
+      console.log('[FRONTEND] Starting analysis for game:', gameId);
       const response = await fetch('/api/games/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gameId }),
       });
       
+      console.log('[FRONTEND] Response status:', response.status);
+      console.log('[FRONTEND] Response ok:', response.ok);
+      
       const data = await response.json();
+      console.log('[FRONTEND] Response data:', data);
       
       if (data.success) {
         showToast(`Analysis complete! White: ${data.analysis.whiteAccuracy}% | Black: ${data.analysis.blackAccuracy}%`);
         loadGames(); // Reload to update analysis status
       } else {
-        alert('Failed to analyze game');
+        console.error('[FRONTEND] Analysis failed:', data.error);
+        alert(`Failed to analyze game: ${data.error || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Error analyzing game:', error);
-      alert('Failed to analyze game');
+      console.error('[FRONTEND] Error analyzing game:', error);
+      alert(`Failed to analyze game: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       clearInterval(progressInterval);
       setAnalyzing(null);

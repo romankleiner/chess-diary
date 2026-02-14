@@ -292,8 +292,12 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
 }
 
 export async function POST(request: NextRequest) {
+  console.log('[ANALYZE] ========== ANALYSIS REQUEST STARTED ==========');
+  console.log('[ANALYZE] Timestamp:', new Date().toISOString());
+  
   try {
     const { gameId } = await request.json();
+    console.log('[ANALYZE] Received gameId:', gameId);
     
     if (!gameId) {
       return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
