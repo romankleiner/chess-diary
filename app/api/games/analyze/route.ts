@@ -4,6 +4,9 @@ import getDb, { saveDb } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
 import { setProgress, clearProgress } from '../[id]/analysis/progress/route';
 
+// Detect if running on Vercel
+const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
+
 function calculateAccuracy(centipawnLosses: number[]): number {
   if (centipawnLosses.length === 0) return 100;
   
@@ -32,6 +35,133 @@ function getMoveQuality(cpLoss: number): string {
   return 'blunder';
 }
 
+// ========== LICHESS CLOUD EVALUATION (for Vercel) ==========
+async function getLichessEval(fen: string): Promise<number | null> {
+  try {
+    const url = `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}`;
+    console.log('[LICHESS] Fetching evaluation for FEN:', fen.substring(0, 50) + '...');
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    console.log('[LICHESS] Response status:', response.status);
+    
+    if (!response.ok) {
+      console.log('[LICHESS] Response not OK:', response.statusText);
+      return null;
+    }
+    
+    const data = await response.json();
+    console.log('[LICHESS] API response:', JSON.stringify(data).substring(0, 200));
+    
+    if (data.pvs && data.pvs.length > 0) {
+      const pv = data.pvs[0];
+      
+      if (pv.mate !== undefined && pv.mate !== null) {
+        const mateScore = pv.mate > 0 ? 10000 : -10000;
+        console.log('[LICHESS] Mate score:', mateScore);
+        return mateScore;
+      }
+      
+      const cpScore = pv.cp || 0;
+      console.log('[LICHESS] CP score:', cpScore);
+      return cpScore;
+    }
+    
+    console.log('[LICHESS] No PVs in response');
+    return null;
+  } catch (error) {
+    console.error('[LICHESS] API error:', error);
+    return null;
+  }
+}
+
+async function analyzeGameLichess(pgn: string, userColor: 'white' | 'black', gameId: string): Promise<{ moves: any[]; whiteAccuracy: number; blackAccuracy: number }> {
+  console.log('[LICHESS] Starting cloud analysis...');
+  const chess = new Chess();
+  chess.loadPgn(pgn);
+  const history = chess.history({ verbose: true });
+  
+  console.log('[LICHESS] Total moves to analyze:', history.length);
+  
+  chess.reset();
+  const analyses: any[] = [];
+  const whiteLosses: number[] = [];
+  const blackLosses: number[] = [];
+  
+  setProgress(gameId, 0, history.length);
+  
+  for (let i = 0; i < history.length; i++) {
+    const move = history[i];
+    const isWhiteMove = chess.turn() === 'w';
+    
+    setProgress(gameId, i + 1, history.length);
+    
+    try {
+      const fenBefore = chess.fen();
+      console.log(`[LICHESS] Move ${i + 1}/${history.length}: ${move.san}`);
+      
+      const evalBefore = await getLichessEval(fenBefore);
+      
+      // Rate limit: 100ms between requests
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      chess.move(move.san);
+      const fenAfter = chess.fen();
+      const evalAfter = await getLichessEval(fenAfter);
+      
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      if (evalBefore === null || evalAfter === null) {
+        console.log(`[LICHESS] Skipping move ${i + 1}: no cloud eval available`);
+        continue;
+      }
+      
+      // Convert to white's perspective
+      let evalBeforeWhite = isWhiteMove ? evalBefore : -evalBefore;
+      let evalAfterWhite = isWhiteMove ? -evalAfter : evalAfter;
+      
+      // Calculate CP loss
+      let cpLoss = 0;
+      if (isWhiteMove) {
+        cpLoss = evalBeforeWhite - evalAfterWhite;
+      } else {
+        cpLoss = evalAfterWhite - evalBeforeWhite;
+      }
+      cpLoss = Math.max(0, cpLoss);
+      
+      if (isWhiteMove) {
+        whiteLosses.push(cpLoss);
+      } else {
+        blackLosses.push(cpLoss);
+      }
+      
+      analyses.push({
+        moveNumber: Math.floor(i / 2) + 1,
+        color: isWhiteMove ? 'white' : 'black',
+        move: move.san,
+        evaluation: evalAfterWhite,
+        bestMove: '',
+        centipawnLoss: cpLoss,
+        moveQuality: getMoveQuality(cpLoss),
+      });
+      
+      console.log(`[LICHESS] Move ${i + 1} analyzed: CP loss = ${cpLoss}`);
+    } catch (error) {
+      console.error(`[LICHESS] Error analyzing move ${i + 1}:`, error);
+    }
+  }
+  
+  const whiteAccuracy = calculateAccuracy(whiteLosses);
+  const blackAccuracy = calculateAccuracy(blackLosses);
+  
+  console.log(`[LICHESS] Analysis complete! White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
+  console.log(`[LICHESS] Analyzed ${analyses.length} out of ${history.length} moves`);
+  
+  return { moves: analyses, whiteAccuracy, blackAccuracy };
+}
+
 async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' | 'black', gameId: string): Promise<{ moves: any[]; whiteAccuracy: number; blackAccuracy: number }> {
   const chess = new Chess();
   chess.loadPgn(pgn);
@@ -49,8 +179,6 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   // Set initial progress
   setProgress(gameId, 0, history.length);
   
-  console.log(`[STOCKFISH] Starting analysis of ${history.length} moves at depth ${depth}...`);
-  
   try {
     for (let i = 0; i < history.length; i++) {
       const move = history[i];
@@ -62,7 +190,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
       
       try {
         const fenBefore = chess.fen();
-        console.log(`[STOCKFISH] Analyzing move ${i + 1}/${history.length}: ${move.san}`);
+        console.log(`Analyzing move ${i + 1}/${history.length}: ${move.san}`);
         
         // Analyze position before move - this gives us the evaluation and best move
         const analysisBefore = await engine.analyze(fenBefore, depth);
@@ -143,7 +271,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           moveQuality: getMoveQuality(cpLoss),
         });
       } catch (error) {
-        console.error(`[STOCKFISH] Error analyzing move ${i + 1}:`, error);
+        console.error(`Error analyzing move ${i + 1}:`, error);
       }
     }
   } finally {
@@ -154,7 +282,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   const whiteAccuracy = calculateAccuracy(whiteLosses);
   const blackAccuracy = calculateAccuracy(blackLosses);
   
-  console.log(`[STOCKFISH] Analysis complete! White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
+  console.log(`Analysis complete! White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
   
   return {
     moves: analyses,
@@ -189,9 +317,19 @@ export async function POST(request: NextRequest) {
     const username = db.settings?.chesscom_username?.toLowerCase() || '';
     const userColor: 'white' | 'black' = game.white.toLowerCase() === username ? 'white' : 'black';
     
-    console.log(`[ANALYZE] Starting Stockfish analysis for game ${gameId} at depth ${depth}`);
+    console.log('[ANALYZE] Environment check - IS_VERCEL:', IS_VERCEL);
+    console.log('[ANALYZE] VERCEL env var:', process.env.VERCEL);
+    console.log('[ANALYZE] VERCEL_ENV:', process.env.VERCEL_ENV);
     
-    const analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
+    let analysis;
+    
+    if (IS_VERCEL) {
+      console.log('[ANALYZE] Using Lichess cloud evaluation for game', gameId);
+      analysis = await analyzeGameLichess(game.pgn, userColor, gameId);
+    } else {
+      console.log('[ANALYZE] Using local Stockfish for game', gameId, 'at depth', depth);
+      analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
+    }
     
     // Clear progress when done
     clearProgress(gameId);
@@ -240,7 +378,7 @@ export async function POST(request: NextRequest) {
       analysis: db.game_analyses[gameId],
     });
   } catch (error) {
-    console.error('[ANALYZE] Error analyzing game:', error);
+    console.error('Error analyzing game:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to analyze game' },
       { status: 500 }
