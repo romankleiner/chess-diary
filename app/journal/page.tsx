@@ -315,7 +315,15 @@ export default function JournalPage() {
     setImage(entry.image || '');
     setCurrentGameId(entry.gameId);
     setEntryMode(entry.gameId ? 'game' : 'general');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    // Scroll to the textarea after state updates
+    setTimeout(() => {
+      const textarea = document.querySelector('textarea');
+      if (textarea) {
+        textarea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        textarea.focus();
+      }
+    }, 100);
   };
 
   const handleExportJournal = async () => {

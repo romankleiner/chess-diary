@@ -1,5 +1,5 @@
-- Edit of an entry in filtered mode doesn't work
-- Fix analysis from Vercel
+- Sometimes shows very high fraction on cloud analysis: 0.6699999999999999
+- Cloud analysis does not fully complete
 - Analysis not retained between restarts
 - Save and display the depth setting used in analysis
 - Find diary entries for previously analysed game, and run an AI engine to provide feedback on the thought process
