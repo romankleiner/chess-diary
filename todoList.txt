@@ -1,5 +1,6 @@
 - Edit of an entry in filtered mode doesn't work
 - Fix analysis from Vercel
+- Analysis not retained between restarts
 - Save and display the depth setting used in analysis
 - Find diary entries for previously analysed game, and run an AI engine to provide feedback on the thought process
 - Show opponent's last move on the game diagram
