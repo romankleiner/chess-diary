@@ -29,7 +29,7 @@ export default function GamesPage() {
     setToast({ message, show: true });
     setTimeout(() => {
       setToast({ message: '', show: false });
-    }, 3000); // Auto-hide after 3 seconds
+    }, 3000);
   };
 
   const loadGames = async () => {
@@ -47,7 +47,6 @@ export default function GamesPage() {
   const fetchFromChessCom = async () => {
     setFetching(true);
     try {
-      // Fetch recent games from last 3 months including finished games
       const response = await fetch('/api/games/fetch?includeRecent=true');
       const data = await response.json();
       
@@ -77,42 +76,66 @@ export default function GamesPage() {
     }
     
     setAnalyzing(gameId);
-    setAnalysisProgress(null);
+    setAnalysisProgress({ current: 0, total: 100 });
     
-    // Start polling for progress
+    // Poll for progress - works for both local and Vercel
     const progressInterval = setInterval(async () => {
       try {
-        const progressRes = await fetch(`/api/games/${gameId}/analysis/progress`);
+        const progressRes = await fetch(`/api/games/analyze?gameId=${gameId}`);
         const progressData = await progressRes.json();
-        if (progressData.progress) {
-          setAnalysisProgress(progressData.progress);
+        if (progressData.total > 0) {
+          setAnalysisProgress({
+            current: progressData.current,
+            total: progressData.total
+          });
         }
       } catch (error) {
-        // Ignore errors during polling
+        // Ignore polling errors
       }
-    }, 1000); // Poll every second
+    }, 1000);
     
     try {
+      let completed = false;
+      let nextMoveIndex = 0;
+      let finalData = null;
+      
       console.log('[FRONTEND] Starting analysis for game:', gameId);
-      const response = await fetch('/api/games/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameId }),
-      });
       
-      console.log('[FRONTEND] Response status:', response.status);
-      console.log('[FRONTEND] Response ok:', response.ok);
-      
-      const data = await response.json();
-      console.log('[FRONTEND] Response data:', data);
-      
-      if (data.success) {
-        showToast(`Analysis complete! White: ${data.analysis.whiteAccuracy}% | Black: ${data.analysis.blackAccuracy}%`);
-        loadGames(); // Reload to update analysis status
-      } else {
-        console.error('[FRONTEND] Analysis failed:', data.error);
-        alert(`Failed to analyze game: ${data.error || 'Unknown error'}`);
+      // Keep requesting batches until complete (Vercel batches, local completes in one)
+      while (!completed) {
+        console.log('[FRONTEND] Requesting batch starting at move:', nextMoveIndex);
+        
+        const response = await fetch('/api/games/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameId, startMoveIndex: nextMoveIndex }),
+        });
+        
+        console.log('[FRONTEND] Response status:', response.status);
+        
+        const data = await response.json();
+        console.log('[FRONTEND] Response data:', data);
+        
+        if (!data.success) {
+          throw new Error(data.error || 'Analysis failed');
+        }
+        
+        finalData = data;
+        completed = data.completed;
+        nextMoveIndex = data.nextMoveIndex || 0;
+        
+        console.log('[FRONTEND] Batch done. Completed:', completed, 'Next:', nextMoveIndex);
+        
+        if (!completed) {
+          // Small delay between batches (only affects Vercel)
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
+      
+      if (finalData?.analysis) {
+        showToast(`Analysis complete! White: ${finalData.analysis.whiteAccuracy}% | Black: ${finalData.analysis.blackAccuracy}%`);
+      }
+      loadGames();
     } catch (error) {
       console.error('[FRONTEND] Error analyzing game:', error);
       alert(`Failed to analyze game: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -124,117 +147,119 @@ export default function GamesPage() {
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading games...</div>;
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <p className="text-center text-gray-600">Loading games...</p>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold">My Games</h2>
+    <div className="max-w-4xl mx-auto p-6">
+      {/* Toast notification */}
+      {toast.show && (
+        <div className="fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-fade-in">
+          {toast.message}
+        </div>
+      )}
+
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">My Games</h1>
         <button
           onClick={fetchFromChessCom}
           disabled={fetching}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
+          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
         >
           {fetching ? 'Fetching...' : 'Fetch from Chess.com'}
         </button>
       </div>
 
       {games.length === 0 ? (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <p className="text-center text-gray-600 dark:text-gray-400">
-            No games found. Click "Fetch from Chess.com" to import your games.
-          </p>
-        </div>
+        <p className="text-center text-gray-600">
+          No games found. Click "Fetch from Chess.com" to import your games.
+        </p>
       ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead className="bg-gray-50 dark:bg-gray-900">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Opponent
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Result
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-              {games.map((game) => (
-                <tr key={game.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {game.date}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {game.opponent}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <span className={`px-2 py-1 rounded ${
-                      game.result === 'win' ? 'bg-green-100 text-green-800' :
-                      game.result === 'loss' ? 'bg-red-100 text-red-800' :
-                      'bg-gray-100 text-gray-800'
-                    }`}>
-                      {game.result}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {game.analysisCompleted ? 'Analyzed' : 'Not analyzed'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <div className="flex gap-2">
-                      <Link
-                        href={`/games/${game.id}`}
-                        className="text-blue-600 hover:underline"
-                      >
-                        View
-                      </Link>
-                      {game.analysisCompleted && (
-                        <Link
-                          href={`/games/${game.id}/analysis`}
-                          className="text-green-600 hover:underline"
-                        >
-                          Analysis
-                        </Link>
-                      )}
-                      {game.result && game.result !== 'null' && (
-                        <button
-                          onClick={() => analyzeGame(game.id)}
-                          disabled={analyzing !== null}
-                          className="text-purple-600 hover:underline disabled:text-gray-400 disabled:cursor-not-allowed"
-                        >
-                          {analyzing === game.id 
-                            ? (analysisProgress 
-                              ? `Analyzing... ${analysisProgress.current}/${analysisProgress.total}` 
-                              : 'Starting...')
-                            : (game.analysisCompleted ? 'Re-analyze' : 'Analyze')
-                          }
-                        </button>
-                      )}
-                      {game.analysisCompleted && analyzing !== game.id && (
-                        <span className="text-green-600">✓</span>
-                      )}
+        <div className="space-y-4">
+          {games.map((game) => (
+            <div
+              key={game.id}
+              className="border rounded-lg p-4 hover:shadow-md transition-shadow dark:border-gray-700"
+            >
+              <div className="flex justify-between items-start">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-semibold">
+                      {game.white} vs {game.black}
+                    </h3>
+                    {game.analysisCompleted && (
+                      <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
+                        ✓ Analyzed
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    {new Date(game.date).toLocaleDateString()} • Result: {game.result}
+                  </p>
+                  
+                  {analyzing === game.id && analysisProgress && (
+                    <div className="mt-2">
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <span>Analyzing...</span>
+                        <span>{analysisProgress.current}/{analysisProgress.total} moves</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                        <div
+                          className="bg-blue-500 h-2 rounded-full transition-all"
+                          style={{ width: `${(analysisProgress.current / analysisProgress.total) * 100}%` }}
+                        />
+                      </div>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      
-      {/* Toast notification */}
-      {toast.show && (
-        <div className="fixed bottom-4 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg transition-opacity duration-300 z-50">
-          {toast.message}
+                  )}
+                </div>
+                
+                <div className="flex gap-2 ml-4">
+                  <Link
+                    href={`/games/${game.id}`}
+                    className="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300 dark:hover:bg-gray-600 text-sm"
+                  >
+                    View
+                  </Link>
+                  
+                  {game.analysisCompleted ? (
+                    <>
+                      <Link
+                        href={`/games/${game.id}/analysis`}
+                        className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm"
+                      >
+                        View Analysis
+                      </Link>
+                      <button
+                        onClick={() => analyzeGame(game.id)}
+                        disabled={analyzing === game.id}
+                        className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:bg-gray-400 text-sm"
+                      >
+                        Re-analyze
+                      </button>
+                    </>
+                  ) : (game.result && !game.result.includes('progress')) ? (
+                    // Only show analyze for finished games (has a result, not in progress)
+                    <button
+                      onClick={() => analyzeGame(game.id)}
+                      disabled={analyzing === game.id}
+                      className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 text-sm"
+                    >
+                      {analyzing === game.id ? 'Analyzing...' : 'Analyze'}
+                    </button>
+                  ) : (
+                    // Unfinished game - show status
+                    <span className="px-3 py-1 text-sm text-gray-500 italic">
+                      In Progress
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -2,22 +2,74 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
 import getDb, { saveDb } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
-import { setProgress, clearProgress } from '../[id]/analysis/progress/route';
 
 // Detect if running on Vercel
 const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
 
+// Store progress in database for persistence across requests
+export async function setProgress(gameId: string, current: number, total: number) {
+  try {
+    const db = await getDb() as any;
+    if (!db.analysis_progress) {
+      db.analysis_progress = {};
+    }
+    db.analysis_progress[gameId] = { current, total, timestamp: Date.now() };
+    // Don't await saveDb - fire and forget for performance
+    saveDb(db).catch(err => console.error('[PROGRESS] Save error:', err));
+  } catch (error) {
+    console.error('[PROGRESS] setProgress error:', error);
+  }
+}
+
+export async function clearProgress(gameId: string) {
+  try {
+    const db = await getDb() as any;
+    if (db.analysis_progress?.[gameId]) {
+      delete db.analysis_progress[gameId];
+      saveDb(db).catch(err => console.error('[PROGRESS] Clear error:', err));
+    }
+  } catch (error) {
+    console.error('[PROGRESS] clearProgress error:', error);
+  }
+}
+
+// GET endpoint to check progress
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const gameId = searchParams.get('gameId');
+  
+  if (!gameId) {
+    return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
+  }
+  
+  try {
+    const db = await getDb() as any;
+    const progress = db.analysis_progress?.[gameId];
+    
+    if (!progress) {
+      return NextResponse.json({ current: 0, total: 0 });
+    }
+    
+    // Clean up stale progress (older than 10 minutes)
+    if (Date.now() - progress.timestamp > 600000) {
+      delete db.analysis_progress[gameId];
+      saveDb(db).catch(err => console.error('[PROGRESS] Cleanup error:', err));
+      return NextResponse.json({ current: 0, total: 0 });
+    }
+    
+    return NextResponse.json({ current: progress.current, total: progress.total });
+  } catch (error) {
+    console.error('[PROGRESS] GET error:', error);
+    return NextResponse.json({ current: 0, total: 0 });
+  }
+}
+
 function calculateAccuracy(centipawnLosses: number[]): number {
   if (centipawnLosses.length === 0) return 100;
   
-  // More balanced formula: penalize mistakes but not too harshly
-  // Uses winrate-based accuracy similar to Lichess
   let totalAccuracy = 0;
   
   for (const loss of centipawnLosses) {
-    // Convert CP loss to move accuracy using win percentage formula
-    // Win% = 50 + 50 * (2 / (1 + exp(0.00368208 * cp)) - 1)
-    // For loss, we calculate how much worse the position got
     const winPercentageLost = 50 * (2 / (1 + Math.exp(0.00368208 * loss)) - 1);
     const moveAccuracy = 100 - Math.abs(winPercentageLost);
     totalAccuracy += moveAccuracy;
@@ -39,7 +91,6 @@ function getMoveQuality(cpLoss: number): string {
 async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score: number; bestMove: string } | null> {
   try {
     const url = `https://chess-api.com/v1`;
-    console.log('[CHESS-API] Analyzing FEN:', fen.substring(0, 50) + '...');
     
     const response = await fetch(url, {
       method: 'POST',
@@ -52,27 +103,19 @@ async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score
       }),
     });
     
-    console.log('[CHESS-API] Response status:', response.status);
-    
     if (!response.ok) {
-      console.log('[CHESS-API] Response not OK:', response.statusText);
-      const text = await response.text();
-      console.log('[CHESS-API] Error body:', text);
+      console.log('[CHESS-API] Response not OK:', response.status, response.statusText);
       return null;
     }
     
     const data = await response.json();
-    console.log('[CHESS-API] API response:', JSON.stringify(data).substring(0, 300));
     
     if (data.eval !== undefined) {
-      // chess-api.com returns eval in centipawns from the side to move's perspective
       const cpScore = data.eval;
       const bestMove = data.move || '';
-      console.log('[CHESS-API] CP score:', cpScore, 'Best move:', bestMove);
       return { score: cpScore, bestMove };
     }
     
-    console.log('[CHESS-API] No eval in response');
     return null;
   } catch (error) {
     console.error('[CHESS-API] API error:', error);
@@ -80,22 +123,56 @@ async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score
   }
 }
 
-async function analyzeGameChessApi(pgn: string, depth: number, userColor: 'white' | 'black', gameId: string): Promise<{ moves: any[]; whiteAccuracy: number; blackAccuracy: number }> {
-  console.log('[CHESS-API] Starting cloud analysis at depth', depth);
+async function analyzeGameChessApiBatched(
+  pgn: string, 
+  depth: number, 
+  userColor: 'white' | 'black', 
+  gameId: string,
+  startMoveIndex: number = 0,
+  batchSize: number = 10
+): Promise<{ 
+  moves: any[]; 
+  whiteAccuracy: number; 
+  blackAccuracy: number;
+  completed: boolean;
+  nextMoveIndex: number;
+}> {
+  console.log(`[CHESS-API] Batch analysis starting at move ${startMoveIndex}, batch size ${batchSize}`);
   const chess = new Chess();
   chess.loadPgn(pgn);
   const history = chess.history({ verbose: true });
   
-  console.log('[CHESS-API] Total moves to analyze:', history.length);
+  console.log('[CHESS-API] Total moves in game:', history.length);
   
+  // Load existing analysis if any
+  const db = await getDb();
+  const existingAnalysis = db.game_analyses?.[gameId];
+  const existingMoves = existingAnalysis?.moves || [];
+  
+  // Replay to the start position
   chess.reset();
-  const analyses: any[] = [];
+  for (let i = 0; i < startMoveIndex; i++) {
+    chess.move(history[i].san);
+  }
+  
+  const analyses: any[] = [...existingMoves];
   const whiteLosses: number[] = [];
   const blackLosses: number[] = [];
   
-  setProgress(gameId, 0, history.length);
+  // Re-calculate losses from existing moves
+  for (const move of existingMoves) {
+    if (move.color === 'white') {
+      whiteLosses.push(move.centipawnLoss);
+    } else {
+      blackLosses.push(move.centipawnLoss);
+    }
+  }
   
-  for (let i = 0; i < history.length; i++) {
+  const endMoveIndex = Math.min(startMoveIndex + batchSize, history.length);
+  
+  setProgress(gameId, startMoveIndex, history.length);
+  
+  for (let i = startMoveIndex; i < endMoveIndex; i++) {
     const move = history[i];
     const isWhiteMove = chess.turn() === 'w';
     
@@ -103,12 +180,11 @@ async function analyzeGameChessApi(pgn: string, depth: number, userColor: 'white
     
     try {
       const fenBefore = chess.fen();
-      console.log(`[CHESS-API] Move ${i + 1}/${history.length}: ${move.san}`);
-      
       const evalBefore = await getChessApiEval(fenBefore, depth);
       
       if (!evalBefore) {
         console.log(`[CHESS-API] Skipping move ${i + 1}: API failed`);
+        chess.move(move.san);
         continue;
       }
       
@@ -121,7 +197,6 @@ async function analyzeGameChessApi(pgn: string, depth: number, userColor: 'white
         continue;
       }
       
-      // chess-api.com returns eval from side to move perspective
       // Convert to white's perspective
       let evalBeforeWhite = isWhiteMove ? evalBefore.score : -evalBefore.score;
       let evalAfterWhite = isWhiteMove ? -evalAfter.score : evalAfter.score;
@@ -151,7 +226,7 @@ async function analyzeGameChessApi(pgn: string, depth: number, userColor: 'white
         moveQuality: getMoveQuality(cpLoss),
       });
       
-      console.log(`[CHESS-API] Move ${i + 1} analyzed: CP loss = ${cpLoss}, Best move was ${evalBefore.bestMove}`);
+      console.log(`[CHESS-API] Move ${i + 1}/${history.length} analyzed: ${move.san}, CP loss = ${cpLoss}`);
     } catch (error) {
       console.error(`[CHESS-API] Error analyzing move ${i + 1}:`, error);
     }
@@ -159,11 +234,17 @@ async function analyzeGameChessApi(pgn: string, depth: number, userColor: 'white
   
   const whiteAccuracy = calculateAccuracy(whiteLosses);
   const blackAccuracy = calculateAccuracy(blackLosses);
+  const completed = endMoveIndex >= history.length;
   
-  console.log(`[CHESS-API] Analysis complete! White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
-  console.log(`[CHESS-API] Analyzed ${analyses.length} out of ${history.length} moves`);
+  console.log(`[CHESS-API] Batch complete. Analyzed ${endMoveIndex}/${history.length}. White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
   
-  return { moves: analyses, whiteAccuracy, blackAccuracy };
+  return { 
+    moves: analyses, 
+    whiteAccuracy, 
+    blackAccuracy, 
+    completed,
+    nextMoveIndex: endMoveIndex
+  };
 }
 
 // ========== LOCAL STOCKFISH ==========
@@ -172,7 +253,6 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   chess.loadPgn(pgn);
   const history = chess.history({ verbose: true });
   
-  // Initialize engine once for the entire game
   const engine = new Stockfish();
   await engine.waitReady();
   
@@ -181,7 +261,6 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   const whiteLosses: number[] = [];
   const blackLosses: number[] = [];
   
-  // Set initial progress
   setProgress(gameId, 0, history.length);
   
   console.log(`[STOCKFISH] Starting analysis of ${history.length} moves at depth ${depth}...`);
@@ -191,18 +270,12 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
       const move = history[i];
       const isWhiteMove = chess.turn() === 'w';
       
-      // Update progress
       setProgress(gameId, i + 1, history.length);
-      const isUserMove = (userColor === 'white' && isWhiteMove) || (userColor === 'black' && !isWhiteMove);
       
       try {
         const fenBefore = chess.fen();
-        console.log(`[STOCKFISH] Analyzing move ${i + 1}/${history.length}: ${move.san}`);
         
-        // Analyze position before move - this gives us the evaluation and best move
         const analysisBefore = await engine.analyze(fenBefore, depth);
-        
-        // Extract score from best line
         const scoreBefore = analysisBefore.lines[0]?.score;
         const bestMove = analysisBefore.bestmove || '';
         
@@ -215,16 +288,12 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           }
         }
         
-        // IMPORTANT: Stockfish returns scores from the perspective of side to move
-        // Convert to white's perspective
         if (!isWhiteMove) {
           evalBefore = -evalBefore;
         }
         
-        // Make the actual move
         chess.move(move.san);
         
-        // Analyze position after the actual move
         const fenAfter = chess.fen();
         const analysisAfter = await engine.analyze(fenAfter, depth);
         
@@ -239,19 +308,9 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           }
         }
         
-        // Convert to white's perspective (now it's black's turn after white moved, or vice versa)
         if (isWhiteMove) {
-          // After white's move, it's black's turn, so negate
           evalAfter = -evalAfter;
         }
-        
-        // Calculate centipawn loss
-        // evalBefore = evaluation of position before move (assuming best move)
-        // evalAfter = evaluation of position after the actual move
-        // Both are from white's perspective
-        // For white: loss = evalBefore - evalAfter (if eval drops, white lost centipawns)
-        // For black: loss = -(evalBefore - evalAfter) = evalAfter - evalBefore
-        //           (if eval becomes more negative, black improved, so we want positive when it goes wrong way)
         
         let cpLoss = 0;
         if (isWhiteMove) {
@@ -282,7 +341,6 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
       }
     }
   } finally {
-    // Always terminate engine when done
     engine.terminate();
   }
   
@@ -299,12 +357,17 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
 }
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  console.log('='.repeat(60));
   console.log('[ANALYZE] ========== ANALYSIS REQUEST STARTED ==========');
   console.log('[ANALYZE] Timestamp:', new Date().toISOString());
+  console.log('='.repeat(60));
   
   try {
-    const { gameId } = await request.json();
-    console.log('[ANALYZE] Received gameId:', gameId);
+    const body = await request.json();
+    const { gameId, startMoveIndex = 0 } = body;
+    console.log('[ANALYZE] ▶ Received gameId:', gameId);
+    console.log('[ANALYZE] ▶ startMoveIndex:', startMoveIndex);
     
     if (!gameId) {
       return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
@@ -321,75 +384,98 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game has no PGN data' }, { status: 400 });
     }
     
-    // Get analysis depth from settings (default to 10)
     const depth = parseInt(db.settings?.analysis_depth || '10');
-    
-    // Determine which color the user played
     const username = db.settings?.chesscom_username?.toLowerCase() || '';
     const userColor: 'white' | 'black' = game.white.toLowerCase() === username ? 'white' : 'black';
     
-    console.log('[ANALYZE] Environment check - IS_VERCEL:', IS_VERCEL);
-    console.log('[ANALYZE] VERCEL env var:', process.env.VERCEL);
-    console.log('[ANALYZE] VERCEL_ENV:', process.env.VERCEL_ENV);
+    console.log('[ANALYZE] Environment - IS_VERCEL:', IS_VERCEL);
     
-    let analysis;
+    let result;
     
     if (IS_VERCEL) {
-      console.log('[ANALYZE] Using chess-api.com cloud evaluation for game', gameId);
-      analysis = await analyzeGameChessApi(game.pgn, depth, userColor, gameId);
+      console.log('[ANALYZE] Using chess-api.com (batched) for game', gameId);
+      const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, 10);
+      
+      // Save progress
+      if (!db.game_analyses) {
+        db.game_analyses = {};
+      }
+      
+      db.game_analyses[gameId] = {
+        gameId,
+        analyzedAt: new Date().toISOString(),
+        whitePlayer: game.white,
+        blackPlayer: game.black,
+        whiteAccuracy: batchResult.whiteAccuracy,
+        blackAccuracy: batchResult.blackAccuracy,
+        moves: batchResult.moves,
+      };
+      
+      if (batchResult.completed) {
+        db.games[gameId].analysisCompleted = true;
+        console.log('[ANALYZE] Analysis fully completed');
+        clearProgress(gameId);
+      } else {
+        console.log('[ANALYZE] Batch completed, more moves remaining');
+      }
+      
+      await saveDb(db);
+      
+      return NextResponse.json({
+        success: true,
+        completed: batchResult.completed,
+        nextMoveIndex: batchResult.nextMoveIndex,
+        analysis: db.game_analyses[gameId],
+      });
     } else {
       console.log('[ANALYZE] Using local Stockfish for game', gameId, 'at depth', depth);
-      analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
-    }
-    
-    // Clear progress when done
-    clearProgress(gameId);
-    
-    if (!db.game_analyses) {
-      db.game_analyses = {};
-    }
-    
-    db.game_analyses[gameId] = {
-      gameId,
-      analyzedAt: new Date().toISOString(),
-      whitePlayer: game.white,
-      blackPlayer: game.black,
-      whiteAccuracy: analysis.whiteAccuracy,
-      blackAccuracy: analysis.blackAccuracy,
-      moves: analysis.moves,
-    };
-    
-    // Mark game as analyzed - CRITICAL: Set this BEFORE saving
-    if (!db.games[gameId]) {
-      console.error(`[ANALYZE] Warning: Game ${gameId} not found when setting flag`);
-    } else {
+      
+      // Local analysis ignores startMoveIndex - always analyzes full game
+      if (startMoveIndex > 0) {
+        console.log('[ANALYZE] WARNING: Local analysis received startMoveIndex', startMoveIndex, '- ignoring and analyzing full game');
+      }
+      
+      const analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
+      
+      clearProgress(gameId);
+      
+      if (!db.game_analyses) {
+        db.game_analyses = {};
+      }
+      
+      db.game_analyses[gameId] = {
+        gameId,
+        analyzedAt: new Date().toISOString(),
+        whitePlayer: game.white,
+        blackPlayer: game.black,
+        whiteAccuracy: analysis.whiteAccuracy,
+        blackAccuracy: analysis.blackAccuracy,
+        moves: analysis.moves,
+      };
+      
       db.games[gameId].analysisCompleted = true;
-      console.log(`[ANALYZE] Set analysisCompleted=true for game ${gameId}`);
+      console.log('[ANALYZE] Set analysisCompleted=true for game', gameId);
+      
+      await saveDb(db);
+      console.log('[ANALYZE] Database saved successfully');
+      
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log('='.repeat(60));
+      console.log('[ANALYZE] ✓ SUCCESS - Analysis complete in', duration, 'seconds');
+      console.log('[ANALYZE] ✓ Returning response with completed=true');
+      console.log('='.repeat(60));
+      
+      return NextResponse.json({
+        success: true,
+        completed: true,
+        analysis: db.game_analyses[gameId],
+      });
     }
-    
-    // Save database
-    console.log(`[ANALYZE] Saving database...`);
-    await saveDb(db);
-    console.log(`[ANALYZE] Database saved successfully`);
-    
-    // Verify the flag was set
-    const verifyDb = await getDb();
-    if (!verifyDb.games[gameId]?.analysisCompleted) {
-      console.error(`[ANALYZE] ERROR: Flag not persisted for game ${gameId}!`);
-      // Try to fix it immediately
-      verifyDb.games[gameId].analysisCompleted = true;
-      await saveDb(verifyDb);
-      console.log(`[ANALYZE] Attempted to fix flag on second save`);
-    } else {
-      console.log(`[ANALYZE] Verified: analysisCompleted flag is set`);
-    }
-    
-    return NextResponse.json({
-      success: true,
-      analysis: db.game_analyses[gameId],
-    });
   } catch (error) {
-    console.error('[ANALYZE] Error analyzing game:', error);
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log('='.repeat(60));
+    console.error('[ANALYZE] ✗ ERROR after', duration, 'seconds:', error);
+    console.log('='.repeat(60));
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to analyze game' },
       { status: 500 }
@@ -397,4 +483,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export const maxDuration = 300;
+export const maxDuration = 10; // Vercel free tier limit
