@@ -69,11 +69,13 @@ export async function GET(request: NextRequest) {
       new Map(games.map(game => [game.id, game])).values()
     );
     
-    // Store in database
+    // Store in database - preserve existing analysis flags
     for (const game of uniqueGames) {
+      const existingGame = db.games[game.id];
       db.games[game.id] = {
         ...game,
-        analysisCompleted: game.analysisCompleted || false
+        // Preserve the analysisCompleted flag if it was already set
+        analysisCompleted: existingGame?.analysisCompleted || game.analysisCompleted || false
       };
     }
     

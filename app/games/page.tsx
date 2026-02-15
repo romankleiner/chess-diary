@@ -11,6 +11,8 @@ interface Game {
   white: string;
   black: string;
   analysisCompleted?: boolean;
+  analysisDepth?: number;
+  analysisEngine?: string;
 }
 
 export default function GamesPage() {
@@ -132,10 +134,20 @@ export default function GamesPage() {
         }
       }
       
+      console.log('[FRONTEND] Analysis complete. Final data:', finalData);
+      
       if (finalData?.analysis) {
-        showToast(`Analysis complete! White: ${finalData.analysis.whiteAccuracy}% | Black: ${finalData.analysis.blackAccuracy}%`);
+        const depth = finalData.analysis.depth || '?';
+        const engine = finalData.analysis.engine || 'engine';
+        showToast(`Analysis complete! White: ${finalData.analysis.whiteAccuracy}% | Black: ${finalData.analysis.blackAccuracy}% (${engine} depth ${depth})`);
+      } else {
+        console.warn('[FRONTEND] Analysis completed but no analysis data in response');
+        showToast('Analysis complete!');
       }
-      loadGames();
+      
+      console.log('[FRONTEND] Reloading games list...');
+      await loadGames();
+      console.log('[FRONTEND] Games reloaded');
     } catch (error) {
       console.error('[FRONTEND] Error analyzing game:', error);
       alert(`Failed to analyze game: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -192,8 +204,8 @@ export default function GamesPage() {
                       {game.white} vs {game.black}
                     </h3>
                     {game.analysisCompleted && (
-                      <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
-                        ✓ Analyzed
+                      <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded" title={`Analyzed with ${game.analysisEngine || 'engine'} at depth ${game.analysisDepth || '?'}`}>
+                        ✓ Analyzed (depth {game.analysisDepth || '?'})
                       </span>
                     )}
                   </div>

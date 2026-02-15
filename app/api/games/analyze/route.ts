@@ -21,18 +21,6 @@ export async function setProgress(gameId: string, current: number, total: number
   }
 }
 
-export async function clearProgress(gameId: string) {
-  try {
-    const db = await getDb() as any;
-    if (db.analysis_progress?.[gameId]) {
-      delete db.analysis_progress[gameId];
-      saveDb(db).catch(err => console.error('[PROGRESS] Clear error:', err));
-    }
-  } catch (error) {
-    console.error('[PROGRESS] clearProgress error:', error);
-  }
-}
-
 // GET endpoint to check progress
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -147,7 +135,10 @@ async function analyzeGameChessApiBatched(
   // Load existing analysis if any
   const db = await getDb();
   const existingAnalysis = db.game_analyses?.[gameId];
-  const existingMoves = existingAnalysis?.moves || [];
+  
+  // Only keep existing moves if we're continuing a batch (startMoveIndex > 0)
+  // If starting from 0, this is a fresh analysis or re-analysis
+  const existingMoves = (startMoveIndex > 0 && existingAnalysis?.moves) ? existingAnalysis.moves : [];
   
   // Replay to the start position
   chess.reset();
@@ -201,6 +192,10 @@ async function analyzeGameChessApiBatched(
       let evalBeforeWhite = isWhiteMove ? evalBefore.score : -evalBefore.score;
       let evalAfterWhite = isWhiteMove ? -evalAfter.score : evalAfter.score;
       
+      // Round to 1 decimal place to avoid floating point ugliness
+      evalBeforeWhite = Math.round(evalBeforeWhite * 10) / 10;
+      evalAfterWhite = Math.round(evalAfterWhite * 10) / 10;
+      
       // Calculate CP loss
       let cpLoss = 0;
       if (isWhiteMove) {
@@ -208,7 +203,7 @@ async function analyzeGameChessApiBatched(
       } else {
         cpLoss = evalAfterWhite - evalBeforeWhite;
       }
-      cpLoss = Math.max(0, cpLoss);
+      cpLoss = Math.max(0, Math.round(cpLoss * 10) / 10);
       
       if (isWhiteMove) {
         whiteLosses.push(cpLoss);
@@ -358,16 +353,11 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  console.log('='.repeat(60));
-  console.log('[ANALYZE] ========== ANALYSIS REQUEST STARTED ==========');
-  console.log('[ANALYZE] Timestamp:', new Date().toISOString());
-  console.log('='.repeat(60));
+  console.log('[ANALYZE] Analysis request started');
   
   try {
     const body = await request.json();
     const { gameId, startMoveIndex = 0 } = body;
-    console.log('[ANALYZE] ▶ Received gameId:', gameId);
-    console.log('[ANALYZE] ▶ startMoveIndex:', startMoveIndex);
     
     if (!gameId) {
       return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
@@ -388,12 +378,9 @@ export async function POST(request: NextRequest) {
     const username = db.settings?.chesscom_username?.toLowerCase() || '';
     const userColor: 'white' | 'black' = game.white.toLowerCase() === username ? 'white' : 'black';
     
-    console.log('[ANALYZE] Environment - IS_VERCEL:', IS_VERCEL);
-    
     let result;
     
     if (IS_VERCEL) {
-      console.log('[ANALYZE] Using chess-api.com (batched) for game', gameId);
       const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, 10);
       
       // Save progress
@@ -409,33 +396,20 @@ export async function POST(request: NextRequest) {
         whiteAccuracy: batchResult.whiteAccuracy,
         blackAccuracy: batchResult.blackAccuracy,
         moves: batchResult.moves,
+        depth: depth, // Store the depth used
+        engine: 'chess-api.com', // Store which engine was used
       };
       
       if (batchResult.completed) {
         db.games[gameId].analysisCompleted = true;
-        console.log('[ANALYZE] Analysis fully completed - setting flag');
-        clearProgress(gameId);
-      } else {
-        console.log('[ANALYZE] Batch completed, more moves remaining');
-      }
-      
-      console.log('[ANALYZE] Saving database...');
-      await saveDb(db);
-      console.log('[ANALYZE] Database saved successfully');
-      
-      // Verify the flag was set for completed analyses
-      if (batchResult.completed) {
-        const verifyDb = await getDb();
-        if (!verifyDb.games[gameId]?.analysisCompleted) {
-          console.error('[ANALYZE] ERROR: Flag not persisted for game', gameId);
-          // Try to fix it immediately
-          verifyDb.games[gameId].analysisCompleted = true;
-          await saveDb(verifyDb);
-          console.log('[ANALYZE] Attempted to fix flag on second save');
-        } else {
-          console.log('[ANALYZE] Verified: analysisCompleted flag is set');
+        // Clear progress from db before saving
+        const dbAny = db as any;
+        if (dbAny.analysis_progress?.[gameId]) {
+          delete dbAny.analysis_progress[gameId];
         }
       }
+      
+      await saveDb(db);
       
       return NextResponse.json({
         success: true,
@@ -444,16 +418,8 @@ export async function POST(request: NextRequest) {
         analysis: db.game_analyses[gameId],
       });
     } else {
-      console.log('[ANALYZE] Using local Stockfish for game', gameId, 'at depth', depth);
-      
-      // Local analysis ignores startMoveIndex - always analyzes full game
-      if (startMoveIndex > 0) {
-        console.log('[ANALYZE] WARNING: Local analysis received startMoveIndex', startMoveIndex, '- ignoring and analyzing full game');
-      }
-      
+      // Local analysis ignores startMoveIndex - always analyzes full game  
       const analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
-      
-      clearProgress(gameId);
       
       if (!db.game_analyses) {
         db.game_analyses = {};
@@ -467,19 +433,35 @@ export async function POST(request: NextRequest) {
         whiteAccuracy: analysis.whiteAccuracy,
         blackAccuracy: analysis.blackAccuracy,
         moves: analysis.moves,
+        depth: depth,
+        engine: 'Stockfish',
       };
       
       db.games[gameId].analysisCompleted = true;
-      console.log('[ANALYZE] Set analysisCompleted=true for game', gameId);
       
+      // Clear progress from this db before saving
+      const dbAny = db as any;
+      if (dbAny.analysis_progress?.[gameId]) {
+        delete dbAny.analysis_progress[gameId];
+      }
+      
+      console.log(`[ANALYZE] Saving analysis for game ${gameId}...`);
+      console.log(`[ANALYZE] Analysis has ${analysis.moves.length} moves`);
       await saveDb(db);
-      console.log('[ANALYZE] Database saved successfully');
+      console.log(`[ANALYZE] Save complete`);
+      
+      // Verify the save worked
+      const verifyDb = await getDb();
+      const savedAnalysis = verifyDb.game_analyses?.[gameId];
+      if (!savedAnalysis) {
+        console.error(`[ANALYZE] CRITICAL: Analysis NOT found after save for game ${gameId}`);
+        console.error(`[ANALYZE] game_analyses keys:`, Object.keys(verifyDb.game_analyses || {}));
+      } else {
+        console.log(`[ANALYZE] Verified: Analysis saved with ${savedAnalysis.moves?.length || 0} moves, depth ${savedAnalysis.depth}, engine ${savedAnalysis.engine}`);
+      }
       
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-      console.log('='.repeat(60));
-      console.log('[ANALYZE] ✓ SUCCESS - Analysis complete in', duration, 'seconds');
-      console.log('[ANALYZE] ✓ Returning response with completed=true');
-      console.log('='.repeat(60));
+      console.log(`[ANALYZE] Analysis complete in ${duration}s - White: ${analysis.whiteAccuracy}%, Black: ${analysis.blackAccuracy}%`);
       
       return NextResponse.json({
         success: true,
@@ -489,9 +471,7 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log('='.repeat(60));
-    console.error('[ANALYZE] ✗ ERROR after', duration, 'seconds:', error);
-    console.log('='.repeat(60));
+    console.error('[ANALYZE] Error after', duration, 's:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to analyze game' },
       { status: 500 }
