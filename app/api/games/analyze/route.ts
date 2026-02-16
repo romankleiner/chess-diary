@@ -445,20 +445,7 @@ export async function POST(request: NextRequest) {
         delete dbAny.analysis_progress[gameId];
       }
       
-      console.log(`[ANALYZE] Saving analysis for game ${gameId}...`);
-      console.log(`[ANALYZE] Analysis has ${analysis.moves.length} moves`);
       await saveDb(db);
-      console.log(`[ANALYZE] Save complete`);
-      
-      // Verify the save worked
-      const verifyDb = await getDb();
-      const savedAnalysis = verifyDb.game_analyses?.[gameId];
-      if (!savedAnalysis) {
-        console.error(`[ANALYZE] CRITICAL: Analysis NOT found after save for game ${gameId}`);
-        console.error(`[ANALYZE] game_analyses keys:`, Object.keys(verifyDb.game_analyses || {}));
-      } else {
-        console.log(`[ANALYZE] Verified: Analysis saved with ${savedAnalysis.moves?.length || 0} moves, depth ${savedAnalysis.depth}, engine ${savedAnalysis.engine}`);
-      }
       
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`[ANALYZE] Analysis complete in ${duration}s - White: ${analysis.whiteAccuracy}%, Black: ${analysis.blackAccuracy}%`);

@@ -1,4 +1,4 @@
+- Game selection gets lost when I apply a journal filter
 - Cloud analysis does not fully complete
-- Save and display the depth setting used in analysis
 - Find diary entries for previously analysed game, and run an AI engine to provide feedback on the thought process
 - Show opponent's last move on the game diagram

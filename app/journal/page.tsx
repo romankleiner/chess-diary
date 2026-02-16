@@ -73,9 +73,12 @@ export default function JournalPage() {
 
   useEffect(() => {
     loadEntries();
+  }, [selectedDate, viewRangeDays]);
+
+  useEffect(() => {
     loadActiveGames();
     loadUsername();
-  }, [selectedDate, viewRangeDays]);
+  }, []); // Only run once on mount
 
   const loadUsername = async () => {
     try {
@@ -108,8 +111,9 @@ export default function JournalPage() {
       allEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setEntries(allEntries);
       
+      // Auto-select first game only if nothing is currently selected
       const gameEntries = allEntries.filter((e: JournalEntry) => e.gameId);
-      if (gameEntries.length > 0) {
+      if (gameEntries.length > 0 && !currentGameId) {
         setCurrentGameId(gameEntries[0].gameId);
       }
       
