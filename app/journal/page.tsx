@@ -14,7 +14,8 @@ interface JournalEntry {
   timestamp: string;
   fen?: string;
   myMove?: string;
-  image?: string;
+  image?: string; // Legacy single image (for backward compatibility)
+  images?: string[]; // New multi-image support
 }
 
 interface Game {
@@ -41,7 +42,7 @@ export default function JournalPage() {
   const [currentGameId, setCurrentGameId] = useState<string | null>(null);
   const [thought, setThought] = useState('');
   const [myMove, setMyMove] = useState('');
-  const [image, setImage] = useState<string>('');
+  const [images, setImages] = useState<string[]>([]);
   const [editingEntry, setEditingEntry] = useState<JournalEntry | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportStartDate, setExportStartDate] = useState('');
@@ -183,7 +184,7 @@ export default function JournalPage() {
           body: JSON.stringify({
             content: thought,
             myMove: myMove.trim() || null,
-            image: image || null,
+            images: images.length > 0 ? images : null,
           }),
         });
         
@@ -192,7 +193,7 @@ export default function JournalPage() {
           
           setThought('');
           setMyMove('');
-          setImage('');
+          setImages([]);
           setEditingEntry(null);
           
           // Update the entry in state instead of reloading all entries
@@ -218,7 +219,7 @@ export default function JournalPage() {
             moveNotation: null,
             fen: currentFen,
             myMove: myMove.trim() || null,
-            image: image || null,
+            images: images.length > 0 ? images : null,
           }),
         });
         
@@ -231,7 +232,7 @@ export default function JournalPage() {
           // Clear form fields
           setThought('');
           setMyMove('');
-          setImage('');
+          setImages([]);
           
           // Add the new entry directly to state instead of reloading all entries
           if (data.entry) {
@@ -266,13 +267,34 @@ export default function JournalPage() {
         if (file) {
           const reader = new FileReader();
           reader.onload = (event) => {
-            setImage(event.target?.result as string);
+            const base64 = event.target?.result as string;
+            setImages(prev => [...prev, base64]); // Add to array instead of replacing
           };
           reader.readAsDataURL(file);
         }
-        break;
       }
     }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        setImages(prev => [...prev, base64]);
+      };
+      reader.readAsDataURL(file);
+    });
+    
+    // Reset input so same file can be selected again
+    e.target.value = '';
+  };
+
+  const removeImage = (index: number) => {
+    setImages(prev => prev.filter((_, i) => i !== index));
   };
 
   const toggleGameTurn = async (gameId: string) => {
@@ -316,7 +338,14 @@ export default function JournalPage() {
     setEditingEntry(entry);
     setThought(entry.content);
     setMyMove(entry.myMove || '');
-    setImage(entry.image || '');
+    // Support both new images array and legacy single image
+    if (entry.images && entry.images.length > 0) {
+      setImages(entry.images);
+    } else if (entry.image) {
+      setImages([entry.image]); // Convert legacy single image to array
+    } else {
+      setImages([]);
+    }
     setCurrentGameId(entry.gameId);
     setEntryMode(entry.gameId ? 'game' : 'general');
     
@@ -665,7 +694,7 @@ export default function JournalPage() {
                   setEditingEntry(null);
                   setThought('');
                   setMyMove('');
-                  setImage('');
+                  setImages([]);
                 }}
                 className="ml-4 text-xs text-blue-600 hover:underline"
               >
@@ -713,23 +742,52 @@ export default function JournalPage() {
             )}
           </div>
           
-          {image && (
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Attached Image
+          {/* Multi-image display and upload */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium">
+                Images {images.length > 0 && `(${images.length})`}
               </label>
-              <div className="relative inline-block">
-                <img src={image} alt="Pasted" className="max-w-xs rounded border" />
-                <button
-                  type="button"
-                  onClick={() => setImage('')}
-                  className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600"
-                >
-                  ✕
-                </button>
-              </div>
+              <label className="px-3 py-1 bg-blue-500 text-white rounded text-sm cursor-pointer hover:bg-blue-600">
+                + Add Image
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageUpload}
+                  className="hidden"
+                />
+              </label>
             </div>
-          )}
+            
+            {images.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {images.map((img, index) => (
+                  <div key={index} className="relative group">
+                    <img 
+                      src={img} 
+                      alt={`Image ${index + 1}`} 
+                      className="w-full h-32 object-cover rounded border"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeImage(index)}
+                      className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Remove image"
+                    >
+                      ✕
+                    </button>
+                    <div className="absolute bottom-1 left-1 bg-black bg-opacity-60 text-white text-xs px-2 py-0.5 rounded">
+                      {index + 1}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-gray-500 mt-1">
+              Paste images with Ctrl+V or click "+ Add Image" to upload
+            </p>
+          </div>
           
           {entryMode === 'game' && currentGameId && (() => {
             const game = allGames.find(g => g.id === currentGameId);
@@ -1041,11 +1099,35 @@ export default function JournalPage() {
                               });
                             })()}</div>
                             
-                            {entry.image && (
-                              <div className="mt-3">
-                                <img src={entry.image} alt="Entry attachment" className="max-w-md rounded border" />
-                              </div>
-                            )}
+                            {/* Display images - support both new array and legacy single image */}
+                            {(() => {
+                              const entryImages = entry.images && entry.images.length > 0 
+                                ? entry.images 
+                                : entry.image 
+                                  ? [entry.image]
+                                  : [];
+                              
+                              if (entryImages.length === 0) return null;
+                              
+                              return (
+                                <div className="mt-3">
+                                  <div className={`grid gap-3 ${
+                                    entryImages.length === 1 ? 'grid-cols-1' :
+                                    entryImages.length === 2 ? 'grid-cols-2' :
+                                    'grid-cols-2 md:grid-cols-3'
+                                  }`}>
+                                    {entryImages.map((img, idx) => (
+                                      <img 
+                                        key={idx}
+                                        src={img} 
+                                        alt={`Image ${idx + 1}`} 
+                                        className={`rounded border ${entryImages.length === 1 ? 'max-w-md' : 'w-full h-48 object-cover'}`}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             
                             {entry.myMove && (
                               <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-600">

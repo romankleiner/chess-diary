@@ -1,4 +1,3 @@
-- Allow attaching multiple images to a post
 - Add post-game sidebar support. Make it filterable. On export, use a special box to display it.
 - Find diary entries for previously analysed game, and run an AI engine to provide feedback on the thought process
 - Cloud analysis does not fully complete

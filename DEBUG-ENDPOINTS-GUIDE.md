@@ -130,3 +130,38 @@ All debug endpoints have these protections:
 - GET requests can be visited directly in browser
 - Endpoints won't work on production Vercel deployment
 - Safe to leave in codebase - they're protected
+
+### 4. Migrate Images to Array
+**Path:** `/api/debug/migrate-images`  
+**Method:** POST  
+**Purpose:** Convert legacy single images to new multi-image format
+
+**When to use:**
+- After upgrading to multi-image support
+- To convert old entries with single images to arrays
+
+**How to use:**
+```javascript
+fetch('/api/debug/migrate-images', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' }
+}).then(r => r.json()).then(console.log)
+```
+
+**What it does:**
+- Converts `image: "..."` to `images: ["..."]`
+- Removes old `image` field
+- Preserves all other entry data
+
+**Response:**
+```json
+{
+  "success": true,
+  "migratedCount": 15,
+  "message": "Migrated 15 entry/entries to multi-image format"
+}
+```
+
+---
+
+### 5. Check Specific Game Analysis
