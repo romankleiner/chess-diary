@@ -2,6 +2,7 @@ Image migration cleanup:
 - Ensure that journal view also uses cached images
 - Remove the old "image" property
 - Warning in Word
+- Lost aspect ration on non-diagram images on export
 
 Defects:
 - Logged out in the middle of session entry
