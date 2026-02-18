@@ -16,6 +16,11 @@ interface JournalEntry {
   myMove?: string;
   image?: string; // Legacy single image (for backward compatibility)
   images?: string[]; // New multi-image support
+  postReview?: {
+    content: string;
+    timestamp: string;
+    type: 'manual' | 'ai';
+  };
 }
 
 interface Game {
@@ -50,7 +55,9 @@ export default function JournalPage() {
   const [entryMode, setEntryMode] = useState<'general' | 'game'>('general');
   const [filterGameId, setFilterGameId] = useState<string>('all'); // 'all', 'general', or specific game ID
   const [viewRangeDays, setViewRangeDays] = useState<number>(7); // Configurable view range
-  const [savedViewRangeDays, setSavedViewRangeDays] = useState<number>(7); // Remember non-game-filter range
+  const [savedViewRangeDays, setSavedViewRangeDays] = useState<number>(7);
+  const [addingReviewToEntry, setAddingReviewToEntry] = useState<number | null>(null);
+  const [reviewContent, setReviewContent] = useState(''); // Remember non-game-filter range
 
   // Auto-resize textarea
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -357,6 +364,85 @@ export default function JournalPage() {
         textarea.focus();
       }
     }, 100);
+  };
+
+  const handleAddPostReview = (entryId: number) => {
+    setAddingReviewToEntry(entryId);
+    setReviewContent('');
+  };
+
+  const handleSavePostReview = async (entryId: number) => {
+    if (!reviewContent.trim()) {
+      alert('Please enter review content');
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/journal/${entryId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postReview: {
+            content: reviewContent,
+            timestamp: new Date().toISOString(),
+            type: 'manual'
+          }
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Update entry in state
+        if (data.entry) {
+          setEntries(prevEntries => 
+            prevEntries.map(e => e.id === data.entry.id ? data.entry : e)
+          );
+        }
+        
+        setAddingReviewToEntry(null);
+        setReviewContent('');
+      } else {
+        alert('Failed to save post-review');
+      }
+    } catch (error) {
+      console.error('Error saving post-review:', error);
+      alert('Failed to save post-review');
+    }
+  };
+
+  const handleEditPostReview = (entry: JournalEntry) => {
+    setAddingReviewToEntry(entry.id);
+    setReviewContent(entry.postReview?.content || '');
+  };
+
+  const handleDeletePostReview = async (entryId: number) => {
+    if (!confirm('Delete this post-game review?')) return;
+
+    try {
+      const response = await fetch(`/api/journal/${entryId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postReview: null
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.entry) {
+          setEntries(prevEntries => 
+            prevEntries.map(e => e.id === data.entry.id ? data.entry : e)
+          );
+        }
+      } else {
+        alert('Failed to delete post-review');
+      }
+    } catch (error) {
+      console.error('Error deleting post-review:', error);
+      alert('Failed to delete post-review');
+    }
   };
 
   const handleExportJournal = async () => {
@@ -1016,6 +1102,20 @@ export default function JournalPage() {
                                 >
                                   🗑️
                                 </button>
+                                {/* Add Post-Review button - only for finished games without review */}
+                                {entry.gameId && (() => {
+                                  const game = allGames.find(g => g.id === entry.gameId);
+                                  const isFinished = game?.result && game.result !== 'null' && !game.result.includes('progress');
+                                  return isFinished && !entry.postReview && (
+                                    <button
+                                      onClick={() => handleAddPostReview(entry.id)}
+                                      className="text-amber-600 hover:text-amber-700 text-xs px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900"
+                                      title="Add post-game review"
+                                    >
+                                      + Review
+                                    </button>
+                                  );
+                                })()}
                               </div>
                             </div>
                             
@@ -1134,6 +1234,88 @@ export default function JournalPage() {
                                 <p className="text-sm font-bold text-green-700 dark:text-green-400">
                                   ✓ My Move: {entry.myMove}
                                 </p>
+                              </div>
+                            )}
+                            
+                            {/* Post-Review Section */}
+                            {addingReviewToEntry === entry.id ? (
+                              <div className="mt-4 ml-8 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-700 rounded-lg p-4">
+                                <div className="font-bold text-amber-900 dark:text-amber-100 mb-2">
+                                  📝 ADD POST-GAME REVIEW
+                                </div>
+                                <textarea
+                                  value={reviewContent}
+                                  onChange={(e) => setReviewContent(e.target.value)}
+                                  placeholder="Looking back at this game, what insights can you share about your thinking during this moment?"
+                                  className="w-full p-2 border rounded resize-none dark:bg-gray-800 dark:border-gray-600"
+                                  rows={4}
+                                  autoFocus
+                                />
+                                <div className="mt-2 flex gap-2">
+                                  <button
+                                    onClick={() => handleSavePostReview(entry.id)}
+                                    className="px-3 py-1 bg-amber-500 text-white rounded hover:bg-amber-600"
+                                  >
+                                    Save Review
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setAddingReviewToEntry(null);
+                                      setReviewContent('');
+                                    }}
+                                    className="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded hover:bg-gray-400 dark:hover:bg-gray-500"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : entry.postReview && (
+                              <div className="mt-4 ml-8 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-700 rounded-lg p-4 relative">
+                                {/* Icon badge */}
+                                <div className="absolute -left-3 -top-3 bg-amber-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">
+                                  📝
+                                </div>
+                                
+                                {/* Header */}
+                                <div className="font-bold text-amber-900 dark:text-amber-100 mb-1">
+                                  POST-GAME REVIEW
+                                </div>
+                                
+                                {/* Timestamp */}
+                                <div className="text-xs text-amber-700 dark:text-amber-300 mb-3">
+                                  Added {(() => {
+                                    const reviewDate = new Date(entry.postReview.timestamp);
+                                    const entryDate = new Date(entry.timestamp);
+                                    const daysDiff = Math.floor((reviewDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
+                                    return daysDiff === 0 ? 'same day' : 
+                                           daysDiff === 1 ? '1 day after game' : 
+                                           `${daysDiff} days after game`;
+                                  })()}
+                                </div>
+                                
+                                {/* Separator */}
+                                <div className="border-t border-amber-300 dark:border-amber-600 mb-3"></div>
+                                
+                                {/* Content */}
+                                <div className="text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap">
+                                  {entry.postReview.content}
+                                </div>
+                                
+                                {/* Actions */}
+                                <div className="mt-3 flex gap-2">
+                                  <button
+                                    onClick={() => handleEditPostReview(entry)}
+                                    className="text-sm text-amber-600 hover:underline"
+                                  >
+                                    Edit Review
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeletePostReview(entry.id)}
+                                    className="text-sm text-red-600 hover:underline"
+                                  >
+                                    Delete Review
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>

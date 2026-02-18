@@ -129,6 +129,8 @@ export async function GET(request: NextRequest) {
               ? [entry.image]
               : [];
           
+          console.log(`[EXPORT] Entry ${entry.id}: Found ${entryImages.length} image(s)`);
+          
           if (entryImages.length > 0) {
             try {
               const { ImageRun } = await import('docx');
@@ -137,6 +139,8 @@ export async function GET(request: NextRequest) {
                 // Remove data URL prefix
                 const base64Data = img.split(',')[1] || img;
                 const imageBuffer = Buffer.from(base64Data, 'base64');
+                
+                console.log(`[EXPORT] Adding image ${index + 1}/${entryImages.length} - size: ${imageBuffer.length} bytes`);
                 
                 docSections.push(
                   new Paragraph({
@@ -153,8 +157,9 @@ export async function GET(request: NextRequest) {
                   })
                 );
               }
+              console.log(`[EXPORT] Successfully added ${entryImages.length} image(s) to entry ${entry.id}`);
             } catch (error) {
-              console.error('Error adding images to document:', error);
+              console.error('[EXPORT] Error adding images to document:', error);
               // Add a note that images couldn't be included
               docSections.push(
                 new Paragraph({
@@ -165,6 +170,67 @@ export async function GET(request: NextRequest) {
                 })
               );
             }
+          }
+          
+          // Add post-review if present
+          if (entry.postReview) {
+            const { Table, TableRow, TableCell, WidthType, Shading } = await import('docx');
+            
+            const reviewDate = new Date(entry.postReview.timestamp);
+            const entryDate = new Date(entry.timestamp);
+            const daysDiff = Math.floor((reviewDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
+            const timeLabel = daysDiff === 0 ? 'same day' : 
+                            daysDiff === 1 ? '1 day after game' : 
+                            `${daysDiff} days after game`;
+            
+            // Add spacing before review box
+            docSections.push(new Paragraph({ spacing: { after: 100 } }));
+            
+            // Create shaded table for post-review
+            docSections.push(
+              new Table({
+                width: { size: 90, type: WidthType.PERCENTAGE },
+                indent: { size: 720, type: WidthType.DXA }, // 0.5 inch indent
+                borders: {
+                  top: { style: 'single', size: 2, color: 'D97706' },
+                  bottom: { style: 'single', size: 2, color: 'D97706' },
+                  left: { style: 'single', size: 2, color: 'D97706' },
+                  right: { style: 'single', size: 2, color: 'D97706' },
+                },
+                rows: [
+                  new TableRow({
+                    children: [
+                      new TableCell({
+                        shading: { fill: 'FEF3C7' }, // Amber-100
+                        children: [
+                          new Paragraph({
+                            children: [
+                              new TextRun({ text: '📝 POST-GAME REVIEW', bold: true, size: 22 })
+                            ],
+                            spacing: { after: 100 }
+                          }),
+                          new Paragraph({
+                            children: [
+                              new TextRun({ text: `Added ${timeLabel}`, size: 18, italics: true, color: '92400E' })
+                            ],
+                            spacing: { after: 150 }
+                          }),
+                          new Paragraph({
+                            border: { bottom: { style: 'single', size: 1, color: 'F59E0B' } },
+                            spacing: { after: 150 }
+                          }),
+                          new Paragraph({
+                            children: [
+                              new TextRun({ text: entry.postReview.content, italics: true })
+                            ]
+                          })
+                        ]
+                      })
+                    ]
+                  })
+                ]
+              })
+            );
           }
         }
       }
