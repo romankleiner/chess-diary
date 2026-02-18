@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb from '@/lib/db';
+import getDb, { saveDb } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -89,12 +89,107 @@ export async function GET(request: NextRequest) {
                   new TextRun({ text: `Game: `, bold: true }),
                   new TextRun({ text: `${game.white} vs ${game.black}` }),
                 ],
-                spacing: { before: 200 }
+                spacing: { before: 200, after: 100 }
               })
             );
           }
           
-          // Entry content
+          // Add chess diagram from FEN or cached images (BEFORE entry content)
+          // Priority: 1) Check cached images, 2) Generate from FEN if available
+          if (entry.fen || entry.images?.length > 0 || entry.image) {
+            try {
+              const { ImageRun } = await import('docx');
+              let imageBuffer: Buffer | null = null;
+              
+              // Try cached images first
+              const cachedImage = entry.images?.[0] || entry.image;
+              if (cachedImage) {
+                const base64Data = cachedImage.split(',')[1] || cachedImage;
+                imageBuffer = Buffer.from(base64Data, 'base64');
+                console.log(`[EXPORT] Entry ${entry.id}: Using cached board image`);
+              } 
+              // Generate from FEN if no cached image but FEN exists
+              else if (entry.fen) {
+                console.log(`[EXPORT] Entry ${entry.id}: Generating board from FEN: ${entry.fen}`);
+                
+                // Determine POV (point of view) - which side the user is playing
+                let pov = 'white'; // default
+                if (game && username) {
+                  const usernameLower = username.toLowerCase();
+                  if (game.black.toLowerCase() === usernameLower) {
+                    pov = 'black';
+                  }
+                }
+                
+                const boardUrl = `${request.nextUrl.origin}/api/board-image?fen=${encodeURIComponent(entry.fen)}&pov=${pov}`;
+                console.log(`[EXPORT] Fetching: ${boardUrl}`);
+                
+                const boardResponse = await fetch(boardUrl);
+                
+                if (boardResponse.ok) {
+                  const arrayBuffer = await boardResponse.arrayBuffer();
+                  imageBuffer = Buffer.from(arrayBuffer);
+                  
+                  // Cache the generated image back to the entry for future exports
+                  // Convert to base64 data URL
+                  const base64 = imageBuffer.toString('base64');
+                  const dataUrl = `data:image/png;base64,${base64}`;
+                  
+                  // Update entry in database
+                  if (!entry.images) {
+                    entry.images = [dataUrl];
+                  } else if (!entry.images[0]) {
+                    entry.images[0] = dataUrl;
+                  }
+                  console.log(`[EXPORT] Entry ${entry.id}: Cached generated image (${imageBuffer.length} bytes)`);
+                } else {
+                  const errorText = await boardResponse.text();
+                  console.error(`[EXPORT] Entry ${entry.id}: Failed to generate board - ${boardResponse.status}: ${errorText}`);
+                }
+              }
+              
+              // Add image to document if we have one
+              if (imageBuffer) {
+                docSections.push(
+                  new Paragraph({
+                    children: [
+                      new ImageRun({
+                        data: Uint8Array.from(imageBuffer),
+                        transformation: {
+                          width: 300,
+                          height: 300,
+                        },
+                      } as any),
+                    ],
+                    spacing: { after: 200 }
+                  })
+                );
+              } else if (entry.fen) {
+                // Add FEN text if image couldn't be generated
+                docSections.push(
+                  new Paragraph({
+                    children: [
+                      new TextRun({ text: 'Position (FEN): ', bold: true }),
+                      new TextRun({ text: entry.fen, italics: true, size: 18 }),
+                    ],
+                    spacing: { after: 200 }
+                  })
+                );
+              }
+            } catch (error) {
+              console.error(`[EXPORT] Entry ${entry.id}: Error adding chess diagram:`, error);
+              docSections.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: '[Chess diagram unavailable]', italics: true, color: '999999' }),
+                  ],
+                  spacing: { after: 100 }
+                })
+              );
+            }
+          }
+          
+          // Entry content (AFTER chess diagram)
           const timestamp = new Date(entry.timestamp).toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit'
@@ -122,14 +217,16 @@ export async function GET(request: NextRequest) {
             );
           }
           
-          // Add images if present (support both new array and legacy single image)
-          const entryImages = entry.images && entry.images.length > 0 
-            ? entry.images 
-            : entry.image 
+          // Add additional user-uploaded images (if any beyond the first board image)
+          // If we already added a board from images[0], skip it here
+          const hasBoardInFirstImage = entry.images?.length > 0 && !entry.fen;
+          const entryImages = entry.images && entry.images.length > 0
+            ? (hasBoardInFirstImage ? entry.images : entry.images.slice(1))
+            : entry.image && !entry.fen
               ? [entry.image]
               : [];
           
-          console.log(`[EXPORT] Entry ${entry.id}: Found ${entryImages.length} image(s)`);
+          console.log(`[EXPORT] Entry ${entry.id}: Found ${entryImages.length} additional user image(s)`);
           
           if (entryImages.length > 0) {
             try {
@@ -234,6 +331,10 @@ export async function GET(request: NextRequest) {
           }
         }
       }
+      
+      // Save any cached images we generated back to the database
+      await saveDb(db);
+      console.log('[EXPORT] Saved cached board images to database');
       
       // Create document
       const doc = new Document({

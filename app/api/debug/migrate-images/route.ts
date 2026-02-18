@@ -20,16 +20,26 @@ export async function POST(request: NextRequest) {
     
     // Convert single image field to images array
     for (const entry of db.journal_entries || []) {
-      if (entry.image && !entry.images) {
-        entry.images = [entry.image];
-        delete entry.image; // Remove old field
-        migratedCount++;
-        migrated.push(entry.id);
-        console.log(`[MIGRATE] Converted entry ${entry.id} from image to images array`);
-      } else if (entry.image && entry.images) {
-        // Both exist - delete old field
-        delete entry.image;
-        console.log(`[MIGRATE] Removed redundant image field from entry ${entry.id}`);
+      if (entry.image) {
+        if (!entry.images) {
+          // No images array yet - create it with the single image
+          entry.images = [entry.image];
+          delete entry.image;
+          migratedCount++;
+          migrated.push(entry.id);
+          console.log(`[MIGRATE] Converted entry ${entry.id} from image to images array`);
+        } else if (!entry.images.includes(entry.image)) {
+          // Has images array but doesn't include the old image - add it
+          entry.images.unshift(entry.image); // Add to beginning
+          delete entry.image;
+          migratedCount++;
+          migrated.push(entry.id);
+          console.log(`[MIGRATE] Added legacy image to existing images array for entry ${entry.id}`);
+        } else {
+          // Image already in array - just delete old field
+          delete entry.image;
+          console.log(`[MIGRATE] Removed redundant image field from entry ${entry.id}`);
+        }
       }
     }
     
