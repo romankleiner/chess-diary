@@ -1,3 +1,4 @@
+- In the game filter, separate finished and unfinished games
 - Add the ability to display/omit post-game analysis entries. Do the same for export
 - Auto-generate post-game analysis entries using UI. Distinguish them from human-generated notes
 - Cloud analysis does not fully complete
