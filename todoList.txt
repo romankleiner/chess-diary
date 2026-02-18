@@ -1,6 +1,16 @@
+Image migration cleanup:
+- Ensure that journal view also uses cached images
+- Remove the old "image" property
+- Warning in Word
+
+Defects:
 - Logged out in the middle of session entry
+
+Analysis:
 - In the game filter, separate finished and unfinished games
 - Add the ability to display/omit post-game analysis entries. Do the same for export
 - Auto-generate post-game analysis entries using UI. Distinguish them from human-generated notes
 - Cloud analysis does not fully complete
+
+Features:
 - Show opponent's last move on the game diagram
