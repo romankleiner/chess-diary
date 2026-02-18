@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate');
     const format = searchParams.get('format') || 'json'; // json or docx
     const username = searchParams.get('username') || '';
+    const includePostReviews = searchParams.get('includePostReviews') !== 'false'; // Default true
     
     if (!endDate) {
       return NextResponse.json(
@@ -38,15 +39,21 @@ export async function GET(request: NextRequest) {
     
     const groupedData = Object.keys(groupedByDate).sort().map(date => ({
       date,
-      entries: groupedByDate[date].map(entry => ({
-        ...entry,
-        game: entry.gameId ? db.games[entry.gameId] : null
-      }))
+      entries: groupedByDate[date].map(entry => {
+        console.log(`[EXPORT] Entry ${entry.id} on ${date} at ${new Date(entry.timestamp).toLocaleTimeString()} - gameId: ${entry.gameId}`);
+        return {
+          ...entry,
+          game: entry.gameId ? db.games[entry.gameId] : null
+        };
+      })
     }));
     
     if (format === 'docx') {
       // Generate Word document in-memory using docx library
       const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import('docx');
+      
+      // Track processed entries to prevent duplicates
+      const processedEntryIds = new Set<number>();
       
       // Create document sections
       const docSections: any[] = [
@@ -63,6 +70,8 @@ export async function GET(request: NextRequest) {
       
       // Add entries by date
       for (const { date, entries: dateEntries } of groupedData) {
+        console.log(`[EXPORT] Processing date: ${date} with ${dateEntries.length} entries`);
+        
         // Date header
         docSections.push(
           new Paragraph({
@@ -79,6 +88,14 @@ export async function GET(request: NextRequest) {
         
         // Add each entry
         for (const entry of dateEntries) {
+          // Skip if already processed
+          if (processedEntryIds.has(entry.id)) {
+            console.warn(`[EXPORT] Skipping duplicate entry ${entry.id}`);
+            continue;
+          }
+          processedEntryIds.add(entry.id);
+          
+          console.log(`[EXPORT] Processing entry ${entry.id} at ${new Date(entry.timestamp).toLocaleTimeString()}`);
           const game = entry.game;
           
           if (game) {
@@ -96,16 +113,19 @@ export async function GET(request: NextRequest) {
           
           // Add chess diagram from FEN or cached images (BEFORE entry content)
           // Priority: 1) Check cached images, 2) Generate from FEN if available
-          if (entry.fen || entry.images?.length > 0 || entry.image) {
+          let usedFirstImageAsBoard = false;
+          
+          if (entry.fen || entry.images?.length > 0) {
             try {
               const { ImageRun } = await import('docx');
               let imageBuffer: Buffer | null = null;
               
               // Try cached images first
-              const cachedImage = entry.images?.[0] || entry.image;
+              const cachedImage = entry.images?.[0];
               if (cachedImage) {
                 const base64Data = cachedImage.split(',')[1] || cachedImage;
                 imageBuffer = Buffer.from(base64Data, 'base64');
+                usedFirstImageAsBoard = true; // Mark that we used images[0]
                 console.log(`[EXPORT] Entry ${entry.id}: Using cached board image`);
               } 
               // Generate from FEN if no cached image but FEN exists
@@ -135,11 +155,14 @@ export async function GET(request: NextRequest) {
                   const base64 = imageBuffer.toString('base64');
                   const dataUrl = `data:image/png;base64,${base64}`;
                   
-                  // Update entry in database
-                  if (!entry.images) {
-                    entry.images = [dataUrl];
-                  } else if (!entry.images[0]) {
-                    entry.images[0] = dataUrl;
+                  // Find and update the ORIGINAL entry in db.journal_entries
+                  const originalEntry = db.journal_entries.find(e => e.id === entry.id);
+                  if (originalEntry) {
+                    if (!originalEntry.images) {
+                      originalEntry.images = [dataUrl];
+                    } else if (!originalEntry.images[0]) {
+                      originalEntry.images[0] = dataUrl;
+                    }
                   }
                   console.log(`[EXPORT] Entry ${entry.id}: Cached generated image (${imageBuffer.length} bytes)`);
                 } else {
@@ -150,20 +173,25 @@ export async function GET(request: NextRequest) {
               
               // Add image to document if we have one
               if (imageBuffer) {
-                docSections.push(
-                  new Paragraph({
-                    children: [
-                      new ImageRun({
-                        data: Uint8Array.from(imageBuffer),
-                        transformation: {
-                          width: 300,
-                          height: 300,
-                        },
-                      } as any),
-                    ],
-                    spacing: { after: 200 }
-                  })
-                );
+                try {
+                  docSections.push(
+                    new Paragraph({
+                      children: [
+                        new ImageRun({
+                          data: imageBuffer,
+                          transformation: {
+                            width: 300,
+                            height: 300,
+                          },
+                          type: 'png',
+                        }),
+                      ],
+                      spacing: { after: 200 }
+                    })
+                  );
+                } catch (imgError: any) {
+                  console.error(`[EXPORT] Failed to add board image for entry ${entry.id}:`, imgError.message);
+                }
               } else if (entry.fen) {
                 // Add FEN text if image couldn't be generated
                 docSections.push(
@@ -218,15 +246,12 @@ export async function GET(request: NextRequest) {
           }
           
           // Add additional user-uploaded images (if any beyond the first board image)
-          // If we already added a board from images[0], skip it here
-          const hasBoardInFirstImage = entry.images?.length > 0 && !entry.fen;
+          // Skip first image only if we actually used it as a board diagram above
           const entryImages = entry.images && entry.images.length > 0
-            ? (hasBoardInFirstImage ? entry.images : entry.images.slice(1))
-            : entry.image && !entry.fen
-              ? [entry.image]
-              : [];
+            ? (usedFirstImageAsBoard ? entry.images.slice(1) : entry.images)
+            : [];
           
-          console.log(`[EXPORT] Entry ${entry.id}: Found ${entryImages.length} additional user image(s)`);
+          console.log(`[EXPORT] Entry ${entry.id}: Found ${entryImages.length} additional user image(s) (usedFirstImageAsBoard: ${usedFirstImageAsBoard})`);
           
           if (entryImages.length > 0) {
             try {
@@ -239,20 +264,51 @@ export async function GET(request: NextRequest) {
                 
                 console.log(`[EXPORT] Adding image ${index + 1}/${entryImages.length} - size: ${imageBuffer.length} bytes`);
                 
-                docSections.push(
-                  new Paragraph({
-                    children: [
-                      new ImageRun({
-                        data: Uint8Array.from(imageBuffer),
-                        transformation: {
-                          width: 400,
-                          height: 300,
-                        },
-                      } as any), // Type assertion to work around docx type issues
-                    ],
-                    spacing: { after: entryImages.length > 1 ? 100 : 200 }
-                  })
-                );
+                // Detect image dimensions to maintain aspect ratio
+                let width = 400;
+                let height = 300;
+                
+                try {
+                  // Try to detect if it's PNG or JPEG and get dimensions
+                  if (imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50) {
+                    // PNG - dimensions at bytes 16-23
+                    width = imageBuffer.readUInt32BE(16);
+                    height = imageBuffer.readUInt32BE(20);
+                  } else if (imageBuffer[0] === 0xFF && imageBuffer[1] === 0xD8) {
+                    // JPEG - would need more complex parsing, use default
+                  }
+                  
+                  // Scale to max width of 500 while maintaining aspect ratio
+                  const maxWidth = 500;
+                  if (width > maxWidth) {
+                    const scale = maxWidth / width;
+                    height = Math.round(height * scale);
+                    width = maxWidth;
+                  }
+                } catch (e) {
+                  // If detection fails, use default 400x300
+                  console.log(`[EXPORT] Could not detect image dimensions, using default`);
+                }
+                
+                try {
+                  docSections.push(
+                    new Paragraph({
+                      children: [
+                        new ImageRun({
+                          data: imageBuffer,
+                          transformation: {
+                            width: width,
+                            height: height,
+                          },
+                          type: 'png',
+                        }),
+                      ],
+                      spacing: { after: entryImages.length > 1 ? 100 : 200 }
+                    })
+                  );
+                } catch (imgError: any) {
+                  console.error(`[EXPORT] Failed to add user image ${index + 1}:`, imgError.message);
+                }
               }
               console.log(`[EXPORT] Successfully added ${entryImages.length} image(s) to entry ${entry.id}`);
             } catch (error) {
@@ -269,10 +325,8 @@ export async function GET(request: NextRequest) {
             }
           }
           
-          // Add post-review if present
-          if (entry.postReview) {
-            const { Table, TableRow, TableCell, WidthType, Shading } = await import('docx');
-            
+          // Add post-review if present and enabled
+          if (includePostReviews && entry.postReview) {
             const reviewDate = new Date(entry.postReview.timestamp);
             const entryDate = new Date(entry.timestamp);
             const daysDiff = Math.floor((reviewDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -280,52 +334,54 @@ export async function GET(request: NextRequest) {
                             daysDiff === 1 ? '1 day after game' : 
                             `${daysDiff} days after game`;
             
-            // Add spacing before review box
-            docSections.push(new Paragraph({ spacing: { after: 100 } }));
+            // Add spacing before review
+            docSections.push(new Paragraph({ spacing: { before: 200 } }));
             
-            // Create shaded table for post-review
+            // Add post-review as indented paragraphs with background shading
             docSections.push(
-              new Table({
-                width: { size: 90, type: WidthType.PERCENTAGE },
-                indent: { size: 720, type: WidthType.DXA }, // 0.5 inch indent
-                borders: {
-                  top: { style: 'single', size: 2, color: 'D97706' },
-                  bottom: { style: 'single', size: 2, color: 'D97706' },
-                  left: { style: 'single', size: 2, color: 'D97706' },
-                  right: { style: 'single', size: 2, color: 'D97706' },
-                },
-                rows: [
-                  new TableRow({
-                    children: [
-                      new TableCell({
-                        shading: { fill: 'FEF3C7' }, // Amber-100
-                        children: [
-                          new Paragraph({
-                            children: [
-                              new TextRun({ text: '📝 POST-GAME REVIEW', bold: true, size: 22 })
-                            ],
-                            spacing: { after: 100 }
-                          }),
-                          new Paragraph({
-                            children: [
-                              new TextRun({ text: `Added ${timeLabel}`, size: 18, italics: true, color: '92400E' })
-                            ],
-                            spacing: { after: 150 }
-                          }),
-                          new Paragraph({
-                            border: { bottom: { style: 'single', size: 1, color: 'F59E0B' } },
-                            spacing: { after: 150 }
-                          }),
-                          new Paragraph({
-                            children: [
-                              new TextRun({ text: entry.postReview.content, italics: true })
-                            ]
-                          })
-                        ]
-                      })
-                    ]
+              new Paragraph({
+                children: [
+                  new TextRun({ 
+                    text: '📝 POST-GAME REVIEW', 
+                    bold: true, 
+                    color: '92400E',
+                    size: 24
                   })
-                ]
+                ],
+                shading: { fill: 'FEF3C7' },
+                indent: { left: 720 },
+                spacing: { after: 50 }
+              })
+            );
+            
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ 
+                    text: `Added ${timeLabel}`, 
+                    italics: true, 
+                    color: '92400E',
+                    size: 20
+                  })
+                ],
+                shading: { fill: 'FEF3C7' },
+                indent: { left: 720 },
+                spacing: { after: 100 }
+              })
+            );
+            
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ 
+                    text: entry.postReview.content, 
+                    italics: true,
+                    color: '1F2937'
+                  })
+                ],
+                shading: { fill: 'FEF3C7' },
+                indent: { left: 720 },
+                spacing: { after: 200 }
               })
             );
           }
@@ -335,6 +391,9 @@ export async function GET(request: NextRequest) {
       // Save any cached images we generated back to the database
       await saveDb(db);
       console.log('[EXPORT] Saved cached board images to database');
+      
+      console.log(`[EXPORT] Total document sections: ${docSections.length}`);
+      console.log(`[EXPORT] Processed ${processedEntryIds.size} unique entries`);
       
       // Create document
       const doc = new Document({

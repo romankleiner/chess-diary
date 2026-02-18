@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { GrammarCheck } from './grammar-check';
 
 interface JournalEntry {
@@ -14,8 +14,7 @@ interface JournalEntry {
   timestamp: string;
   fen?: string;
   myMove?: string;
-  image?: string; // Legacy single image (for backward compatibility)
-  images?: string[]; // New multi-image support
+  images?: string[];
   postReview?: {
     content: string;
     timestamp: string;
@@ -57,7 +56,10 @@ export default function JournalPage() {
   const [viewRangeDays, setViewRangeDays] = useState<number>(7); // Configurable view range
   const [savedViewRangeDays, setSavedViewRangeDays] = useState<number>(7);
   const [addingReviewToEntry, setAddingReviewToEntry] = useState<number | null>(null);
-  const [reviewContent, setReviewContent] = useState(''); // Remember non-game-filter range
+  const [reviewContent, setReviewContent] = useState('');
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [showRestoreDraft, setShowRestoreDraft] = useState(false);
+  const [showPostReviews, setShowPostReviews] = useState(true); // Remember non-game-filter range
 
   // Auto-resize textarea
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -86,7 +88,97 @@ export default function JournalPage() {
   useEffect(() => {
     loadActiveGames();
     loadUsername();
+    checkForDraft(); // Check for saved draft on mount
   }, []); // Only run once on mount
+
+  const saveDraft = useCallback(() => {
+    // Only save if there's content
+    if (!thought.trim() && !myMove.trim() && images.length === 0) {
+      return;
+    }
+
+    try {
+      const draft = {
+        thought,
+        myMove,
+        images,
+        currentGameId,
+        entryMode,
+        timestamp: new Date().toISOString(),
+      };
+      localStorage.setItem('journal-draft', JSON.stringify(draft));
+      setLastSaved(new Date());
+      console.log('[AUTO-SAVE] Draft saved:', {
+        thoughtLength: thought.length,
+        myMoveLength: myMove.length,
+        imagesCount: images.length
+      });
+    } catch (error) {
+      console.error('[AUTO-SAVE] Failed to save draft:', error);
+    }
+  }, [thought, myMove, images, currentGameId, entryMode]);
+
+  // Auto-save draft every 30 seconds
+  useEffect(() => {
+    console.log('[AUTO-SAVE] Setting up auto-save interval');
+    const autoSaveInterval = setInterval(() => {
+      console.log('[AUTO-SAVE] Interval triggered');
+      saveDraft();
+    }, 30000); // Save every 30 seconds
+
+    // Also save immediately when content changes (debounced by interval)
+    const timeoutId = setTimeout(() => {
+      saveDraft();
+    }, 2000); // Initial save after 2 seconds of typing
+
+    return () => {
+      clearInterval(autoSaveInterval);
+      clearTimeout(timeoutId);
+    };
+  }, [saveDraft]);
+
+  const checkForDraft = () => {
+    try {
+      const savedDraft = localStorage.getItem('journal-draft');
+      if (savedDraft) {
+        const draft = JSON.parse(savedDraft);
+        // Only restore if draft is less than 24 hours old
+        const draftAge = Date.now() - new Date(draft.timestamp).getTime();
+        if (draftAge < 24 * 60 * 60 * 1000) {
+          setShowRestoreDraft(true);
+        } else {
+          // Clear old draft
+          localStorage.removeItem('journal-draft');
+        }
+      }
+    } catch (error) {
+      console.error('[AUTO-SAVE] Failed to check for draft:', error);
+    }
+  };
+
+  const restoreDraft = () => {
+    try {
+      const savedDraft = localStorage.getItem('journal-draft');
+      if (savedDraft) {
+        const draft = JSON.parse(savedDraft);
+        setThought(draft.thought || '');
+        setMyMove(draft.myMove || '');
+        setImages(draft.images || []);
+        setCurrentGameId(draft.currentGameId || null);
+        setEntryMode(draft.entryMode || 'general');
+        setShowRestoreDraft(false);
+        console.log('[AUTO-SAVE] Draft restored');
+      }
+    } catch (error) {
+      console.error('[AUTO-SAVE] Failed to restore draft:', error);
+    }
+  };
+
+  const clearDraft = () => {
+    localStorage.removeItem('journal-draft');
+    setShowRestoreDraft(false);
+    setLastSaved(null);
+  };
 
   const loadUsername = async () => {
     try {
@@ -202,6 +294,7 @@ export default function JournalPage() {
           setMyMove('');
           setImages([]);
           setEditingEntry(null);
+          clearDraft(); // Clear saved draft
           
           // Update the entry in state instead of reloading all entries
           if (data.entry) {
@@ -240,6 +333,7 @@ export default function JournalPage() {
           setThought('');
           setMyMove('');
           setImages([]);
+          clearDraft(); // Clear saved draft
           
           // Add the new entry directly to state instead of reloading all entries
           if (data.entry) {
@@ -345,11 +439,9 @@ export default function JournalPage() {
     setEditingEntry(entry);
     setThought(entry.content);
     setMyMove(entry.myMove || '');
-    // Support both new images array and legacy single image
+    // Load images from array
     if (entry.images && entry.images.length > 0) {
       setImages(entry.images);
-    } else if (entry.image) {
-      setImages([entry.image]); // Convert legacy single image to array
     } else {
       setImages([]);
     }
@@ -452,7 +544,7 @@ export default function JournalPage() {
       
       // Request Word document
       const response = await fetch(
-        `/api/journal/export?startDate=${startDate}&endDate=${endDate}&format=docx&username=${encodeURIComponent(username)}`
+        `/api/journal/export?startDate=${startDate}&endDate=${endDate}&format=docx&username=${encodeURIComponent(username)}&includePostReviews=${showPostReviews}`
       );
       
       if (!response.ok) {
@@ -495,9 +587,48 @@ export default function JournalPage() {
 
   return (
     <div className="space-y-6">
+      {/* Restore Draft Banner */}
+      {showRestoreDraft && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-400 dark:border-amber-600 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">💾</span>
+              <div>
+                <p className="font-bold text-amber-900 dark:text-amber-100">
+                  Unsaved Entry Found
+                </p>
+                <p className="text-sm text-amber-700 dark:text-amber-300">
+                  You have an unsaved journal entry. Would you like to restore it?
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={restoreDraft}
+                className="px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 font-medium"
+              >
+                Restore
+              </button>
+              <button
+                onClick={clearDraft}
+                className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-400 dark:hover:bg-gray-500"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center">
         <h2 className="text-3xl font-bold">Chess Journal</h2>
         <div className="flex items-center gap-4">
+          {/* Auto-save indicator */}
+          {lastSaved && (
+            <div className="text-xs text-gray-500 dark:text-gray-400 italic">
+              Draft saved at {lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          )}
           <button
             onClick={() => setShowExportModal(true)}
             className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
@@ -547,6 +678,19 @@ export default function JournalPage() {
                   onChange={(e) => setExportEndDate(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
                 />
+              </div>
+              
+              <div className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-700 rounded">
+                <input
+                  type="checkbox"
+                  id="exportPostReviews"
+                  checked={showPostReviews}
+                  onChange={(e) => setShowPostReviews(e.target.checked)}
+                  className="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500"
+                />
+                <label htmlFor="exportPostReviews" className="text-sm font-medium cursor-pointer">
+                  Include post-game reviews in export
+                </label>
               </div>
               
               <p className="text-xs text-gray-500">
@@ -979,16 +1123,56 @@ export default function JournalPage() {
               >
                 <option value="all">All Entries</option>
                 <option value="general">General Thoughts Only</option>
-                <optgroup label="Game-Specific">
-                  {allGames
-                    .filter(g => entries.some(e => e.gameId === g.id))
-                    .map(game => (
-                      <option key={game.id} value={game.id}>
-                        {game.white} vs {game.black}
-                      </option>
-                    ))}
-                </optgroup>
+                {(() => {
+                  // Get games that have journal entries
+                  const gamesWithEntries = allGames.filter(g => entries.some(e => e.gameId === g.id));
+                  
+                  // Separate active from finished games
+                  const activeGames = gamesWithEntries.filter(g => 
+                    !g.result || g.result === 'null' || g.result.includes('progress')
+                  );
+                  const finishedGames = gamesWithEntries.filter(g => 
+                    g.result && g.result !== 'null' && !g.result.includes('progress')
+                  );
+                  
+                  return (
+                    <>
+                      {activeGames.length > 0 && (
+                        <optgroup label="Active Games">
+                          {activeGames.map(game => (
+                            <option key={game.id} value={game.id}>
+                              {game.white} vs {game.black}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {finishedGames.length > 0 && (
+                        <optgroup label="Finished Games">
+                          {finishedGames.map(game => (
+                            <option key={game.id} value={game.id}>
+                              {game.white} vs {game.black}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </>
+                  );
+                })()}
               </select>
+            </div>
+            
+            {/* Post-Review Toggle */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="showPostReviews"
+                checked={showPostReviews}
+                onChange={(e) => setShowPostReviews(e.target.checked)}
+                className="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500"
+              />
+              <label htmlFor="showPostReviews" className="text-sm font-medium cursor-pointer">
+                Show Post-Reviews
+              </label>
             </div>
           </div>
         </div>
@@ -1120,18 +1304,20 @@ export default function JournalPage() {
                             </div>
                             
                             {/* Chess board visualization for game entries */}
-                            {entry.gameId && (entry.fen || (game && game.fen)) && (
+                            {entry.gameId && (entry.fen || entry.images?.[0] || (game && game.fen)) && (
                               <div className="my-3 flex flex-col items-center">
                                 <div className="relative">
                                   <img
-                                    src={`/api/board-image?fen=${encodeURIComponent(entry.fen || game?.fen || '')}${(() => {
-                                      // Determine orientation based on user's color
-                                      if (game && username) {
-                                        const isWhite = game.white.toLowerCase() === username.toLowerCase();
-                                        return isWhite ? '' : '&pov=black';
+                                    src={(() => {
+                                      // Use cached image if available (first image is the board)
+                                      if (entry.images?.[0]) {
+                                        return entry.images[0];
                                       }
-                                      return '';
-                                    })()}`}
+                                      // Otherwise generate from FEN
+                                      const fenToUse = entry.fen || game?.fen || '';
+                                      const pov = game && username && game.black.toLowerCase() === username.toLowerCase() ? 'black' : 'white';
+                                      return `/api/board-image?fen=${encodeURIComponent(fenToUse)}&pov=${pov}`;
+                                    })()}
                                     alt="Chess board position"
                                     className="rounded border-2 border-gray-300"
                                     style={{ maxWidth: '400px', width: '100%' }}
@@ -1199,13 +1385,13 @@ export default function JournalPage() {
                               });
                             })()}</div>
                             
-                            {/* Display images - support both new array and legacy single image */}
+                            {/* Display images - user-uploaded images only, not cached board */}
                             {(() => {
-                              const entryImages = entry.images && entry.images.length > 0 
-                                ? entry.images 
-                                : entry.image 
-                                  ? [entry.image]
-                                  : [];
+                              // Skip first image if entry has FEN (it's the cached board diagram)
+                              let entryImages: string[] = [];
+                              if (entry.images && entry.images.length > 0) {
+                                entryImages = entry.fen ? entry.images.slice(1) : entry.images;
+                              }
                               
                               if (entryImages.length === 0) return null;
                               
@@ -1237,8 +1423,10 @@ export default function JournalPage() {
                               </div>
                             )}
                             
-                            {/* Post-Review Section */}
-                            {addingReviewToEntry === entry.id ? (
+                            {/* Post-Review Section - only show if toggle is enabled */}
+                            {showPostReviews && (
+                              <>
+                                {addingReviewToEntry === entry.id ? (
                               <div className="mt-4 ml-8 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-700 rounded-lg p-4">
                                 <div className="font-bold text-amber-900 dark:text-amber-100 mb-2">
                                   📝 ADD POST-GAME REVIEW
@@ -1317,6 +1505,8 @@ export default function JournalPage() {
                                   </button>
                                 </div>
                               </div>
+                            )}
+                              </>
                             )}
                           </div>
                         );
