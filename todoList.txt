@@ -1,5 +1,6 @@
-Image migration cleanup:
+Bug fixes:
 - Fix aspect ratio on export
+- Only save in-progress draft if content has changed
 
 Analysis:
 - Complete and test AI analysis
