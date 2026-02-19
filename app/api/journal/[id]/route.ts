@@ -26,6 +26,7 @@ export async function PUT(
     if (body.myMove !== undefined) entry.myMove = body.myMove;
     if (body.images !== undefined) entry.images = body.images;
     if (body.postReview !== undefined) entry.postReview = body.postReview;
+    if (body.aiReview !== undefined) entry.aiReview = body.aiReview;
     
     await saveDb(db);
     

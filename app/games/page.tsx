@@ -22,6 +22,7 @@ export default function GamesPage() {
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number } | null>(null);
   const [toast, setToast] = useState<{ message: string; show: boolean }>({ message: '', show: false });
+  const [analyzingThinking, setAnalyzingThinking] = useState<string | null>(null);
 
   useEffect(() => {
     loadGames();
@@ -158,6 +159,56 @@ export default function GamesPage() {
     }
   };
 
+  const analyzeThinking = async (gameId: string) => {
+    try {
+      setAnalyzingThinking(gameId);
+      
+      // Check if engine analysis exists
+      const checkResponse = await fetch('/api/games/analyze-thinking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId })
+      });
+      
+      const checkData = await checkResponse.json();
+      
+      if (checkData.needsEngineAnalysis) {
+        if (!confirm('Engine analysis is required first. Would you like to run it now?')) {
+          setAnalyzingThinking(null);
+          return;
+        }
+        // Trigger engine analysis first
+        await analyzeGame(gameId);
+        setAnalyzingThinking(null);
+        return;
+      }
+      
+      if (!confirm('This will analyze all your journal entries for this game using AI. Continue?')) {
+        setAnalyzingThinking(null);
+        return;
+      }
+      
+      const response = await fetch('/api/games/analyze-thinking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, reanalyzeEngine: false })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        showToast(`🤖 AI analysis complete! ${data.entriesAnalyzed} entries analyzed.`);
+      } else {
+        alert(data.error || 'Analysis failed');
+      }
+    } catch (error) {
+      console.error('AI analysis error:', error);
+      alert('Failed to analyze thinking');
+    } finally {
+      setAnalyzingThinking(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto p-6">
@@ -251,6 +302,22 @@ export default function GamesPage() {
                         className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:bg-gray-400 text-sm"
                       >
                         Re-analyze
+                      </button>
+                      <button
+                        onClick={() => analyzeThinking(game.id)}
+                        disabled={analyzingThinking === game.id}
+                        className="px-3 py-1 bg-cyan-500 text-white rounded hover:bg-cyan-600 disabled:bg-gray-400 text-sm flex items-center gap-1"
+                      >
+                        {analyzingThinking === game.id ? (
+                          <>
+                            <span className="animate-spin">⚙️</span>
+                            AI...
+                          </>
+                        ) : (
+                          <>
+                            🤖 Analyze Thinking
+                          </>
+                        )}
                       </button>
                     </>
                   ) : (game.result && !game.result.includes('progress')) ? (

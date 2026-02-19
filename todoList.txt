@@ -2,7 +2,7 @@ Image migration cleanup:
 - Fix aspect ratio on export
 
 Analysis:
-- Auto-generate post-game analysis entries using UI. Distinguish them from human-generated notes
+- Complete and test AI analysis
 - Cloud analysis does not fully complete
 
 Features:

@@ -20,6 +20,13 @@ interface JournalEntry {
     timestamp: string;
     type: 'manual' | 'ai';
   };
+  aiReview?: {
+    content: string;
+    timestamp: string;
+    model: string;
+    engineEval?: number;
+    engineBestMove?: string;
+  };
 }
 
 interface Game {
@@ -59,7 +66,10 @@ export default function JournalPage() {
   const [reviewContent, setReviewContent] = useState('');
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [showRestoreDraft, setShowRestoreDraft] = useState(false);
-  const [showPostReviews, setShowPostReviews] = useState(true); // Remember non-game-filter range
+  const [showPostReviews, setShowPostReviews] = useState(true);
+  const [showAiReviews, setShowAiReviews] = useState(true);
+  const [editingAiReview, setEditingAiReview] = useState<number | null>(null);
+  const [aiReviewContent, setAiReviewContent] = useState(''); // Remember non-game-filter range
 
   // Auto-resize textarea
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -534,6 +544,76 @@ export default function JournalPage() {
     } catch (error) {
       console.error('Error deleting post-review:', error);
       alert('Failed to delete post-review');
+    }
+  };
+
+
+  const handleEditAiReview = (entry: JournalEntry) => {
+    setEditingAiReview(entry.id);
+    setAiReviewContent(entry.aiReview?.content || '');
+  };
+
+  const handleSaveAiReview = async (entryId: number) => {
+    if (!aiReviewContent.trim()) {
+      alert('Please enter content');
+      return;
+    }
+
+    try {
+      const entry = entries.find(e => e.id === entryId);
+      const response = await fetch(`/api/journal/${entryId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aiReview: {
+            ...entry?.aiReview,
+            content: aiReviewContent,
+            timestamp: new Date().toISOString()
+          }
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.entry) {
+          setEntries(prevEntries => 
+            prevEntries.map(e => e.id === data.entry.id ? data.entry : e)
+          );
+        }
+        setEditingAiReview(null);
+        setAiReviewContent('');
+      } else {
+        alert('Failed to update AI review');
+      }
+    } catch (error) {
+      console.error('Error updating AI review:', error);
+      alert('Failed to update AI review');
+    }
+  };
+
+  const handleDeleteAiReview = async (entryId: number) => {
+    if (!confirm('Delete this AI analysis?')) return;
+
+    try {
+      const response = await fetch(`/api/journal/${entryId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aiReview: null }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.entry) {
+          setEntries(prevEntries => 
+            prevEntries.map(e => e.id === data.entry.id ? data.entry : e)
+          );
+        }
+      } else {
+        alert('Failed to delete AI review');
+      }
+    } catch (error) {
+      console.error('Error deleting AI review:', error);
+      alert('Failed to delete AI review');
     }
   };
 
@@ -1174,6 +1254,20 @@ export default function JournalPage() {
                 Show Post-Reviews
               </label>
             </div>
+            
+            {/* AI Review Toggle */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="showAiReviews"
+                checked={showAiReviews}
+                onChange={(e) => setShowAiReviews(e.target.checked)}
+                className="w-4 h-4 text-cyan-600 rounded border-gray-300 focus:ring-cyan-500"
+              />
+              <label htmlFor="showAiReviews" className="text-sm font-medium cursor-pointer">
+                Show AI Analysis
+              </label>
+            </div>
           </div>
         </div>
         
@@ -1506,6 +1600,90 @@ export default function JournalPage() {
                                 </div>
                               </div>
                             )}
+                              </>
+                            )}
+                            
+                            {/* AI Review Section */}
+                            {showAiReviews && showPostReviews && (
+                              <>
+                                {editingAiReview === entry.id ? (
+                                  <div className="mt-4 ml-8 bg-cyan-50 dark:bg-cyan-900/20 border-2 border-cyan-200 dark:border-cyan-700 rounded-lg p-4">
+                                    <div className="font-bold text-cyan-900 dark:text-cyan-100 mb-2">
+                                      🤖 EDIT AI ANALYSIS
+                                    </div>
+                                    <textarea
+                                      value={aiReviewContent}
+                                      onChange={(e) => setAiReviewContent(e.target.value)}
+                                      className="w-full p-2 border rounded resize-none dark:bg-gray-800 dark:border-gray-600"
+                                      rows={4}
+                                      autoFocus
+                                    />
+                                    <div className="mt-2 flex gap-2">
+                                      <button
+                                        onClick={() => handleSaveAiReview(entry.id)}
+                                        className="px-3 py-1 bg-cyan-500 text-white rounded hover:bg-cyan-600"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setEditingAiReview(null);
+                                          setAiReviewContent('');
+                                        }}
+                                        className="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded hover:bg-gray-400"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : entry.aiReview && (
+                                  <div className="mt-4 ml-8 bg-cyan-50 dark:bg-cyan-900/20 border-2 border-cyan-200 dark:border-cyan-700 rounded-lg p-4 relative">
+                                    {/* Icon badge */}
+                                    <div className="absolute -left-3 -top-3 bg-cyan-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">
+                                      🤖
+                                    </div>
+                                    
+                                    {/* Header */}
+                                    <div className="font-bold text-cyan-900 dark:text-cyan-100 mb-1">
+                                      AI ANALYSIS
+                                    </div>
+                                    
+                                    {/* Model info */}
+                                    <div className="text-xs text-cyan-700 dark:text-cyan-300 mb-3">
+                                      {entry.aiReview.model.replace('claude-', '').replace('-20250514', '')} • 
+                                      {entry.aiReview.engineEval !== undefined && 
+                                        ` Eval: ${entry.aiReview.engineEval > 0 ? '+' : ''}${entry.aiReview.engineEval.toFixed(2)}`
+                                      }
+                                      {entry.aiReview.engineBestMove && 
+                                        ` • Best: ${entry.aiReview.engineBestMove}`
+                                      }
+                                    </div>
+                                    
+                                    {/* Separator */}
+                                    <div className="border-t border-cyan-300 dark:border-cyan-600 mb-3"></div>
+                                    
+                                    {/* Content */}
+                                    <div className="text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap">
+                                      {entry.aiReview.content}
+                                    </div>
+                                    
+                                    {/* Actions */}
+                                    <div className="mt-3 flex gap-2">
+                                      <button
+                                        onClick={() => handleEditAiReview(entry)}
+                                        className="text-sm text-cyan-600 hover:underline"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteAiReview(entry.id)}
+                                        className="text-sm text-red-600 hover:underline"
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
                               </>
                             )}
                           </div>
