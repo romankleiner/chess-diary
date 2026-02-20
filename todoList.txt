@@ -2,6 +2,7 @@ Bug fixes:
 - Fix aspect ratio on export
 
 Analysis:
+- Validate export of AI generated comments
 - Cloud analysis does not fully complete
 - Get AI analysis to work via Cloud
 
