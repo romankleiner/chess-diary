@@ -1,6 +1,5 @@
 // Auto-detect and use Redis if REDIS_URL is available, otherwise use filesystem
 import { DatabaseData as RedisDbData } from './db-redis';
-import { DatabaseData as FsDbData } from './db-filesystem';
 
 // Re-export the interface
 export interface DatabaseData {
@@ -17,14 +16,7 @@ let dbModule: any = null;
 async function getDbModule() {
   if (dbModule) return dbModule;
   
-  if (process.env.REDIS_URL) {
-    // Use Redis in production (Vercel)
-    dbModule = await import('./db-redis');
-  } else {
-    // Use filesystem locally
-    dbModule = await import('./db-filesystem');
-  }
-  
+  dbModule = await import('./db-redis'); 
   return dbModule;
 }
 

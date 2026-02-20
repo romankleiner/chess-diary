@@ -4,6 +4,8 @@ Bug fixes:
 
 Analysis:
 - Complete and test AI analysis
+- Analyze Thinking button shouldn't appear for games that I have no entries for
+- Add model selection
 - Cloud analysis does not fully complete
 
 Features:

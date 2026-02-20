@@ -91,7 +91,10 @@ export async function POST(request: NextRequest) {
         });
         
         if (!response.ok) {
+          const errorText = await response.text();
           console.error(`[AI-ANALYSIS] API error for entry ${entry.id}: ${response.status}`);
+          console.error(`[AI-ANALYSIS] Error details:`, errorText);
+          console.error(`[AI-ANALYSIS] Request was for model: ${model}`);
           continue;
         }
         
@@ -142,6 +145,8 @@ function buildAnalysisPrompt(
 ): string {
   let prompt = `You are analyzing a chess player's thought process during a game.
 
+Position (FEN): ${fen || 'Not available'}
+
 Player's thinking: "${thinking}"`;
 
   if (movePlayed) {
@@ -166,13 +171,13 @@ Player's thinking: "${thinking}"`;
     }
   }
   
-  prompt += `\n\nProvide a brief, constructive analysis (2-3 sentences):
-1. Evaluate if their reasoning was sound
-2. Point out anything they overlooked
+  prompt += `\n\nProvide a constructive analysis (up to 4 paragraphs):
+1. Evaluate if their reasoning was sound based on the actual position
+2. Point out anything they overlooked (tactical motifs, piece activity, pawn structure)
 3. Note key patterns or principles they should recognize
-4. If engine suggests differently, explain why
+4. If engine suggests differently, explain the concrete reason why
 
-Be educational and encouraging, not critical.`;
+Be educational and encouraging, not critical. Reference specific pieces and squares when relevant.`;
 
   return prompt;
 }

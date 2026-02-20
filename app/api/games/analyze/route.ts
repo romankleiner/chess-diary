@@ -14,8 +14,8 @@ export async function setProgress(gameId: string, current: number, total: number
       db.analysis_progress = {};
     }
     db.analysis_progress[gameId] = { current, total, timestamp: Date.now() };
-    // Don't await saveDb - fire and forget for performance
-    saveDb(db).catch(err => console.error('[PROGRESS] Save error:', err));
+    // AWAIT saveDb to ensure progress is persisted before continuing
+    await saveDb(db);
   } catch (error) {
     console.error('[PROGRESS] setProgress error:', error);
   }
@@ -161,13 +161,13 @@ async function analyzeGameChessApiBatched(
   
   const endMoveIndex = Math.min(startMoveIndex + batchSize, history.length);
   
-  setProgress(gameId, startMoveIndex, history.length);
+  await setProgress(gameId, startMoveIndex, history.length);
   
   for (let i = startMoveIndex; i < endMoveIndex; i++) {
     const move = history[i];
     const isWhiteMove = chess.turn() === 'w';
     
-    setProgress(gameId, i + 1, history.length);
+    await setProgress(gameId, i + 1, history.length);
     
     try {
       const fenBefore = chess.fen();
@@ -256,7 +256,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   const whiteLosses: number[] = [];
   const blackLosses: number[] = [];
   
-  setProgress(gameId, 0, history.length);
+  await setProgress(gameId, 0, history.length);
   
   console.log(`[STOCKFISH] Starting analysis of ${history.length} moves at depth ${depth}...`);
   
@@ -265,7 +265,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
       const move = history[i];
       const isWhiteMove = chess.turn() === 'w';
       
-      setProgress(gameId, i + 1, history.length);
+      await setProgress(gameId, i + 1, history.length);
       
       try {
         const fenBefore = chess.fen();
@@ -402,6 +402,9 @@ export async function POST(request: NextRequest) {
       
       if (batchResult.completed) {
         db.games[gameId].analysisCompleted = true;
+        db.games[gameId].analysisDepth = depth;
+        db.games[gameId].analysisEngine = 'chess-api.com';
+        console.log(`[ANALYZE] Vercel analysis complete - set flags for game ${gameId}`);
         // Clear progress from db before saving
         const dbAny = db as any;
         if (dbAny.analysis_progress?.[gameId]) {
@@ -438,6 +441,9 @@ export async function POST(request: NextRequest) {
       };
       
       db.games[gameId].analysisCompleted = true;
+      db.games[gameId].analysisDepth = depth;
+      db.games[gameId].analysisEngine = 'Stockfish';
+      console.log(`[ANALYZE] Local analysis complete - set flags for game ${gameId}`);
       
       // Clear progress from this db before saving
       const dbAny = db as any;

@@ -141,6 +141,20 @@ export default function GamesPage() {
         const depth = finalData.analysis.depth || '?';
         const engine = finalData.analysis.engine || 'engine';
         showToast(`Analysis complete! White: ${finalData.analysis.whiteAccuracy}% | Black: ${finalData.analysis.blackAccuracy}% (${engine} depth ${depth})`);
+        
+        // Update the game state immediately
+        setGames(prevGames => 
+          prevGames.map(g => 
+            g.id === gameId 
+              ? { 
+                  ...g, 
+                  analysisCompleted: true, 
+                  analysisDepth: finalData.analysis.depth,
+                  analysisEngine: finalData.analysis.engine 
+                }
+              : g
+          )
+        );
       } else {
         console.warn('[FRONTEND] Analysis completed but no analysis data in response');
         showToast('Analysis complete!');
@@ -161,32 +175,22 @@ export default function GamesPage() {
 
   const analyzeThinking = async (gameId: string) => {
     try {
-      setAnalyzingThinking(gameId);
-      
-      // Check if engine analysis exists
-      const checkResponse = await fetch('/api/games/analyze-thinking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameId })
-      });
-      
-      const checkData = await checkResponse.json();
-      
-      if (checkData.needsEngineAnalysis) {
+      // Check if engine analysis exists locally first (avoid API call)
+      const game = games.find(g => g.id === gameId);
+      if (!game?.analysisCompleted) {
         if (!confirm('Engine analysis is required first. Would you like to run it now?')) {
-          setAnalyzingThinking(null);
           return;
         }
         // Trigger engine analysis first
         await analyzeGame(gameId);
-        setAnalyzingThinking(null);
         return;
       }
       
       if (!confirm('This will analyze all your journal entries for this game using AI. Continue?')) {
-        setAnalyzingThinking(null);
         return;
       }
+      
+      setAnalyzingThinking(gameId);
       
       const response = await fetch('/api/games/analyze-thinking', {
         method: 'POST',
