@@ -59,9 +59,42 @@ export async function POST(request: NextRequest) {
       }
       
       // Get position analysis if available
-      const moveAnalysis = entry.moveNumber 
-        ? analysis?.moves?.[entry.moveNumber - 1]
-        : null;
+      let moveAnalysis = null;
+      if (analysis?.moves) {
+        // Try to match by move number first
+        if (entry.moveNumber) {
+          moveAnalysis = analysis.moves[entry.moveNumber - 1];
+        } else if (entry.fen) {
+          // Extract move number from FEN (last field is the full move number)
+          const fenParts = entry.fen.split(' ');
+          if (fenParts.length >= 6) {
+            const fullMoveNumber = parseInt(fenParts[5]);
+            if (fullMoveNumber) {
+              // Find the move in analysis by matching moveNumber field
+              moveAnalysis = analysis.moves.find((m: any) => m.moveNumber === fullMoveNumber);
+              
+              // If not found, try approximating by index (each full move = 2 plies)
+              if (!moveAnalysis) {
+                const approximateIndex = (fullMoveNumber - 1) * 2;
+                moveAnalysis = analysis.moves[approximateIndex] || analysis.moves[approximateIndex + 1];
+              }
+            }
+          }
+        }
+        
+        // If we found move analysis, convert centipawn values to pawn units (divide by 100)
+        if (moveAnalysis) {
+          moveAnalysis = {
+            ...moveAnalysis,
+            evaluation: moveAnalysis.evaluation / 100,
+            evaluation_after: moveAnalysis.centipawnLoss !== undefined 
+              ? (moveAnalysis.evaluation - moveAnalysis.centipawnLoss) / 100
+              : undefined
+          };
+        }
+      }
+      
+      console.log(`[AI-ANALYSIS] Entry ${entry.id}: moveNumber=${entry.moveNumber}, fen=${entry.fen?.substring(0, 30)}..., moveAnalysis=${!!moveAnalysis}`);
       
       // Build AI prompt
       const prompt = buildAnalysisPrompt(
@@ -70,6 +103,10 @@ export async function POST(request: NextRequest) {
         entry.fen,
         moveAnalysis
       );
+      
+      console.log(`\n========== AI ANALYSIS PROMPT - Entry ${entry.id} ==========`);
+      console.log(prompt);
+      console.log(`========== END PROMPT ==========\n`);
       
       try {
         // Call Anthropic API
@@ -100,6 +137,10 @@ export async function POST(request: NextRequest) {
         
         const data = await response.json();
         const aiResponse = data.content[0]?.text || '';
+        
+        console.log(`[AI-ANALYSIS] Response for entry ${entry.id}:`);
+        console.log(aiResponse);
+        console.log('');
         
         // Save AI review to entry
         entry.aiReview = {
@@ -156,22 +197,25 @@ Player's thinking: "${thinking}"`;
   if (moveAnalysis) {
     prompt += `\n\nEngine analysis:`;
     if (moveAnalysis.evaluation !== undefined) {
-      prompt += `\n- Position evaluation: ${moveAnalysis.evaluation > 0 ? '+' : ''}${moveAnalysis.evaluation.toFixed(2)}`;
+      prompt += `\n- Position evaluation: ${moveAnalysis.evaluation > 0 ? '+' : ''}${moveAnalysis.evaluation.toFixed(2)} pawns`;
     }
     if (moveAnalysis.best_move) {
       prompt += `\n- Engine's best move: ${moveAnalysis.best_move}`;
     }
     if (moveAnalysis.evaluation_after !== undefined && movePlayed) {
-      prompt += `\n- Evaluation after ${movePlayed}: ${moveAnalysis.evaluation_after > 0 ? '+' : ''}${moveAnalysis.evaluation_after.toFixed(2)}`;
+      prompt += `\n- Evaluation after ${movePlayed}: ${moveAnalysis.evaluation_after > 0 ? '+' : ''}${moveAnalysis.evaluation_after.toFixed(2)} pawns`;
       
       const evalDiff = moveAnalysis.evaluation_after - moveAnalysis.evaluation;
-      if (Math.abs(evalDiff) > 0.3) {
+      if (Math.abs(evalDiff) > 0.03) {
         prompt += ` (${evalDiff > 0 ? '+' : ''}${evalDiff.toFixed(2)} change)`;
       }
     }
+    if (moveAnalysis.centipawnLoss !== undefined && moveAnalysis.centipawnLoss > 0) {
+      prompt += `\n- Centipawn loss from best move: ${(moveAnalysis.centipawnLoss / 100).toFixed(2)} pawns (${moveAnalysis.moveQuality})`;
+    }
   }
   
-  prompt += `\n\nProvide a constructive analysis (up to 4 paragraphs):
+  prompt += `\n\nProvide a brief, constructive analysis (2-3 sentences):
 1. Evaluate if their reasoning was sound based on the actual position
 2. Point out anything they overlooked (tactical motifs, piece activity, pawn structure)
 3. Note key patterns or principles they should recognize

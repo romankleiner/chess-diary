@@ -3,10 +3,12 @@ Bug fixes:
 - Only save in-progress draft if content has changed
 
 Analysis:
-- Complete and test AI analysis
-- Analyze Thinking button shouldn't appear for games that I have no entries for
 - Add model selection
+- Fix (moveAnalysis.best_move) not set when generating prompt
+- Add engine top lines to the prompt?
+- Analyze Thinking button shouldn't appear for games that I have no entries for
 - Cloud analysis does not fully complete
+- Get AI analysis to work via Cloud
 
 Features:
 - Show opponent's last move on the game diagram
