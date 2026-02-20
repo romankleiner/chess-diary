@@ -1,15 +1,10 @@
 Bug fixes:
 - Fix aspect ratio on export
-- Only save in-progress draft if content has changed
 
 Analysis:
-- Add model selection
-- Make AI feedback more verbose (perhaps configurable)
-- Fix (moveAnalysis.best_move) not set when generating prompt
-- Add engine top lines to the prompt?
-- Analyze Thinking button shouldn't appear for games that I have no entries for
 - Cloud analysis does not fully complete
 - Get AI analysis to work via Cloud
 
 Features:
+- Add chess.com diary export
 - Show opponent's last move on the game diagram

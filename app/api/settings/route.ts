@@ -1,59 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import getDb, { saveDb } from '@/lib/db';
 
-export async function GET() {
+// GET /api/settings - Get all settings
+export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    
     const db = await getDb();
-    return NextResponse.json({ settings: db.settings });
+    
+    return NextResponse.json({
+      settings: db.settings || {}
+    });
   } catch (error) {
-    console.error('Error fetching settings:', error);
+    console.error('Error loading settings:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch settings' },
+      { error: 'Failed to load settings' },
       { status: 500 }
     );
   }
 }
 
-export async function POST(request: NextRequest) {
+// PUT /api/settings - Update settings
+export async function PUT(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    
     const body = await request.json();
-    const { key, value } = body;
+    const db = await getDb();
     
-    if (!key || !value) {
-      return NextResponse.json(
-        { error: 'Key and value are required' },
-        { status: 400 }
-      );
+    if (!db.settings) {
+      db.settings = {};
     }
     
-    const db = await getDb();
-    db.settings[key] = value;
+    // Update settings - merge with existing
+    db.settings = {
+      ...db.settings,
+      ...body
+    };
+    
     await saveDb(db);
     
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      settings: db.settings
+    });
   } catch (error) {
-    console.error('Error saving setting:', error);
+    console.error('Error updating settings:', error);
     return NextResponse.json(
-      { error: 'Failed to save setting' },
+      { error: 'Failed to update settings' },
       { status: 500 }
     );
   }

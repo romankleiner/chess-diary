@@ -76,7 +76,7 @@ function getMoveQuality(cpLoss: number): string {
 }
 
 // ========== CHESS-API.COM EVALUATION (for Vercel) ==========
-async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score: number; bestMove: string } | null> {
+async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score: number; bestMove: string; pv?: string[] } | null> {
   try {
     const url = `https://chess-api.com/v1`;
     
@@ -101,7 +101,20 @@ async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score
     if (data.eval !== undefined) {
       const cpScore = data.eval;
       const bestMove = data.move || '';
-      return { score: cpScore, bestMove };
+      
+      // Normalize PV to array
+      let pv: string[] = [];
+      const pvRaw = data.continuationArr;
+      if (pvRaw) {
+        if (typeof pvRaw === 'string') {
+          pv = pvRaw.split(' ').filter(m => m.length > 0);
+        } else if (Array.isArray(pvRaw)) {
+          pv = pvRaw;
+        }
+      }
+      
+      console.log(`[CHESS-API] Got eval=${cpScore}, move=${bestMove}, PV:`, pv);
+      return { score: cpScore, bestMove, pv };
     }
     
     return null;
@@ -217,6 +230,7 @@ async function analyzeGameChessApiBatched(
         move: move.san,
         evaluation: evalAfterWhite,
         bestMove: evalBefore.bestMove,
+        principalVariation: evalBefore.pv && evalBefore.pv.length > 0 ? evalBefore.pv.slice(0, 5) : undefined,
         centipawnLoss: cpLoss,
         moveQuality: getMoveQuality(cpLoss),
       });
@@ -274,6 +288,18 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
         const scoreBefore = analysisBefore.lines[0]?.score;
         const bestMove = analysisBefore.bestmove || '';
         
+        // PV might be a string or array, normalize to array
+        let principalVariation: string[] = [];
+        const pvRaw = analysisBefore.lines[0]?.pv;
+        if (pvRaw) {
+          if (typeof pvRaw === 'string') {
+            // Split by space and take first 5 moves
+            principalVariation = pvRaw.split(' ').filter(m => m.length > 0).slice(0, 5);
+          } else if (Array.isArray(pvRaw)) {
+            principalVariation = (pvRaw as string[]).slice(0, 5);
+          }
+        }
+        
         let evalBefore = 0;
         if (scoreBefore) {
           if (scoreBefore.type === 'mate') {
@@ -328,6 +354,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           move: move.san,
           evaluation: evalAfter,
           bestMove: bestMove,
+          principalVariation: principalVariation.length > 0 ? principalVariation : undefined,
           centipawnLoss: cpLoss,
           moveQuality: getMoveQuality(cpLoss),
         });

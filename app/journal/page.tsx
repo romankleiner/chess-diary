@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { GrammarCheck } from './grammar-check';
 
 interface JournalEntry {
@@ -69,7 +69,12 @@ export default function JournalPage() {
   const [showPostReviews, setShowPostReviews] = useState(true);
   const [showAiReviews, setShowAiReviews] = useState(true);
   const [editingAiReview, setEditingAiReview] = useState<number | null>(null);
-  const [aiReviewContent, setAiReviewContent] = useState(''); // Remember non-game-filter range
+  const [aiReviewContent, setAiReviewContent] = useState('');
+  const lastSavedContentRef = useRef<{
+    thought: string;
+    myMove: string;
+    images: string[];
+  } | null>(null); // Remember non-game-filter range
 
   // Auto-resize textarea
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -107,6 +112,17 @@ export default function JournalPage() {
       return;
     }
 
+    // Check if content has actually changed since last save
+    const lastContent = lastSavedContentRef.current;
+    if (lastContent && 
+        lastContent.thought === thought &&
+        lastContent.myMove === myMove &&
+        JSON.stringify(lastContent.images) === JSON.stringify(images)) {
+      // Content hasn't changed, skip saving
+      console.log('[AUTO-SAVE] Content unchanged, skipping save');
+      return;
+    }
+
     try {
       const draft = {
         thought,
@@ -118,6 +134,7 @@ export default function JournalPage() {
       };
       localStorage.setItem('journal-draft', JSON.stringify(draft));
       setLastSaved(new Date());
+      lastSavedContentRef.current = { thought, myMove, images };
       console.log('[AUTO-SAVE] Draft saved:', {
         thoughtLength: thought.length,
         myMoveLength: myMove.length,
@@ -188,6 +205,7 @@ export default function JournalPage() {
     localStorage.removeItem('journal-draft');
     setShowRestoreDraft(false);
     setLastSaved(null);
+    lastSavedContentRef.current = null;
   };
 
   const loadUsername = async () => {

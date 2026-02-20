@@ -23,9 +23,11 @@ export default function GamesPage() {
   const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number } | null>(null);
   const [toast, setToast] = useState<{ message: string; show: boolean }>({ message: '', show: false });
   const [analyzingThinking, setAnalyzingThinking] = useState<string | null>(null);
+  const [gamesWithEntries, setGamesWithEntries] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadGames();
+    loadGamesWithEntries();
   }, []);
 
   const showToast = (message: string) => {
@@ -44,6 +46,26 @@ export default function GamesPage() {
       console.error('Error loading games:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadGamesWithEntries = async () => {
+    try {
+      // Fetch all journal entries to see which games have entries
+      const response = await fetch('/api/journal?startDate=2020-01-01&endDate=2030-01-01');
+      const data = await response.json();
+      
+      // Build a set of game IDs that have journal entries
+      const gameIds = new Set<string>();
+      data.entries?.forEach((entry: any) => {
+        if (entry.gameId) {
+          gameIds.add(entry.gameId);
+        }
+      });
+      
+      setGamesWithEntries(gameIds);
+    } catch (error) {
+      console.error('Error loading journal entries:', error);
     }
   };
 
@@ -307,22 +329,24 @@ export default function GamesPage() {
                       >
                         Re-analyze
                       </button>
-                      <button
-                        onClick={() => analyzeThinking(game.id)}
-                        disabled={analyzingThinking === game.id}
-                        className="px-3 py-1 bg-cyan-500 text-white rounded hover:bg-cyan-600 disabled:bg-gray-400 text-sm flex items-center gap-1"
-                      >
-                        {analyzingThinking === game.id ? (
-                          <>
-                            <span className="animate-spin">⚙️</span>
-                            AI...
-                          </>
-                        ) : (
-                          <>
-                            🤖 Analyze Thinking
-                          </>
-                        )}
-                      </button>
+                      {gamesWithEntries.has(game.id) && (
+                        <button
+                          onClick={() => analyzeThinking(game.id)}
+                          disabled={analyzingThinking === game.id}
+                          className="px-3 py-1 bg-cyan-500 text-white rounded hover:bg-cyan-600 disabled:bg-gray-400 text-sm flex items-center gap-1"
+                        >
+                          {analyzingThinking === game.id ? (
+                            <>
+                              <span className="animate-spin">⚙️</span>
+                              AI...
+                            </>
+                          ) : (
+                            <>
+                              🤖 Analyze Thinking
+                            </>
+                          )}
+                        </button>
+                      )}
                     </>
                   ) : (game.result && !game.result.includes('progress')) ? (
                     // Only show analyze for finished games (has a result, not in progress)
