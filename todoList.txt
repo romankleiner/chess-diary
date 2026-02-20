@@ -1,5 +1,6 @@
 Bug fixes:
 - Fix aspect ratio on export
+- When entering a game-specific entry, the diagram should be above the entry box
 
 Analysis:
 - Validate export of AI generated comments
@@ -7,5 +8,6 @@ Analysis:
 - Get AI analysis to work via Cloud
 
 Features:
+- Support overall game analysis entry. Mark moves where I have a journal entry. Allow adding references to important moves I didn't add an entry on.
 - Add chess.com diary export
 - Show opponent's last move on the game diagram
