@@ -4,6 +4,7 @@ Bug fixes:
 
 Analysis:
 - Add model selection
+- Make AI feedback more verbose (perhaps configurable)
 - Fix (moveAnalysis.best_move) not set when generating prompt
 - Add engine top lines to the prompt?
 - Analyze Thinking button shouldn't appear for games that I have no entries for
