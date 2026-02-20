@@ -1,9 +1,13 @@
 Bug fixes:
 - Fix aspect ratio on export
 - When entering a game-specific entry, the diagram should be above the entry box
+- Half a diagram shows when editing a game entry
 
 Analysis:
+- Check if we pass the correct engine suggested move to the LLM: it might be the opponent's move passed, which is incorrect.
+- Check AI analysis in Move 11, it mentioned impossible moves
 - Validate export of AI generated comments
+- Discard book moves when calculating accuracy percentage
 - Cloud analysis does not fully complete
 - Get AI analysis to work via Cloud
 
