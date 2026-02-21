@@ -1095,7 +1095,7 @@ export default function JournalPage() {
                     <img 
                       src={img} 
                       alt={`Image ${index + 1}`} 
-                      className="w-full h-32 object-cover rounded border"
+                      className="w-full max-h-64 object-contain rounded border bg-gray-50 dark:bg-gray-800"
                     />
                     <button
                       type="button"
@@ -1509,17 +1509,13 @@ export default function JournalPage() {
                               
                               return (
                                 <div className="mt-3">
-                                  <div className={`grid gap-3 ${
-                                    entryImages.length === 1 ? 'grid-cols-1' :
-                                    entryImages.length === 2 ? 'grid-cols-2' :
-                                    'grid-cols-2 md:grid-cols-3'
-                                  }`}>
+                                  <div className="flex flex-wrap gap-3">
                                     {entryImages.map((img, idx) => (
                                       <img 
                                         key={idx}
                                         src={img} 
                                         alt={`Image ${idx + 1}`} 
-                                        className={`rounded border ${entryImages.length === 1 ? 'max-w-md' : 'w-full h-48 object-cover'}`}
+                                        className="rounded border max-w-full max-h-96 object-contain bg-gray-50 dark:bg-gray-800"
                                       />
                                     ))}
                                   </div>

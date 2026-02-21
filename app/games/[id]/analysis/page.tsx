@@ -250,7 +250,7 @@ export default function GameAnalysisPage() {
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm">
                           <span className={`font-semibold ${
-                            blackMove.centipawnLoss === 0 ? 'text-green-600' :
+                            blackMove.centipawnLoss < 25 ? 'text-green-600' :
                             blackMove.centipawnLoss < 50 ? 'text-blue-600' :
                             blackMove.centipawnLoss < 100 ? 'text-yellow-600' :
                             blackMove.centipawnLoss < 200 ? 'text-orange-600' :
