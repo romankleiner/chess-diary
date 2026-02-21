@@ -48,6 +48,13 @@ export async function POST(request: NextRequest) {
     
     const analysis = db.game_analyses?.[gameId] || null;
     
+    // Get game info and user color
+    const gameInfo = db.games[gameId];
+    const username = db.settings?.chesscom_username?.toLowerCase() || '';
+    const userColor: 'white' | 'black' = gameInfo && username && gameInfo.white.toLowerCase() === username ? 'white' : 'black';
+    
+    console.log(`[AI-ANALYSIS] User is playing ${userColor}`);
+    
     // Get AI settings
     const verbosity = db.settings?.ai_analysis_verbosity || 'detailed';
     const model = db.settings?.ai_model || 'claude-sonnet-4-6'; // Default to Claude Sonnet 4.6
@@ -66,24 +73,28 @@ export async function POST(request: NextRequest) {
       // Get position analysis if available
       let moveAnalysis = null;
       if (analysis?.moves) {
-        // Try to match by move number first
-        if (entry.moveNumber) {
-          moveAnalysis = analysis.moves[entry.moveNumber - 1];
-        } else if (entry.fen) {
+        // We need to match by both move number AND color (user's color)
+        // FEN format: ... <active color> ... <full move number>
+        let targetMoveNumber = entry.moveNumber;
+        
+        if (!targetMoveNumber && entry.fen) {
           // Extract move number from FEN (last field is the full move number)
           const fenParts = entry.fen.split(' ');
           if (fenParts.length >= 6) {
-            const fullMoveNumber = parseInt(fenParts[5]);
-            if (fullMoveNumber) {
-              // Find the move in analysis by matching moveNumber field
-              moveAnalysis = analysis.moves.find((m: any) => m.moveNumber === fullMoveNumber);
-              
-              // If not found, try approximating by index (each full move = 2 plies)
-              if (!moveAnalysis) {
-                const approximateIndex = (fullMoveNumber - 1) * 2;
-                moveAnalysis = analysis.moves[approximateIndex] || analysis.moves[approximateIndex + 1];
-              }
-            }
+            targetMoveNumber = parseInt(fenParts[5]);
+          }
+        }
+        
+        if (targetMoveNumber) {
+          // Find the move matching both move number and user's color
+          moveAnalysis = analysis.moves.find((m: any) => 
+            m.moveNumber === targetMoveNumber && m.color === userColor
+          );
+          
+          // If not found, try just by move number (fallback for old data)
+          if (!moveAnalysis) {
+            console.log(`[AI-ANALYSIS] Could not find move ${targetMoveNumber} for ${userColor}, trying fallback`);
+            moveAnalysis = analysis.moves.find((m: any) => m.moveNumber === targetMoveNumber);
           }
         }
         

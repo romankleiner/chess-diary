@@ -385,6 +385,67 @@ export async function GET(request: NextRequest) {
               })
             );
           }
+          
+          // Add AI review if present and enabled
+          if (includePostReviews && entry.aiReview) {
+            // Add spacing before review
+            docSections.push(new Paragraph({ spacing: { before: 200 } }));
+            
+            // Add AI review with cyan shading
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ 
+                    text: '🤖 AI ANALYSIS', 
+                    bold: true, 
+                    color: '0E7490',
+                    size: 24
+                  })
+                ],
+                shading: { fill: 'CFFAFE' },
+                indent: { left: 720 },
+                spacing: { after: 50 }
+              })
+            );
+            
+            // Add model info
+            const modelName = entry.aiReview.model ? entry.aiReview.model.replace('claude-', '').replace(/-/g, ' ') : 'AI';
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ 
+                    text: `Model: ${modelName}`, 
+                    italics: true, 
+                    color: '0E7490',
+                    size: 20
+                  })
+                ],
+                shading: { fill: 'CFFAFE' },
+                indent: { left: 720 },
+                spacing: { after: 100 }
+              })
+            );
+            
+            // Split AI review content by newlines and create separate paragraphs
+            const aiParagraphs = entry.aiReview.content.split('\n').filter((p: string) => p.trim());
+            aiParagraphs.forEach((paragraph: string, index: number) => {
+              docSections.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({ 
+                      text: paragraph.trim(), 
+                      color: '1F2937'
+                    })
+                  ],
+                  shading: { fill: 'CFFAFE' },
+                  indent: { left: 720 },
+                  spacing: { 
+                    after: index === aiParagraphs.length - 1 ? 200 : 100 
+                  }
+                })
+              );
+            });
+          }
         }
       }
       
