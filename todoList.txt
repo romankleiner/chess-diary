@@ -4,7 +4,6 @@ Bug fixes:
 - Half a diagram shows when editing a game entry
 
 Analysis:
-- Try out stronger models
 - Discard book moves when calculating accuracy percentage
 - Cloud analysis does not fully complete
 - Get AI analysis to work via Cloud
