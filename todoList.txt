@@ -9,6 +9,8 @@ Analysis:
 - Get AI analysis to work via Cloud
 
 Features:
+- Client Time zone support
+- Automatic periodic backup
 - Support overall game analysis entry. Mark moves where I have a journal entry. Allow adding references to important moves I didn't add an entry on.
 - Add chess.com diary export
 - Show opponent's last move on the game diagram
