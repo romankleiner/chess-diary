@@ -6,7 +6,7 @@ export interface DatabaseData {
   journal_entries: any[];
   move_analysis: any[];
   settings: Record<string, string>;
-  game_analyses?: Record<string, any>; // Analysis results for games
+  game_analyses?: Record<string, any>;
 }
 
 // Create Redis client
@@ -46,47 +46,104 @@ function getEmptyDb(): DatabaseData {
   };
 }
 
-// Get database for current user
+// Get database for current user - now reads from split keys
 export async function getDb(userId?: string): Promise<DatabaseData> {
   const uid = userId || await getUserId();
-  const key = `chess-diary:${uid}`;
+  const client = getRedisClient();
   
   try {
-    const client = getRedisClient();
-    const data = await client.get(key);
+    // Read each section separately
+    const [gamesData, journalData, analysesData, settingsData, analysisProgressData] = await Promise.all([
+      client.get(`chess-diary:${uid}:games`),
+      client.get(`chess-diary:${uid}:journal`),
+      client.get(`chess-diary:${uid}:analyses`),
+      client.get(`chess-diary:${uid}:settings`),
+      client.get(`chess-diary:${uid}:progress`),
+    ]);
     
-    if (!data) {
-      // Create initial empty database for user
-      const emptyDb = getEmptyDb();
-      await client.set(key, JSON.stringify(emptyDb));
-      return emptyDb;
+    const db: any = {
+      games: gamesData ? JSON.parse(gamesData) : {},
+      journal_entries: journalData ? JSON.parse(journalData) : [],
+      move_analysis: [],
+      settings: settingsData ? JSON.parse(settingsData) : {},
+      game_analyses: analysesData ? JSON.parse(analysesData) : {},
+      analysis_progress: analysisProgressData ? JSON.parse(analysisProgressData) : {},
+    };
+    
+    return db;
+  } catch (error) {
+    console.error('[REDIS] Error reading from split keys:', error);
+    
+    // Fallback: try reading from old monolithic key
+    try {
+      const oldData = await client.get(`chess-diary:${uid}`);
+      if (oldData) {
+        console.log('[REDIS] Found old monolithic data, using it');
+        return JSON.parse(oldData) as DatabaseData;
+      }
+    } catch (fallbackError) {
+      console.error('[REDIS] Fallback also failed:', fallbackError);
     }
     
-    return JSON.parse(data) as DatabaseData;
-  } catch (error) {
-    console.error('Error reading from Redis:', error);
     return getEmptyDb();
   }
 }
 
-// Save database for current user
+// Save database - now writes to split keys
 export async function saveDb(data: DatabaseData, userId?: string): Promise<void> {
   const uid = userId || await getUserId();
-  const key = `chess-diary:${uid}`;
+  const client = getRedisClient();
   
   try {
-    const client = getRedisClient();
-    await client.set(key, JSON.stringify(data));
+    // Write each section separately (in parallel for speed)
+    await Promise.all([
+      client.set(`chess-diary:${uid}:games`, JSON.stringify(data.games)),
+      client.set(`chess-diary:${uid}:journal`, JSON.stringify(data.journal_entries)),
+      client.set(`chess-diary:${uid}:analyses`, JSON.stringify(data.game_analyses || {})),
+      client.set(`chess-diary:${uid}:settings`, JSON.stringify(data.settings)),
+      client.set(`chess-diary:${uid}:progress`, JSON.stringify((data as any).analysis_progress || {})),
+    ]);
     
-    // Verify write
-    const verify = await client.get(key);
-    if (!verify) {
-      throw new Error('Data verification failed - Redis returned null after save');
-    }
+    console.log('[REDIS] Saved to split keys');
   } catch (error) {
     console.error('[REDIS] Error saving to Redis:', error);
     throw new Error(`Failed to save database: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+// Helper: Save only journal entries (for journal operations)
+export async function saveJournal(entries: any[], userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  await client.set(`chess-diary:${uid}:journal`, JSON.stringify(entries));
+}
+
+// Helper: Save only games (for game operations)
+export async function saveGames(games: Record<string, any>, userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  await client.set(`chess-diary:${uid}:games`, JSON.stringify(games));
+}
+
+// Helper: Save only analyses (for analysis operations)
+export async function saveAnalyses(analyses: Record<string, any>, userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  await client.set(`chess-diary:${uid}:analyses`, JSON.stringify(analyses));
+}
+
+// Helper: Save only settings (for settings operations)
+export async function saveSettings(settings: Record<string, string>, userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  await client.set(`chess-diary:${uid}:settings`, JSON.stringify(settings));
+}
+
+// Helper: Save only progress (for progress operations)
+export async function saveProgress(progress: Record<string, any>, userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  await client.set(`chess-diary:${uid}:progress`, JSON.stringify(progress));
 }
 
 export default getDb;

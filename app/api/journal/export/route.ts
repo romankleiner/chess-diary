@@ -428,7 +428,8 @@ export async function GET(request: NextRequest) {
             
             // Split AI review content by newlines and create separate paragraphs
             const aiParagraphs = entry.aiReview.content.split('\n').filter((p: string) => p.trim());
-            aiParagraphs.forEach((paragraph: string, index: number) => {
+            for (let i = 0; i < aiParagraphs.length; i++) {
+              const paragraph = aiParagraphs[i];
               docSections.push(
                 new Paragraph({
                   children: [
@@ -440,18 +441,25 @@ export async function GET(request: NextRequest) {
                   shading: { fill: 'CFFAFE' },
                   indent: { left: 720 },
                   spacing: { 
-                    after: index === aiParagraphs.length - 1 ? 200 : 100 
+                    after: i === aiParagraphs.length - 1 ? 200 : 100 
                   }
                 })
               );
-            });
+            }
           }
         }
       }
       
-      // Save any cached images we generated back to the database
-      await saveDb(db);
-      console.log('[EXPORT] Saved cached board images to database');
+      // Try to save cached board images back to database (optional)
+      // If Redis is full, we log but don't fail the export
+      try {
+        await saveDb(db);
+        console.log('[EXPORT] Saved cached board images to database');
+      } catch (saveError) {
+        // Silently continue - export still works, images just won't be cached
+        console.warn('[EXPORT] Could not cache images (Redis may be full):', 
+          saveError instanceof Error ? saveError.message : String(saveError));
+      }
       
       console.log(`[EXPORT] Total document sections: ${docSections.length}`);
       console.log(`[EXPORT] Processed ${processedEntryIds.size} unique entries`);
