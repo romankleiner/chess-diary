@@ -1,33 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
 import getDb, { saveDb } from '@/lib/db';
 
-// POST /api/journal - Create new journal entry
+// Helper function to get current time in local timezone
+function getLocalTimestamp(): string {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  const localTime = new Date(now.getTime() - offset);
+  return localTime.toISOString().slice(0, -1); // Remove 'Z'
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const db = await getDb() as any;
+    const entries = db.journal_entries || [];
+    
+    // Get date filters from query params
+    const { searchParams } = new URL(request.url);
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+    
+    let filteredEntries = entries;
+    
+    if (startDate && endDate) {
+      filteredEntries = entries.filter((entry: any) => {
+        return entry.date >= startDate && entry.date <= endDate;
+      });
+    }
+    
+    return NextResponse.json({ entries: filteredEntries });
+  } catch (error) {
+    console.error('Error fetching journal entries:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch entries' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const db = await getDb();
+    const db = await getDb() as any;
+    
+    if (!db.journal_entries) {
+      db.journal_entries = [];
+    }
     
     const newEntry = {
       id: Date.now(),
-      date: body.date,
-      gameId: body.gameId || null,
-      entryType: body.entryType,
-      content: body.content,
-      moveNumber: body.moveNumber || null,
-      moveNotation: body.moveNotation || null,
-      timestamp: new Date().toISOString(),
-      fen: body.fen || null,
-      myMove: body.myMove || null,
-      images: body.images || null,  // Support images array
+      timestamp: getLocalTimestamp(), // Use local timestamp
+      ...body,
     };
     
     db.journal_entries.push(newEntry);
     await saveDb(db);
     
-    return NextResponse.json({
-      success: true,
-      entry: newEntry
-    });
+    return NextResponse.json({ entry: newEntry });
   } catch (error) {
     console.error('Error creating journal entry:', error);
     return NextResponse.json(
@@ -37,36 +65,32 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET /api/journal - Get journal entries (with optional date range and game filter)
-export async function GET(request: NextRequest) {
+export async function DELETE(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
-    const gameId = searchParams.get('gameId');
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
     
-    const db = await getDb();
-    let entries = db.journal_entries || [];
-    
-    // Filter by date range if provided
-    if (startDate && endDate) {
-      entries = entries.filter(e => 
-        e.date >= startDate && e.date <= endDate
+    if (!id) {
+      return NextResponse.json(
+        { error: 'Entry ID required' },
+        { status: 400 }
       );
     }
     
-    // Filter by game if provided
-    if (gameId && gameId !== 'all' && gameId !== 'general') {
-      entries = entries.filter(e => e.gameId === gameId);
-    } else if (gameId === 'general') {
-      entries = entries.filter(e => !e.gameId);
-    }
+    const db = await getDb() as any;
+    const entryId = parseInt(id);
     
-    return NextResponse.json({ entries });
+    db.journal_entries = db.journal_entries.filter(
+      (entry: any) => entry.id !== entryId
+    );
+    
+    await saveDb(db);
+    
+    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error fetching journal entries:', error);
+    console.error('Error deleting journal entry:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch entries' },
+      { error: 'Failed to delete entry' },
       { status: 500 }
     );
   }

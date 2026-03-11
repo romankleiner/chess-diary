@@ -7,14 +7,12 @@ Bug fixes:
 
 Analysis:
 - Discard book moves when calculating accuracy percentage
-- Pass previous moves to AI
 - Cloud analysis does not fully complete
 - Get AI analysis to work via Cloud
 
 Features:
-- Restore manual backup
-- Client Time zone support
 - Automatic periodic backup
 - Support overall game analysis entry. Mark moves where I have a journal entry. Allow adding references to important moves I didn't add an entry on.
+- Add detection of opening book during engine analysis
 - Add chess.com diary export
 - Show opponent's last move on the game diagram

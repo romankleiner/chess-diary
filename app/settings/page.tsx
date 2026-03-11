@@ -233,6 +233,45 @@ export default function SettingsPage() {
             </span>
           )}
         </div>
+
+        {/* Database Backup */}
+        <div className="pt-4 border-t">
+          <h3 className="text-lg font-semibold mb-3">Database Backup</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+            Download a complete backup of all your data (games, journal entries, analyses, settings).
+          </p>
+          <button
+            onClick={async () => {
+              try {
+                const response = await fetch('/api/backup');
+                const data = await response.json();
+                
+                // Create downloadable JSON file
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `chess-diary-backup-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                setSaveMessage('✓ Backup downloaded!');
+                setTimeout(() => setSaveMessage(''), 3000);
+              } catch (error) {
+                console.error('Backup error:', error);
+                setSaveMessage('✗ Backup failed');
+              }
+            }}
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+          >
+            📥 Download Full Backup (JSON)
+          </button>
+          <p className="text-xs text-gray-500 mt-2">
+            This creates a complete backup of all your data. Store it safely in case you need to restore later.
+          </p>
+        </div>
       </div>
 
       {/* Additional Info */}

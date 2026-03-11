@@ -3,6 +3,14 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { GrammarCheck } from './grammar-check';
 
+// Helper function to get current time in local timezone as ISO string
+function getLocalTimestamp(): string {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000; // Convert to milliseconds
+  const localTime = new Date(now.getTime() - offset);
+  return localTime.toISOString().slice(0, -1); // Remove 'Z' to indicate local time
+}
+
 interface JournalEntry {
   id: number;
   date: string;
@@ -130,7 +138,7 @@ export default function JournalPage() {
         images,
         currentGameId,
         entryMode,
-        timestamp: new Date().toISOString(),
+        timestamp: getLocalTimestamp(),
       };
       localStorage.setItem('journal-draft', JSON.stringify(draft));
       setLastSaved(new Date());
@@ -504,7 +512,7 @@ export default function JournalPage() {
         body: JSON.stringify({
           postReview: {
             content: reviewContent,
-            timestamp: new Date().toISOString(),
+            timestamp: getLocalTimestamp(),
             type: 'manual'
           }
         }),
@@ -586,7 +594,7 @@ export default function JournalPage() {
           aiReview: {
             ...entry?.aiReview,
             content: aiReviewContent,
-            timestamp: new Date().toISOString()
+            timestamp: getLocalTimestamp()
           }
         }),
       });
@@ -1382,7 +1390,22 @@ export default function JournalPage() {
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-500">
-                                  {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  {(() => {
+                                    // Parse local timestamp (format: "2026-02-21T07:57:00.000")
+                                    const timestamp = entry.timestamp;
+                                    if (timestamp.endsWith('Z')) {
+                                      // Old UTC format - convert to local
+                                      return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                    } else {
+                                      // New local format - extract time directly
+                                      const timePart = timestamp.split('T')[1];
+                                      if (timePart) {
+                                        const [hours, minutes] = timePart.split(':');
+                                        return `${hours}:${minutes}`;
+                                      }
+                                      return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                    }
+                                  })()}
                                 </span>
                                 <button
                                   onClick={() => handleEditEntry(entry)}

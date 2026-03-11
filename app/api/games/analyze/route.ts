@@ -218,14 +218,17 @@ async function analyzeGameChessApiBatched(
       }
       cpLoss = Math.max(0, Math.round(cpLoss * 10) / 10);
       
+      // Add all moves to accuracy calculation
       if (isWhiteMove) {
         whiteLosses.push(cpLoss);
       } else {
         blackLosses.push(cpLoss);
       }
       
+      const moveNumber = Math.floor(i / 2) + 1;
+      
       analyses.push({
-        moveNumber: Math.floor(i / 2) + 1,
+        moveNumber: moveNumber,
         color: isWhiteMove ? 'white' : 'black',
         move: move.san,
         evaluation: evalAfterWhite,
@@ -342,6 +345,9 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
         
         cpLoss = Math.max(0, cpLoss);
         
+        const moveNumber = Math.floor(i / 2) + 1;
+        
+        // Add all moves to accuracy calculation
         if (isWhiteMove) {
           whiteLosses.push(cpLoss);
         } else {
@@ -349,7 +355,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
         }
         
         analyses.push({
-          moveNumber: Math.floor(i / 2) + 1,
+          moveNumber: moveNumber,
           color: isWhiteMove ? 'white' : 'black',
           move: move.san,
           evaluation: evalAfter,

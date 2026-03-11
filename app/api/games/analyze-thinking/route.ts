@@ -117,13 +117,43 @@ export async function POST(request: NextRequest) {
         console.log(`[AI-ANALYSIS] PV type: ${typeof moveAnalysis.principalVariation}, value:`, moveAnalysis.principalVariation);
       }
       
+      // Build PGN of moves up to this point for context
+      let pgnMoves = '';
+      if (entry.moveNumber) {
+        const currentMoveNum = entry.moveNumber;
+        
+        // Collect all moves before current move, sorted by move number
+        const movesBefore = [...gameEntries]
+          .filter(e => e.moveNumber && e.moveNumber < currentMoveNum && e.myMove)
+          .sort((a, b) => (a.moveNumber || 0) - (b.moveNumber || 0));
+        
+        // Build PGN notation
+        const pgnParts: string[] = [];
+        movesBefore.forEach(prevEntry => {
+          const moveNum = prevEntry.moveNumber!;
+          const move = prevEntry.myMove!;
+          
+          // Format as "1. e4" or "1... e5" depending on color
+          if (userColor === 'white') {
+            pgnParts.push(`${moveNum}. ${move}`);
+          } else {
+            pgnParts.push(`${moveNum}... ${move}`);
+          }
+        });
+        
+        pgnMoves = pgnParts.join(' ');
+      }
+      
+      console.log(`[AI-ANALYSIS] PGN context: ${pgnMoves.substring(0, 100)}...`);
+      
       // Build AI prompt
       const prompt = buildAnalysisPrompt(
         entry.content,
         entry.myMove,
         entry.fen,
         moveAnalysis,
-        verbosity
+        verbosity,
+        pgnMoves
       );
       
       console.log(`\n========== AI ANALYSIS PROMPT - Entry ${entry.id} ==========`);
@@ -212,13 +242,19 @@ function buildAnalysisPrompt(
   movePlayed: string | null | undefined,
   fen: string | null | undefined,
   moveAnalysis: any,
-  verbosity: string = 'detailed'
+  verbosity: string = 'detailed',
+  pgnMoves: string = ''
 ): string {
   let prompt = `You are analyzing a chess player's thought process during a game.
 
-Position (FEN): ${fen || 'Not available'}
+Position (FEN): ${fen || 'Not available'}`;
 
-Player's thinking: "${thinking}"`;
+  // Add game moves so far for context
+  if (pgnMoves.length > 0) {
+    prompt += `\n\nGame moves so far:\n${pgnMoves}`;
+  }
+
+  prompt += `\n\nPlayer's thinking: "${thinking}"`;
 
   if (movePlayed) {
     prompt += `\nMove played: ${movePlayed}`;
@@ -268,9 +304,9 @@ Be educational and encouraging, not critical.`;
   } else if (verbosity === 'detailed') {
     prompt += `\n\nProvide a detailed analysis (2-3 paragraphs):
 
-Paragraph 1: Evaluate whether their reasoning was sound based on the actual position. Comment on what they got right.
+Paragraph 1: Evaluate whether their reasoning was sound based on the actual position. If game moves are shown above, consider whether they're following through on the opening/middlegame plan. Comment on what they got right.
 
-Paragraph 2: Point out what they overlooked - tactical motifs, piece activity, pawn structure, or strategic themes. Reference specific pieces and squares.
+Paragraph 2: Point out what they overlooked - tactical motifs, piece activity, pawn structure, or strategic themes. Reference specific pieces and squares. If relevant, note how this position evolved from earlier moves.
 
 Paragraph 3: Suggest key patterns or principles they should recognize. If the engine suggests a different move, explain the concrete chess reasons why it's superior.
 
@@ -278,11 +314,11 @@ Be educational and encouraging, not critical. Use chess terminology appropriatel
   } else if (verbosity === 'extensive') {
     prompt += `\n\nProvide an extensive analysis (3-4 paragraphs):
 
-Paragraph 1: Evaluate their thought process - what reasoning did they use and was it appropriate for this position type? Comment on what they got right.
+Paragraph 1: Evaluate their thought process - what reasoning did they use and was it appropriate for this position type? If game moves are shown above, consider whether their thinking is consistent with their opening choice and game plan. Comment on what they got right.
 
-Paragraph 2: Analyze the position in detail - what are the key features (pawn structure, piece placement, king safety, tactical motifs)? Reference specific pieces and squares.
+Paragraph 2: Analyze the position in detail - what are the key features (pawn structure, piece placement, king safety, tactical motifs)? Reference specific pieces and squares. How does this position relate to the opening/middlegame that led here?
 
-Paragraph 3: Explain what they overlooked and why it matters. If the engine suggests a different move, provide a thorough explanation of why it's superior, including potential follow-up moves.
+Paragraph 3: Explain what they overlooked and why it matters. If the engine suggests a different move, provide a thorough explanation of why it's superior, including potential follow-up moves. Consider the broader game context when relevant.
 
 Paragraph 4: Provide broader learning points - what pattern recognition skills should they develop? What similar positions should they study? How can they improve their evaluation process?
 
