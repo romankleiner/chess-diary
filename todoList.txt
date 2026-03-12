@@ -1,17 +1,15 @@
 Bug fixes:
 - Optimise redis design to reduce network traffic. Only update the relevant key/values
 - Fix aspect ratio on export
-- When entering a game-specific entry, the diagram should be above the entry box
 - Half a diagram shows when editing a game entry
-- Stop using redis for cached images
 
 Analysis:
-- Discard book moves when calculating accuracy percentage
 - Cloud analysis does not fully complete
 - Get AI analysis to work via Cloud
 
 Features:
 - Automatic periodic backup
+- Implement migration of images from redis to blob
 - Support overall game analysis entry. Mark moves where I have a journal entry. Allow adding references to important moves I didn't add an entry on.
 - Add detection of opening book during engine analysis
 - Add chess.com diary export

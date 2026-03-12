@@ -59,6 +59,7 @@ export default function JournalPage() {
   const [username, setUsername] = useState<string>('');
   const [showAllGames, setShowAllGames] = useState(false);
   const [currentGameId, setCurrentGameId] = useState<string | null>(null);
+  const [currentFen, setCurrentFen] = useState<string | null>(null);
   const [thought, setThought] = useState('');
   const [myMove, setMyMove] = useState('');
   const [images, setImages] = useState<string[]>([]);
@@ -285,6 +286,12 @@ export default function JournalPage() {
   const selectGame = (gameId: string) => {
     setCurrentGameId(gameId);
     setEntryMode('game');
+    
+    // Find the game and set its FEN
+    const game = allGames.find(g => g.id === gameId);
+    if (game && game.fen) {
+      setCurrentFen(game.fen);
+    }
   };
 
   const addEntry = async (e: React.FormEvent) => {
@@ -826,7 +833,11 @@ export default function JournalPage() {
         <h3 className="text-xl font-semibold mb-4">What would you like to record?</h3>
         <div className="flex gap-4">
           <button
-            onClick={() => setEntryMode('general')}
+            onClick={() => {
+              setEntryMode('general');
+              setCurrentGameId(null);
+              setCurrentFen(null);
+            }}
             className={`flex-1 py-3 px-4 rounded-lg border-2 transition ${
               entryMode === 'general'
                 ? 'border-blue-600 bg-blue-50 dark:bg-blue-900'
@@ -1040,6 +1051,32 @@ export default function JournalPage() {
           </div>
         )}
         
+        {/* Chess Board - Show when game is selected */}
+        {entryMode === 'game' && currentGameId && currentFen && (() => {
+          const game = allGames.find(g => g.id === currentGameId);
+          if (!game) return null;
+          
+          // Determine orientation based on player color
+          const usernameLower = username?.toLowerCase() || '';
+          const whiteLower = game.white?.toLowerCase() || '';
+          const isWhite = usernameLower === whiteLower;
+          
+          return (
+            <div className="mb-4">
+              <div className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                Current Position ({isWhite ? 'You are White' : 'You are Black'})
+              </div>
+              <div className="flex justify-center bg-gray-100 dark:bg-gray-700 rounded-lg p-4">
+                <img 
+                  src={`/api/board-image?fen=${encodeURIComponent(currentFen)}${isWhite ? '' : '&pov=black'}`}
+                  alt="Chess position"
+                  className="w-80 h-80 rounded border border-gray-300 dark:border-gray-600"
+                />
+              </div>
+            </div>
+          );
+        })()}
+        
         <form onSubmit={addEntry} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2">
@@ -1124,35 +1161,6 @@ export default function JournalPage() {
               Paste images with Ctrl+V or click "+ Add Image" to upload
             </p>
           </div>
-          
-          {entryMode === 'game' && currentGameId && (() => {
-            const game = allGames.find(g => g.id === currentGameId);
-            const fenToUse = game?.fen;
-            if (fenToUse && game) {
-              // Determine orientation based on player color
-              // Compare usernames case-insensitively
-              const usernameLower = username?.toLowerCase() || '';
-              const whiteLower = game.white?.toLowerCase() || '';
-              const blackLower = game.black?.toLowerCase() || '';
-              
-              const isWhite = usernameLower === whiteLower;
-              const isBlack = usernameLower === blackLower;
-              
-              return (
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Current Position ({isWhite ? 'You are White' : 'You are Black'})
-                  </label>
-                  <img
-                    src={`/api/board-image?fen=${encodeURIComponent(fenToUse)}${isWhite ? '' : '&pov=black'}`}
-                    alt="Chess board"
-                    className="w-80 h-80 rounded border border-gray-300"
-                  />
-                </div>
-              );
-            }
-            return null;
-          })()}
           
           {entryMode === 'game' && !editingEntry && (
             <div>
