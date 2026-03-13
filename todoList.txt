@@ -1,11 +1,9 @@
 Bug fixes:
 - Optimise redis design to reduce network traffic. Only update the relevant key/values
 - Fix aspect ratio on export
-- Half a diagram shows when editing a game entry
 
 Analysis:
 - Cloud analysis does not fully complete
-- Get AI analysis to work via Cloud
 
 Features:
 - Automatic periodic backup
