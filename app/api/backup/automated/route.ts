@@ -102,8 +102,9 @@ export async function GET(request: NextRequest) {
     
     console.log('[BACKUP] Uploading to blob storage:', fileName);
     
-    // Upload to Vercel Blob Storage (uses store's default access level)
+    // Upload to Vercel Blob Storage with private access
     const blob = await put(fileName, backupJson, {
+      access: 'private',
       contentType: 'application/json',
       addRandomSuffix: false,
     });
