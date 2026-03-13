@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import Redis from 'ioredis';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,21 +25,37 @@ export async function POST(request: NextRequest) {
     }
     
     console.log('[RESTORE] Backup from:', backupData.timestamp);
+    console.log('[RESTORE] Backup type:', backupData.backupType || 'legacy');
     console.log('[RESTORE] Restoring to Redis...');
     
-    // Get current database
-    const db = await getDb() as any;
+    // Connect to Redis
+    if (!process.env.REDIS_URL) {
+      throw new Error('REDIS_URL not configured');
+    }
     
-    // Replace with backup data
-    db.games = backupData.data.games;
-    db.journal_entries = backupData.data.journal_entries;
-    db.game_analyses = backupData.data.game_analyses || {};
-    db.settings = backupData.data.settings;
+    const redis = new Redis(process.env.REDIS_URL);
     
-    // Save to Redis
-    await saveDb(db);
+    // For full database backups, restore all keys
+    if (backupData.backupType === 'full-database') {
+      const keys = Object.keys(backupData.data);
+      console.log(`[RESTORE] Restoring ${keys.length} keys...`);
+      
+      for (const key of keys) {
+        const value = backupData.data[key];
+        const jsonValue = typeof value === 'string' ? value : JSON.stringify(value);
+        await redis.set(key, jsonValue);
+      }
+      
+      console.log('[RESTORE] Full database restore complete!');
+      
+    } else {
+      // Legacy format - single user backup
+      // This won't work anymore since we don't know the user ID
+      throw new Error('Legacy single-user backups are not supported. Please use full database backups.');
+    }
     
-    console.log('[RESTORE] Restore complete!');
+    // Close Redis connection
+    await redis.quit();
     
     return NextResponse.json({
       success: true,
