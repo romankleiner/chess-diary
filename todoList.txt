@@ -1,4 +1,5 @@
 Bug fixes:
+- Fix cloud AI analysis
 - Post-game summary isn't taking the right percentage or blunder/error count
 - Increase the entry text fields for post-game summary
 - Add export for post-game summary entries
