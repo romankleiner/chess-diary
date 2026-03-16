@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import PostGameSummaryForm from '@/components/PostGameSummaryForm';
 
 interface Game {
   id: string;
@@ -25,16 +26,19 @@ export default function GamesPage() {
   const [analyzingThinking, setAnalyzingThinking] = useState<string | null>(null);
   const [gamesWithEntries, setGamesWithEntries] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    loadGames();
-    loadGamesWithEntries();
-  }, []);
+  // ── Post-game summary state ──────────────────────────────────────────
+  const [showSummaryForm, setShowSummaryForm] = useState<string | null>(null);
+  const [summaryGameData, setSummaryGameData] = useState<{
+    gameId: string;
+    gameSnapshot: { opponent: string; result: string; date: string; white: string; black: string };
+    statistics: null;
+  } | null>(null);
+  const [existingSummaries, setExistingSummaries] = useState<Set<string>>(new Set());
+  // ────────────────────────────────────────────────────────────────────
 
   const showToast = (message: string) => {
     setToast({ message, show: true });
-    setTimeout(() => {
-      setToast({ message: '', show: false });
-    }, 3000);
+    setTimeout(() => setToast({ message: '', show: false }), 3000);
   };
 
   const loadGames = async () => {
@@ -42,198 +46,146 @@ export default function GamesPage() {
       const response = await fetch('/api/games');
       const data = await response.json();
       setGames(data.games || []);
+      console.log('[FRONTEND] Games reloaded');
+
+      // Check which games already have post-game summaries
+      if (data.games?.length) {
+        const summaryChecks = await Promise.allSettled(
+          data.games.map((g: Game) =>
+            fetch(`/api/journal/post-game-summary?gameId=${g.id}`).then(r => r.json())
+          )
+        );
+        const withSummaries = new Set<string>();
+        summaryChecks.forEach((result, i) => {
+          if (result.status === 'fulfilled' && result.value.summary) {
+            withSummaries.add(data.games[i].id);
+          }
+        });
+        setExistingSummaries(withSummaries);
+      }
     } catch (error) {
-      console.error('Error loading games:', error);
+      console.error('[FRONTEND] Error loading games:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadGamesWithEntries = async () => {
-    try {
-      // Fetch all journal entries to see which games have entries
-      const response = await fetch('/api/journal?startDate=2020-01-01&endDate=2030-01-01');
-      const data = await response.json();
-      
-      // Build a set of game IDs that have journal entries
-      const gameIds = new Set<string>();
-      data.entries?.forEach((entry: any) => {
-        if (entry.gameId) {
-          gameIds.add(entry.gameId);
-        }
-      });
-      
-      setGamesWithEntries(gameIds);
-    } catch (error) {
-      console.error('Error loading journal entries:', error);
-    }
-  };
+  useEffect(() => {
+    loadGames();
+    // Load which games have journal entries
+    fetch('/api/journal?startDate=2000-01-01&endDate=2099-12-31')
+      .then(r => r.json())
+      .then(data => {
+        const gameIds = new Set<string>(
+          (data.entries || []).map((e: any) => e.gameId).filter(Boolean)
+        );
+        setGamesWithEntries(gameIds);
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchFromChessCom = async () => {
     setFetching(true);
     try {
-      const response = await fetch('/api/games/fetch?includeRecent=true');
+      const response = await fetch('/api/games/fetch', { method: 'POST' });
       const data = await response.json();
-      
-      if (data.error) {
-        alert(data.error);
+      if (data.success) {
+        showToast(`✅ Fetched ${data.newGames} new games`);
+        await loadGames();
       } else {
-        showToast(`Fetched ${data.count} games from Chess.com ✓`);
-        loadGames();
+        alert(data.error || 'Fetch failed');
       }
     } catch (error) {
-      console.error('Error fetching games:', error);
-      alert('Failed to fetch games from Chess.com');
+      alert('Failed to fetch games');
     } finally {
       setFetching(false);
     }
   };
 
   const analyzeGame = async (gameId: string) => {
-    const game = games.find(g => g.id === gameId);
-    const isReanalyze = game?.analysisCompleted;
-    
-    if (!confirm(isReanalyze 
-      ? 'Re-analyze this game? This will overwrite the existing analysis.' 
-      : 'Analyze this game with Stockfish? This may take a few minutes.'
-    )) {
-      return;
-    }
-    
     setAnalyzing(gameId);
-    setAnalysisProgress({ current: 0, total: 100 });
-    
-    // Poll for progress - works for both local and Vercel
-    const progressInterval = setInterval(async () => {
-      try {
-        const progressRes = await fetch(`/api/games/analyze?gameId=${gameId}`);
-        const progressData = await progressRes.json();
-        if (progressData.total > 0) {
-          setAnalysisProgress({
-            current: progressData.current,
-            total: progressData.total
-          });
-        }
-      } catch (error) {
-        // Ignore polling errors
-      }
-    }, 1000);
-    
+    setAnalysisProgress(null);
+    let progressInterval: ReturnType<typeof setInterval>;
     try {
-      let completed = false;
-      let nextMoveIndex = 0;
-      let finalData = null;
-      
-      console.log('[FRONTEND] Starting analysis for game:', gameId);
-      
-      // Keep requesting batches until complete (Vercel batches, local completes in one)
-      while (!completed) {
-        console.log('[FRONTEND] Requesting batch starting at move:', nextMoveIndex);
-        
-        const response = await fetch('/api/games/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gameId, startMoveIndex: nextMoveIndex }),
-        });
-        
-        console.log('[FRONTEND] Response status:', response.status);
-        
-        const data = await response.json();
-        console.log('[FRONTEND] Response data:', data);
-        
-        if (!data.success) {
-          throw new Error(data.error || 'Analysis failed');
-        }
-        
-        finalData = data;
-        completed = data.completed;
-        nextMoveIndex = data.nextMoveIndex || 0;
-        
-        console.log('[FRONTEND] Batch done. Completed:', completed, 'Next:', nextMoveIndex);
-        
-        if (!completed) {
-          // Small delay between batches (only affects Vercel)
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-      
-      console.log('[FRONTEND] Analysis complete. Final data:', finalData);
-      
-      if (finalData?.analysis) {
-        const depth = finalData.analysis.depth || '?';
-        const engine = finalData.analysis.engine || 'engine';
-        showToast(`Analysis complete! White: ${finalData.analysis.whiteAccuracy}% | Black: ${finalData.analysis.blackAccuracy}% (${engine} depth ${depth})`);
-        
-        // Update the game state immediately
-        setGames(prevGames => 
-          prevGames.map(g => 
-            g.id === gameId 
-              ? { 
-                  ...g, 
-                  analysisCompleted: true, 
-                  analysisDepth: finalData.analysis.depth,
-                  analysisEngine: finalData.analysis.engine 
-                }
-              : g
-          )
-        );
+      progressInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/games/analysis-progress?gameId=${gameId}`);
+          const d = await res.json();
+          if (d.progress) setAnalysisProgress(d.progress);
+        } catch {}
+      }, 1000);
+
+      const response = await fetch('/api/games/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        showToast(`✅ Analysis complete!`);
+        await loadGames();
       } else {
-        console.warn('[FRONTEND] Analysis completed but no analysis data in response');
-        showToast('Analysis complete!');
+        alert(data.error || 'Analysis failed');
       }
-      
-      console.log('[FRONTEND] Reloading games list...');
-      await loadGames();
-      console.log('[FRONTEND] Games reloaded');
     } catch (error) {
       console.error('[FRONTEND] Error analyzing game:', error);
       alert(`Failed to analyze game: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
-      clearInterval(progressInterval);
+      clearInterval(progressInterval!);
       setAnalyzing(null);
       setAnalysisProgress(null);
     }
   };
 
   const analyzeThinking = async (gameId: string) => {
-    try {
-      // Check if engine analysis exists locally first (avoid API call)
-      const game = games.find(g => g.id === gameId);
-      if (!game?.analysisCompleted) {
-        if (!confirm('Engine analysis is required first. Would you like to run it now?')) {
-          return;
-        }
-        // Trigger engine analysis first
-        await analyzeGame(gameId);
+    const game = games.find(g => g.id === gameId);
+    if (!game?.analysisCompleted) {
+      if (!confirm('Engine analysis is required first. Would you like to run it now?')) {
         return;
       }
-      
-      if (!confirm('This will analyze all your journal entries for this game using AI. Continue?')) {
-        return;
-      }
-      
-      setAnalyzingThinking(gameId);
-      
-      const response = await fetch('/api/games/analyze-thinking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameId, reanalyzeEngine: false })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        showToast(`🤖 AI analysis complete! ${data.entriesAnalyzed} entries analyzed.`);
-      } else {
-        alert(data.error || 'Analysis failed');
-      }
-    } catch (error) {
-      console.error('AI analysis error:', error);
-      alert('Failed to analyze thinking');
-    } finally {
-      setAnalyzingThinking(null);
+      // Trigger engine analysis first
+      await analyzeGame(gameId);
+      return;
     }
+
+    if (!confirm('This will analyze all your journal entries for this game using AI. Continue?')) {
+      return;
+    }
+
+    setAnalyzingThinking(gameId);
+
+    const response = await fetch('/api/games/analyze-thinking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId, reanalyzeEngine: false }),
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      showToast(`🧠 AI analysis complete! ${data.entriesAnalyzed} entries analyzed.`);
+    } else {
+      alert(data.error || 'Analysis failed');
+    }
+    setAnalyzingThinking(null);
   };
+
+  // ── Open post-game summary form ───────────────────────────────────────
+  const openPostGameSummary = (game: Game) => {
+    setSummaryGameData({
+      gameId: game.id,
+      gameSnapshot: {
+        opponent: game.opponent,
+        result: game.result,
+        date: game.date,
+        white: game.white,
+        black: game.black,
+      },
+      statistics: null, // API will compute from game_analyses
+    });
+    setShowSummaryForm(game.id);
+  };
+  // ────────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -247,7 +199,7 @@ export default function GamesPage() {
     <div className="max-w-4xl mx-auto p-6">
       {/* Toast notification */}
       {toast.show && (
-        <div className="fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-fade-in">
+        <div className="fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50">
           {toast.message}
         </div>
       )}
@@ -257,7 +209,7 @@ export default function GamesPage() {
         <button
           onClick={fetchFromChessCom}
           disabled={fetching}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
+          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 text-sm flex items-center gap-1"
         >
           {fetching ? 'Fetching...' : 'Fetch from Chess.com'}
         </button>
@@ -265,7 +217,7 @@ export default function GamesPage() {
 
       {games.length === 0 ? (
         <p className="text-center text-gray-600">
-          No games found. Click "Fetch from Chess.com" to import your games.
+          No games found. Click &quot;Fetch from Chess.com&quot; to import your games.
         </p>
       ) : (
         <div className="space-y-4">
@@ -281,15 +233,16 @@ export default function GamesPage() {
                       {game.white} vs {game.black}
                     </h3>
                     {game.analysisCompleted && (
-                      <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded" title={`Analyzed with ${game.analysisEngine || 'engine'} at depth ${game.analysisDepth || '?'}`}>
-                        ✓ Analyzed (depth {game.analysisDepth || '?'})
+                      <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-0.5 rounded-full">
+                        ✓ Analyzed (depth {game.analysisDepth ?? '?'})
                       </span>
                     )}
                   </div>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {new Date(game.date).toLocaleDateString()} • Result: {game.result}
+                    {new Date(game.date).toLocaleDateString()} · Result: {game.result}
                   </p>
-                  
+
+                  {/* Analysis progress bar */}
                   {analyzing === game.id && analysisProgress && (
                     <div className="mt-2">
                       <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -305,7 +258,7 @@ export default function GamesPage() {
                     </div>
                   )}
                 </div>
-                
+
                 <div className="flex gap-2 ml-4">
                   <Link
                     href={`/games/${game.id}`}
@@ -313,7 +266,7 @@ export default function GamesPage() {
                   >
                     View
                   </Link>
-                  
+
                   {game.analysisCompleted ? (
                     <>
                       <Link
@@ -329,39 +282,60 @@ export default function GamesPage() {
                       >
                         Re-analyze
                       </button>
-                      {gamesWithEntries.has(game.id) && (
-                        <button
-                          onClick={() => analyzeThinking(game.id)}
-                          disabled={analyzingThinking === game.id}
-                          className="px-3 py-1 bg-cyan-500 text-white rounded hover:bg-cyan-600 disabled:bg-gray-400 text-sm flex items-center gap-1"
-                        >
-                          {analyzingThinking === game.id ? (
-                            <>
-                              <span className="animate-spin">⚙️</span>
-                              AI...
-                            </>
-                          ) : (
-                            <>
-                              🤖 Analyze Thinking
-                            </>
-                          )}
-                        </button>
-                      )}
                     </>
-                  ) : (game.result && !game.result.includes('progress')) ? (
-                    // Only show analyze for finished games (has a result, not in progress)
+                  ) : (
                     <button
                       onClick={() => analyzeGame(game.id)}
                       disabled={analyzing === game.id}
-                      className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 text-sm"
+                      className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 text-sm flex items-center gap-1"
                     >
-                      {analyzing === game.id ? 'Analyzing...' : 'Analyze'}
+                      {analyzing === game.id ? (
+                        <>
+                          <span className="animate-spin">⚙️</span>
+                          Analyzing...
+                        </>
+                      ) : (
+                        'Analyze'
+                      )}
                     </button>
-                  ) : (
-                    // Unfinished game - show status
-                    <span className="px-3 py-1 text-sm text-gray-500 italic">
-                      In Progress
-                    </span>
+                  )}
+
+                  {gamesWithEntries.has(game.id) && (
+                    <>
+                      <button
+                        onClick={() => analyzeThinking(game.id)}
+                        disabled={analyzingThinking === game.id}
+                        className="px-3 py-1 bg-cyan-500 text-white rounded hover:bg-cyan-600 disabled:bg-gray-400 text-sm flex items-center gap-1"
+                      >
+                        {analyzingThinking === game.id ? (
+                          <>
+                            <span className="animate-spin">⚙️</span>
+                            AI...
+                          </>
+                        ) : (
+                          '🧠 Analyze Thinking'
+                        )}
+                      </button>
+
+                      {/* ── Post-Game Summary button ── */}
+                      {game.analysisCompleted && !existingSummaries.has(game.id) && (
+                        <button
+                          onClick={() => openPostGameSummary(game)}
+                          className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm flex items-center gap-1"
+                        >
+                          🏁 Summary
+                        </button>
+                      )}
+                      {game.analysisCompleted && existingSummaries.has(game.id) && (
+                        <Link
+                          href="/journal"
+                          className="px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-800 text-sm"
+                        >
+                          🏁 View Summary
+                        </Link>
+                      )}
+                      {/* ─────────────────────────── */}
+                    </>
                   )}
                 </div>
               </div>
@@ -369,6 +343,30 @@ export default function GamesPage() {
           ))}
         </div>
       )}
+
+      {/* ── Post-Game Summary modal ──────────────────────────────────────── */}
+      {showSummaryForm && summaryGameData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <PostGameSummaryForm
+              gameId={summaryGameData.gameId}
+              gameSnapshot={summaryGameData.gameSnapshot}
+              statistics={summaryGameData.statistics}
+              onSaved={() => {
+                setExistingSummaries(prev => new Set([...prev, summaryGameData.gameId]));
+                setShowSummaryForm(null);
+                setSummaryGameData(null);
+                showToast('🏁 Post-game summary saved to journal!');
+              }}
+              onCancel={() => {
+                setShowSummaryForm(null);
+                setSummaryGameData(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
+      {/* ─────────────────────────────────────────────────────────────────── */}
     </div>
   );
 }

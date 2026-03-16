@@ -18,7 +18,7 @@ export interface JournalEntry {
   id: number;
   date: string;
   gameId: string | null;
-  entryType: 'game_start' | 'thought' | 'move' | 'note';
+  entryType: 'game_start' | 'thought' | 'move' | 'note' | 'post_game_summary';
   content: string;
   moveNumber?: number;
   moveNotation?: string;
@@ -26,6 +26,34 @@ export interface JournalEntry {
   fen?: string;
   myMove?: string;
   image?: string; // base64 encoded image
+
+  // Only present when entryType === 'post_game_summary'
+  postGameSummary?: {
+    statistics: {
+      totalMoves: number;
+      accuracy: number | null;
+      blunders: number;
+      mistakes: number;
+      inaccuracies: number;
+      averageCentipawnLoss: number | null;
+    } | null;
+    reflections: {
+      whatWentWell?: string;
+      mistakes?: string;
+      lessonsLearned?: string;
+      nextSteps?: string;
+    };
+  };
+
+  // Snapshot of game metadata at time of summary creation
+  gameSnapshot?: {
+    opponent: string;
+    result: string | null;
+    date: string;
+    white: string;
+    black: string;
+    url?: string | null;
+  } | null;
 }
 
 export interface MoveAnalysis {

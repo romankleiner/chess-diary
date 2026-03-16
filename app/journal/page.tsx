@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { GrammarCheck } from './grammar-check';
+import PostGameSummaryCard from '@/components/PostGameSummaryCard';
 
 // Helper function to get current time in local timezone as ISO string
 function getLocalTimestamp(): string {
@@ -1343,6 +1344,15 @@ export default function JournalPage() {
                         // Find game info if this is a game-specific entry
                         const game = entry.gameId ? allGames.find(g => g.id === entry.gameId) : null;
                         
+						if (entry.entryType === 'post_game_summary') {
+							return (
+								<PostGameSummaryCard
+								key={`${entry.id}-${entry.timestamp}`}
+								entry={entry}
+								onDelete={(id) => setEntries(prev => prev.filter(e => e.id !== id))}
+								/>
+							);
+						}
                         // Determine user's color and move number at time of entry
                         let userColor = '';
                         let moveInfo = '';
