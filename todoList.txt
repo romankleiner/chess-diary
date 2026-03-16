@@ -1,5 +1,8 @@
 Bug fixes:
 - Post-game summary isn't taking the right percentage or blunder/error count
+- Increase the entry text fields for post-game summary
+- Add export for post-game summary entries
+- Fix the diagram view
 - Optimise redis design to reduce network traffic. Only update the relevant key/values
 - Fix aspect ratio on export
 
