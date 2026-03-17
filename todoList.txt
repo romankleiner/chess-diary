@@ -1,5 +1,4 @@
 Minor:
-- Fix the diagram view
 - Fix aspect ratio on export
 - Analysis progress no longer works
 

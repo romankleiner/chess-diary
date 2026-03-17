@@ -122,9 +122,9 @@ export default function GamesPage() {
     try {
       progressInterval = setInterval(async () => {
         try {
-          const res = await fetch(`/api/games/analysis-progress?gameId=${gameId}`);
+          const res = await fetch(`/api/games/analyze?gameId=${gameId}`);
           const d = await res.json();
-          if (d.progress) setAnalysisProgress(d.progress);
+          if (d.total > 0) setAnalysisProgress({ current: d.current, total: d.total });
         } catch {}
       }, 1000);
 
@@ -284,7 +284,7 @@ export default function GamesPage() {
                     View
                   </Link>
 
-                  {game.analysisCompleted ? (
+                  {game.result !== null && (game.analysisCompleted ? (
                     <>
                       <Link
                         href={`/games/${game.id}/analysis`}
@@ -315,9 +315,9 @@ export default function GamesPage() {
                         'Analyze'
                       )}
                     </button>
-                  )}
+                  ))}
 
-                  {gamesWithEntries.has(game.id) && (
+                  {game.result !== null && gamesWithEntries.has(game.id) && (
                     <>
                       <button
                         onClick={() => analyzeThinking(game.id)}
