@@ -53,15 +53,19 @@ export async function POST(request: NextRequest) {
       (e: any) => e.entryType === 'post_game_summary' && e.gameId === gameId
     );
     if (existing) {
-      return NextResponse.json({ error: 'Post-game summary already exists for this game' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'Post-game summary already exists for this game' },
+        { status: 409 }
+      );
     }
 
-    // Pull statistics from game_analyses if available
-    const gameAnalysis = db.game_analyses?.[gameId] || null;
-    const statistics = gameAnalysis ? computeStatistics(gameAnalysis) : null;
-
-    // Pull game metadata
     const game = db.games?.[gameId] || null;
+    const gameAnalysis = db.game_analyses?.[gameId] || null;
+    const username = db.settings?.chesscomUsername?.toLowerCase() || '';
+
+    const statistics = gameAnalysis
+      ? computeStatistics(gameAnalysis, username)
+      : null;
 
     const today = new Date().toISOString().split('T')[0];
 
@@ -72,7 +76,6 @@ export async function POST(request: NextRequest) {
       gameId,
       entryType: 'post_game_summary',
       content: reflections?.lessonsLearned || reflections?.whatWentWell || '',
-      // Post-game specific fields
       postGameSummary: {
         statistics,
         reflections: {
@@ -82,15 +85,16 @@ export async function POST(request: NextRequest) {
           nextSteps: reflections?.nextSteps || '',
         },
       },
-      // Game metadata snapshot for display
-	gameSnapshot: game ? {
-        opponent: game.opponent,
-        result: game.result,
-        date: game.date,
-        white: game.white,
-        black: game.black,
-        url: game.url || null,
-      } : null,
+      gameSnapshot: game
+        ? {
+            opponent: game.opponent,
+            result: game.result,
+            date: game.date,
+            white: game.white,
+            black: game.black,
+            url: game.url || null,
+          }
+        : null,
     };
 
     db.journal_entries.push(entry);
@@ -138,21 +142,39 @@ export async function PUT(request: NextRequest) {
   }
 }
 
-// Helper: derive summary statistics from raw game_analyses data
-function computeStatistics(gameAnalysis: any) {
+// Compute statistics for only the user's moves.
+//
+// game_analyses stores:
+//   whitePlayer, blackPlayer   — Chess.com usernames
+//   whiteAccuracy, blackAccuracy — per-side accuracy (0-100)
+//   moves[]                    — each move has { color: 'white'|'black', centipawnLoss, moveQuality }
+//
+// We match username against whitePlayer to determine the user's color,
+// then filter moves to only that color before counting mistakes.
+function computeStatistics(gameAnalysis: any, username: string) {
   if (!gameAnalysis?.moves) return null;
 
-  const moves: any[] = gameAnalysis.moves;
-  const totalMoves = moves.length;
+  // Determine which color the user played
+  const userColor: 'white' | 'black' =
+    gameAnalysis.whitePlayer?.toLowerCase() === username ? 'white' : 'black';
 
-  let blunders = 0;
-  let mistakes = 0;
-  let inaccuracies = 0;
-  let totalCentipawnLoss = 0;
-  let movesWithEval = 0;
+  // Pick the pre-computed per-side accuracy stored by the analyze route
+  const accuracy: number | null =
+    userColor === 'white'
+      ? gameAnalysis.whiteAccuracy ?? null
+      : gameAnalysis.blackAccuracy ?? null;
 
-  for (const move of moves) {
-    const quality = move.moveQuality || move.quality;
+  // Filter to only the user's moves
+  const userMoves: any[] = gameAnalysis.moves.filter(
+    (m: any) => m.color === userColor
+  );
+
+  const totalMoves = userMoves.length;
+  let blunders = 0, mistakes = 0, inaccuracies = 0;
+  let totalCentipawnLoss = 0, movesWithEval = 0;
+
+  for (const move of userMoves) {
+    const quality: string = move.moveQuality || move.quality || '';
     if (quality === 'blunder') blunders++;
     else if (quality === 'mistake') mistakes++;
     else if (quality === 'inaccuracy') inaccuracies++;
@@ -165,16 +187,6 @@ function computeStatistics(gameAnalysis: any) {
 
   const averageCentipawnLoss =
     movesWithEval > 0 ? Math.round(totalCentipawnLoss / movesWithEval) : null;
-
-  // Use pre-computed accuracy from the analysis if available
-  const accuracy =
-    gameAnalysis.accuracy ??
-    gameAnalysis.statistics?.accuracy ??
-    (totalMoves > 0
-      ? Math.round(
-          ((totalMoves - blunders * 3 - mistakes * 2 - inaccuracies) / totalMoves) * 100
-        )
-      : null);
 
   return {
     totalMoves,

@@ -50,7 +50,7 @@ function formatDate(dateStr: string): string {
 }
 
 export default function PostGameSummaryCard({ entry, onDelete }: PostGameSummaryCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [deleting, setDeleting] = useState(false);
 
   const summary = entry.postGameSummary;

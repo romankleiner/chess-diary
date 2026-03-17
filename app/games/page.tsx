@@ -8,12 +8,25 @@ interface Game {
   id: string;
   opponent: string;
   date: string;
-  result: string;
+  result: string | null;
   white: string;
   black: string;
   analysisCompleted?: boolean;
   analysisDepth?: number;
   analysisEngine?: string;
+}
+
+function getResultBadge(result: string | null): { label: string; className: string } | null {
+  switch (result?.toLowerCase()) {
+    case 'win':
+      return { label: 'Win', className: 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 border border-green-300 dark:border-green-700' };
+    case 'loss':
+      return { label: 'Loss', className: 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-700' };
+    case 'draw':
+      return { label: 'Draw', className: 'bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-200 border border-yellow-300 dark:border-yellow-700' };
+    default:
+      return null;
+  }
 }
 
 export default function GamesPage() {
@@ -45,20 +58,21 @@ export default function GamesPage() {
     try {
       const response = await fetch('/api/games');
       const data = await response.json();
-      setGames(data.games || []);
+      const loadedGames: Game[] = data.games || [];
+      setGames(loadedGames);
       console.log('[FRONTEND] Games reloaded');
 
       // Check which games already have post-game summaries
-      if (data.games?.length) {
+      if (loadedGames.length) {
         const summaryChecks = await Promise.allSettled(
-          data.games.map((g: Game) =>
+          loadedGames.map((g: Game) =>
             fetch(`/api/journal/post-game-summary?gameId=${g.id}`).then(r => r.json())
           )
         );
         const withSummaries = new Set<string>();
         summaryChecks.forEach((result, i) => {
           if (result.status === 'fulfilled' && result.value.summary) {
-            withSummaries.add(data.games[i].id);
+            withSummaries.add(loadedGames[i].id);
           }
         });
         setExistingSummaries(withSummaries);
@@ -72,7 +86,6 @@ export default function GamesPage() {
 
   useEffect(() => {
     loadGames();
-    // Load which games have journal entries
     fetch('/api/journal?startDate=2000-01-01&endDate=2099-12-31')
       .then(r => r.json())
       .then(data => {
@@ -140,28 +153,19 @@ export default function GamesPage() {
   const analyzeThinking = async (gameId: string) => {
     const game = games.find(g => g.id === gameId);
     if (!game?.analysisCompleted) {
-      if (!confirm('Engine analysis is required first. Would you like to run it now?')) {
-        return;
-      }
-      // Trigger engine analysis first
+      if (!confirm('Engine analysis is required first. Would you like to run it now?')) return;
       await analyzeGame(gameId);
       return;
     }
-
-    if (!confirm('This will analyze all your journal entries for this game using AI. Continue?')) {
-      return;
-    }
+    if (!confirm('This will analyze all your journal entries for this game using AI. Continue?')) return;
 
     setAnalyzingThinking(gameId);
-
     const response = await fetch('/api/games/analyze-thinking', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ gameId, reanalyzeEngine: false }),
     });
-
     const data = await response.json();
-
     if (data.success) {
       showToast(`🧠 AI analysis complete! ${data.entriesAnalyzed} entries analyzed.`);
     } else {
@@ -170,22 +174,20 @@ export default function GamesPage() {
     setAnalyzingThinking(null);
   };
 
-  // ── Open post-game summary form ───────────────────────────────────────
   const openPostGameSummary = (game: Game) => {
     setSummaryGameData({
       gameId: game.id,
       gameSnapshot: {
         opponent: game.opponent,
-        result: game.result,
+        result: game.result ?? '',
         date: game.date,
         white: game.white,
         black: game.black,
       },
-      statistics: null, // API will compute from game_analyses
+      statistics: null,
     });
     setShowSummaryForm(game.id);
   };
-  // ────────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -221,45 +223,60 @@ export default function GamesPage() {
         </p>
       ) : (
         <div className="space-y-4">
-          {games.map((game) => (
-            <div
-              key={game.id}
-              className="border rounded-lg p-4 hover:shadow-md transition-shadow dark:border-gray-700"
-            >
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-semibold">
-                      {game.white} vs {game.black}
-                    </h3>
-                    {game.analysisCompleted && (
-                      <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-0.5 rounded-full">
-                        ✓ Analyzed (depth {game.analysisDepth ?? '?'})
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {new Date(game.date).toLocaleDateString()} · Result: {game.result}
-                  </p>
-
-                  {/* Analysis progress bar */}
-                  {analyzing === game.id && analysisProgress && (
-                    <div className="mt-2">
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <span>Analyzing...</span>
-                        <span>{analysisProgress.current}/{analysisProgress.total} moves</span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
-                        <div
-                          className="bg-blue-500 h-2 rounded-full transition-all"
-                          style={{ width: `${(analysisProgress.current / analysisProgress.total) * 100}%` }}
-                        />
-                      </div>
+          {games.map((game) => {
+            const badge = getResultBadge(game.result);
+            return (
+              <div
+                key={game.id}
+                className="border rounded-lg p-4 hover:shadow-md transition-shadow dark:border-gray-700"
+              >
+                {/* Top row: result badge + game info */}
+                <div className="flex items-start gap-3">
+                  {badge ? (
+                    <div className={`shrink-0 mt-0.5 w-12 py-1 rounded-md text-xs font-bold text-center ${badge.className}`}>
+                      {badge.label}
+                    </div>
+                  ) : (
+                    <div className="shrink-0 mt-0.5 w-12 py-1 rounded-md text-xs font-bold text-center bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 border border-gray-200 dark:border-gray-600">
+                      —
                     </div>
                   )}
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base font-semibold">
+                        {game.white} vs {game.black}
+                      </h3>
+                      {game.analysisCompleted && (
+                        <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+                          ✓ Analyzed (depth {game.analysisDepth ?? '?'})
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                      {new Date(game.date).toLocaleDateString()}
+                    </p>
+                  </div>
                 </div>
 
-                <div className="flex gap-2 ml-4">
+                {/* Analysis progress bar */}
+                {analyzing === game.id && analysisProgress && (
+                  <div className="mt-2">
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <span>Analyzing...</span>
+                      <span>{analysisProgress.current}/{analysisProgress.total} moves</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                      <div
+                        className="bg-blue-500 h-2 rounded-full transition-all"
+                        style={{ width: `${(analysisProgress.current / analysisProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Bottom row: action buttons */}
+                <div className="flex flex-wrap gap-2 mt-3">
                   <Link
                     href={`/games/${game.id}`}
                     className="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300 dark:hover:bg-gray-600 text-sm"
@@ -317,7 +334,6 @@ export default function GamesPage() {
                         )}
                       </button>
 
-                      {/* ── Post-Game Summary button ── */}
                       {game.analysisCompleted && !existingSummaries.has(game.id) && (
                         <button
                           onClick={() => openPostGameSummary(game)}
@@ -334,17 +350,15 @@ export default function GamesPage() {
                           🏁 View Summary
                         </Link>
                       )}
-                      {/* ─────────────────────────── */}
                     </>
                   )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* ── Post-Game Summary modal ──────────────────────────────────────── */}
       {showSummaryForm && summaryGameData && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto">
@@ -366,7 +380,6 @@ export default function GamesPage() {
           </div>
         </div>
       )}
-      {/* ─────────────────────────────────────────────────────────────────── */}
     </div>
   );
 }

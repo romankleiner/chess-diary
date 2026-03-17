@@ -1,16 +1,15 @@
-Bug fixes:
-- Fix cloud AI analysis
-- Post-game summary isn't taking the right percentage or blunder/error count
-- Increase the entry text fields for post-game summary
+Minor:
 - Add export for post-game summary entries
+- Fix cloud AI analysis
 - Fix the diagram view
-- Optimise redis design to reduce network traffic. Only update the relevant key/values
 - Fix aspect ratio on export
+- Analysis progress no longer works
 
-Analysis:
+Mid:
 - Cloud analysis does not fully complete
 
-Features:
+Major:
+- Optimise redis design to reduce network traffic. Only update the relevant key/values
 - Add admin role and restrict restore and backup operations to it
 - Add detection of opening book during engine analysis
 - Add chess.com diary export

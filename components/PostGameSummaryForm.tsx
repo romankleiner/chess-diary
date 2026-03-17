@@ -185,7 +185,7 @@ export default function PostGameSummaryForm({
                 setReflections((prev) => ({ ...prev, [key]: e.target.value }))
               }
               placeholder={placeholder}
-              rows={2}
+              rows={5}
               className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-500 resize-none"
             />
           </div>
