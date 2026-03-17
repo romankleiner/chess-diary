@@ -1,11 +1,11 @@
 Minor:
-- Fix cloud AI analysis
 - Fix the diagram view
 - Fix aspect ratio on export
 - Analysis progress no longer works
 
 Mid:
 - Cloud analysis does not fully complete
+- Add progress bar to AI thinking analysis
 
 Major:
 - Optimise redis design to reduce network traffic. Only update the relevant key/values
@@ -13,3 +13,4 @@ Major:
 - Add detection of opening book during engine analysis
 - Add chess.com diary export
 - Show opponent's last move on the game diagram
+- Switch to an interactive board in diagrams?

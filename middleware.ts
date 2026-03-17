@@ -7,6 +7,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/backup/automated(.*)',
   '/api/admin/migrate-images(.*)',  // Allow migration endpoint (local dev only)
   '/api/admin/cleanup-images(.*)',
+  '/api/admin/clear-board-cache(.*)',
 ])
 
 export default clerkMiddleware(async (auth, request) => {

@@ -31,15 +31,16 @@ export async function getCachedBoardImage(
     console.log('[BOARD-CACHE] Cache miss:', cacheKey);
   }
   
-  // Generate image from chessboardimage.com
-  const apiUrl = `https://chessboardimage.com/${fenForRendering}.png`;
+  // Generate image from chessvision.ai
+  const fenActiveSide = fenParts[1] === 'b' ? 'black' : 'white';
+  const apiUrl = `https://fen2image.chessvision.ai/${fenParts[0]}?turn=${fenActiveSide}&pov=${pov}`;
   
-  console.log('[BOARD-CACHE] Fetching from chessboardimage.com:', apiUrl);
+  console.log('[BOARD-CACHE] Fetching from chessvision.ai:', apiUrl);
   
-  const response = await fetch(apiUrl);
+  const response = await fetch(apiUrl, { redirect: 'follow' });
   
   if (!response.ok) {
-    throw new Error(`Failed to fetch board image from chessboardimage.com: ${response.statusText}`);
+    throw new Error(`Failed to fetch board image from chessvision.ai: ${response.status} ${response.statusText}`);
   }
   
   const imageBuffer = await response.arrayBuffer();
