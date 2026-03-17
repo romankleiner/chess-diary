@@ -1,6 +1,5 @@
 Minor:
 - Fix aspect ratio on export
-- Analysis progress no longer works
 
 Mid:
 - Cloud analysis does not fully complete
