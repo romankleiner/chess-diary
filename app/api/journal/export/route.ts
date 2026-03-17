@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
           console.log(`[EXPORT] Processing entry ${entry.id} at ${new Date(entry.timestamp).toLocaleTimeString()}`);
           const game = entry.game;
           
-          if (game) {
+          if (game && entry.entryType !== 'post_game_summary') {
             // Game info
             docSections.push(
               new Paragraph({
@@ -113,9 +113,10 @@ export async function GET(request: NextRequest) {
           
           // Add chess diagram from FEN or cached images (BEFORE entry content)
           // Priority: 1) Check cached images, 2) Generate from FEN if available
+          // Skip for post-game summaries — they have no FEN or board position
           let usedFirstImageAsBoard = false;
           
-          if (entry.fen || entry.images?.length > 0) {
+          if (entry.entryType !== 'post_game_summary' && (entry.fen || entry.images?.length > 0)) {
             try {
               const { ImageRun } = await import('docx');
               let imageBuffer: Buffer | null = null;
@@ -222,32 +223,102 @@ export async function GET(request: NextRequest) {
             hour: '2-digit',
             minute: '2-digit'
           });
-          
-          docSections.push(
-            new Paragraph({
-              children: [
-                new TextRun({ text: `[${timestamp}] `, italics: true }),
-                new TextRun({ text: entry.content }),
-              ],
-              spacing: { after: 100 }
-            })
-          );
-          
-          if (entry.myMove) {
+
+          if (entry.entryType === 'post_game_summary') {
+            // ── Post-game summary ──────────────────────────────────────────
+            const pg = entry.postGameSummary;
+            const snap = entry.gameSnapshot;
+
+            // Header
+            const opponent = snap?.opponent || (game ? game.opponent : '');
+            const result = snap?.result || '';
+            const resultLabel = result ? `  ·  ${result.charAt(0).toUpperCase() + result.slice(1)}` : '';
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ text: `My Move: `, bold: true }),
-                  new TextRun({ text: entry.myMove }),
+                  new TextRun({ text: '🏁 Post-Game Summary', bold: true, size: 26, color: '1D4ED8' }),
+                  new TextRun({ text: opponent ? `  vs. ${opponent}${resultLabel}` : '', size: 24, color: '1D4ED8' }),
+                ],
+                spacing: { before: 200, after: 100 }
+              })
+            );
+
+            // Statistics
+            if (pg?.statistics) {
+              const s = pg.statistics;
+              const parts: string[] = [];
+              if (s.accuracy != null)            parts.push(`Accuracy: ${s.accuracy}%`);
+              if (s.totalMoves)                  parts.push(`Moves: ${s.totalMoves}`);
+              if (s.blunders != null)            parts.push(`Blunders: ${s.blunders}`);
+              if (s.mistakes != null)            parts.push(`Mistakes: ${s.mistakes}`);
+              if (s.inaccuracies != null)        parts.push(`Inaccuracies: ${s.inaccuracies}`);
+              if (s.averageCentipawnLoss != null) parts.push(`Avg CP Loss: ${s.averageCentipawnLoss}`);
+              if (parts.length) {
+                docSections.push(
+                  new Paragraph({
+                    children: [new TextRun({ text: parts.join('  ·  '), size: 20, color: '555555' })],
+                    spacing: { after: 120 }
+                  })
+                );
+              }
+            }
+
+            // Four reflection sections
+            const reflections = pg?.reflections || {};
+            const reflectionFields = [
+              { key: 'whatWentWell',   label: 'What Went Well' },
+              { key: 'mistakes',       label: 'Key Mistakes' },
+              { key: 'lessonsLearned', label: 'Lessons Learned' },
+              { key: 'nextSteps',      label: 'Next Steps' },
+            ] as const;
+            for (const { key, label } of reflectionFields) {
+              const text: string = (reflections as any)[key]?.trim();
+              if (!text) continue;
+              docSections.push(
+                new Paragraph({
+                  children: [new TextRun({ text: label, bold: true, size: 22 })],
+                  spacing: { before: 120, after: 40 }
+                })
+              );
+              const textLines = text.split('\n').filter((l: string) => l.trim());
+              textLines.forEach((line: string, li: number) => {
+                docSections.push(
+                  new Paragraph({
+                    children: [new TextRun({ text: line, size: 22 })],
+                    spacing: { after: li === textLines.length - 1 ? 120 : 40 }
+                  })
+                );
+              });
+            }
+          } else {
+            // ── Regular entry ──────────────────────────────────────────────
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `[${timestamp}] `, italics: true }),
+                  new TextRun({ text: entry.content }),
                 ],
                 spacing: { after: 100 }
               })
             );
+
+            if (entry.myMove) {
+              docSections.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: `My Move: `, bold: true }),
+                    new TextRun({ text: entry.myMove }),
+                  ],
+                  spacing: { after: 100 }
+                })
+              );
+            }
           }
           
           // Add additional user-uploaded images (if any beyond the first board image)
           // Skip first image only if we actually used it as a board diagram above
-          const entryImages = entry.images && entry.images.length > 0
+          // Not applicable to post-game summaries
+          const entryImages = entry.entryType !== 'post_game_summary' && entry.images && entry.images.length > 0
             ? (usedFirstImageAsBoard ? entry.images.slice(1) : entry.images)
             : [];
           
@@ -325,8 +396,8 @@ export async function GET(request: NextRequest) {
             }
           }
           
-          // Add post-review if present and enabled
-          if (includePostReviews && entry.postReview) {
+          // Add post-review and AI review only for regular entries (not post-game summaries)
+          if (includePostReviews && entry.postReview && entry.entryType !== 'post_game_summary') {
             const reviewDate = new Date(entry.postReview.timestamp);
             const entryDate = new Date(entry.timestamp);
             const daysDiff = Math.floor((reviewDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -386,8 +457,8 @@ export async function GET(request: NextRequest) {
             );
           }
           
-          // Add AI review if present and enabled
-          if (includePostReviews && entry.aiReview) {
+          // Add AI review if present and enabled (not for post-game summaries)
+          if (includePostReviews && entry.aiReview && entry.entryType !== 'post_game_summary') {
             // Add spacing before review
             docSections.push(new Paragraph({ spacing: { before: 200 } }));
             

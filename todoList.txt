@@ -1,5 +1,4 @@
 Minor:
-- Add export for post-game summary entries
 - Fix cloud AI analysis
 - Fix the diagram view
 - Fix aspect ratio on export
