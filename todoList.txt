@@ -1,8 +1,4 @@
-Minor:
-- Fix aspect ratio on export
-
 Mid:
-- Cloud analysis does not fully complete on max depth (18)
 - Add progress bar to AI thinking analysis
 
 Major:

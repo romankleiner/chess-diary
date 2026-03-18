@@ -114,14 +114,15 @@ export async function GET(request: NextRequest) {
           // Add chess diagram from FEN or cached images (BEFORE entry content)
           // Priority: 1) Check cached images, 2) Generate from FEN if available
           // Skip for post-game summaries — they have no FEN or board position
+          // Only use images[0] as board if entry actually has a FEN
           let usedFirstImageAsBoard = false;
           
-          if (entry.entryType !== 'post_game_summary' && (entry.fen || entry.images?.length > 0)) {
+          if (entry.entryType !== 'post_game_summary' && entry.fen) {
             try {
               const { ImageRun } = await import('docx');
               let imageBuffer: Buffer | null = null;
               
-              // Try cached images first
+              // Try cached board image first (images[0] is reserved for board diagrams)
               const cachedImage = entry.images?.[0];
               if (cachedImage) {
                 const base64Data = cachedImage.split(',')[1] || cachedImage;
@@ -340,13 +341,24 @@ export async function GET(request: NextRequest) {
                 let height = 300;
                 
                 try {
-                  // Try to detect if it's PNG or JPEG and get dimensions
                   if (imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50) {
-                    // PNG - dimensions at bytes 16-23
+                    // PNG — dimensions at bytes 16-23
                     width = imageBuffer.readUInt32BE(16);
                     height = imageBuffer.readUInt32BE(20);
                   } else if (imageBuffer[0] === 0xFF && imageBuffer[1] === 0xD8) {
-                    // JPEG - would need more complex parsing, use default
+                    // JPEG — scan for SOF0/SOF2 marker (0xFFC0 or 0xFFC2)
+                    let offset = 2;
+                    while (offset < imageBuffer.length - 8) {
+                      if (imageBuffer[offset] !== 0xFF) break;
+                      const marker = imageBuffer[offset + 1];
+                      const segLen = imageBuffer.readUInt16BE(offset + 2);
+                      if (marker === 0xC0 || marker === 0xC2) {
+                        height = imageBuffer.readUInt16BE(offset + 5);
+                        width = imageBuffer.readUInt16BE(offset + 7);
+                        break;
+                      }
+                      offset += 2 + segLen;
+                    }
                   }
                   
                   // Scale to max width of 500 while maintaining aspect ratio
@@ -357,7 +369,6 @@ export async function GET(request: NextRequest) {
                     width = maxWidth;
                   }
                 } catch (e) {
-                  // If detection fails, use default 400x300
                   console.log(`[EXPORT] Could not detect image dimensions, using default`);
                 }
                 

@@ -360,7 +360,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           moveNumber: moveNumber,
           color: isWhiteMove ? 'white' : 'black',
           move: move.san,
-          evaluation: evalAfter,
+          evaluation: evalAfter / 100, // store in pawn units to match cloud analysis
           bestMove: bestMove,
           principalVariation: principalVariation.length > 0 ? principalVariation : undefined,
           centipawnLoss: cpLoss,
