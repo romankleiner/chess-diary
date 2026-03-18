@@ -1,4 +1,6 @@
-Failing to fetch games
+Minor:
+  - Failing to fetch games
+  - Add links to chess.com game in both the post-game summary and the Word export
 
 Mid:
 - Add progress bar to AI thinking analysis
