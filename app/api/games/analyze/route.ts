@@ -416,7 +416,11 @@ export async function POST(request: NextRequest) {
     let result;
     
     if (IS_VERCEL) {
-      const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, 10);
+      // Batch size inversely proportional to depth to fit within 10s Vercel limit.
+      // Each move needs 2 chess-api.com calls; deeper analysis = slower calls.
+      // depth ≤10 → 5 moves/batch, depth ≤14 → 3, depth ≤18 → 2, higher → 1
+      const batchSize = depth <= 10 ? 5 : depth <= 14 ? 3 : depth <= 18 ? 2 : 1;
+      const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, batchSize);
       
       // Save progress
       if (!db.game_analyses) {

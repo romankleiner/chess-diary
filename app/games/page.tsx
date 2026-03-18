@@ -292,7 +292,7 @@ export default function GamesPage() {
                     View
                   </Link>
 
-                  {game.analysisCompleted ? (
+                  {game.result !== null && (game.analysisCompleted ? (
                     <>
                       <Link
                         href={`/games/${game.id}/analysis`}
@@ -323,9 +323,9 @@ export default function GamesPage() {
                         'Analyze'
                       )}
                     </button>
-                  )}
+                  ))}
 
-                  {gamesWithEntries.has(game.id) && (
+                  {game.result !== null && gamesWithEntries.has(game.id) && (
                     <>
                       <button
                         onClick={() => analyzeThinking(game.id)}
