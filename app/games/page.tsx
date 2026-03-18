@@ -128,18 +128,26 @@ export default function GamesPage() {
         } catch {}
       }, 1000);
 
-      const response = await fetch('/api/games/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameId }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        showToast(`✅ Analysis complete!`);
-        await loadGames();
-      } else {
-        alert(data.error || 'Analysis failed');
+      // Loop through batches until the server reports completed
+      let startMoveIndex = 0;
+      let completed = false;
+      while (!completed) {
+        const response = await fetch('/api/games/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameId, startMoveIndex }),
+        });
+        const data = await response.json();
+        if (!data.success) {
+          alert(data.error || 'Analysis failed');
+          return;
+        }
+        completed = data.completed;
+        startMoveIndex = data.nextMoveIndex ?? startMoveIndex;
       }
+
+      showToast(`✅ Analysis complete!`);
+      await loadGames();
     } catch (error) {
       console.error('[FRONTEND] Error analyzing game:', error);
       alert(`Failed to analyze game: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -284,7 +292,7 @@ export default function GamesPage() {
                     View
                   </Link>
 
-                  {game.result !== null && (game.analysisCompleted ? (
+                  {game.analysisCompleted ? (
                     <>
                       <Link
                         href={`/games/${game.id}/analysis`}
@@ -315,9 +323,9 @@ export default function GamesPage() {
                         'Analyze'
                       )}
                     </button>
-                  ))}
+                  )}
 
-                  {game.result !== null && gamesWithEntries.has(game.id) && (
+                  {gamesWithEntries.has(game.id) && (
                     <>
                       <button
                         onClick={() => analyzeThinking(game.id)}
