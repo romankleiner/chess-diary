@@ -98,11 +98,10 @@ export async function POST(request: NextRequest) {
           }
         }
         
-        // If we found move analysis, convert centipawn values to pawn units (divide by 100)
         if (moveAnalysis) {
           moveAnalysis = {
             ...moveAnalysis,
-            evaluation: moveAnalysis.evaluation / 100,
+            evaluation: moveAnalysis.evaluation ,
             evaluation_after: moveAnalysis.centipawnLoss !== undefined 
               ? (moveAnalysis.evaluation - moveAnalysis.centipawnLoss) / 100
               : undefined,

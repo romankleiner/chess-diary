@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fetchPlayerGames, fetchActiveGames, parseChessComGame } from '@/lib/chesscom';
 import getDb, { saveDb } from '@/lib/db';
 
-export async function GET(request: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const includeRecent = searchParams.get('includeRecent') === 'true';
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
     
     return NextResponse.json({ 
       success: true, 
-      count: uniqueGames.length, 
+      newGames: uniqueGames.length, 
       games: uniqueGames 
     });
   } catch (error) {
