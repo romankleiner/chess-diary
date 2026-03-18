@@ -37,9 +37,10 @@ export default function GamesPage() {
   const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number } | null>(null);
   const [toast, setToast] = useState<{ message: string; show: boolean }>({ message: '', show: false });
   const [analyzingThinking, setAnalyzingThinking] = useState<string | null>(null);
+  const [thinkingProgress, setThinkingProgress] = useState<{ current: number; total: number } | null>(null);
   const [gamesWithEntries, setGamesWithEntries] = useState<Set<string>>(new Set());
 
-  // ── Post-game summary state ──────────────────────────────────────────
+  // ── Post-game summary state ────────────────────────────────────────────
   const [showSummaryForm, setShowSummaryForm] = useState<string | null>(null);
   const [summaryGameData, setSummaryGameData] = useState<{
     gameId: string;
@@ -47,7 +48,7 @@ export default function GamesPage() {
     statistics: null;
   } | null>(null);
   const [existingSummaries, setExistingSummaries] = useState<Set<string>>(new Set());
-  // ────────────────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────────
 
   const showToast = (message: string) => {
     setToast({ message, show: true });
@@ -145,7 +146,6 @@ export default function GamesPage() {
         completed = data.completed;
         startMoveIndex = data.nextMoveIndex ?? startMoveIndex;
       }
-
       showToast(`✅ Analysis complete!`);
       await loadGames();
     } catch (error) {
@@ -168,18 +168,34 @@ export default function GamesPage() {
     if (!confirm('This will analyze all your journal entries for this game using AI. Continue?')) return;
 
     setAnalyzingThinking(gameId);
-    const response = await fetch('/api/games/analyze-thinking', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gameId, reanalyzeEngine: false }),
-    });
-    const data = await response.json();
-    if (data.success) {
-      showToast(`🧠 AI analysis complete! ${data.entriesAnalyzed} entries analyzed.`);
-    } else {
-      alert(data.error || 'Analysis failed');
+    setThinkingProgress(null);
+
+    try {
+      let entryIndex = 0;
+      let completed = false;
+      while (!completed) {
+        const response = await fetch('/api/games/analyze-thinking', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameId, reanalyzeEngine: false, entryIndex }),
+        });
+        const data = await response.json();
+        if (!data.success) {
+          alert(data.error || 'Analysis failed');
+          return;
+        }
+        // Update progress directly from the POST response — no polling needed
+        setThinkingProgress({ current: data.entriesAnalyzed, total: data.totalEntries });
+        completed = data.completed;
+        entryIndex = data.nextEntryIndex ?? entryIndex + 1;
+      }
+      showToast(`🧠 AI analysis complete!`);
+    } catch (error) {
+      alert(`Failed to analyze thinking: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setAnalyzingThinking(null);
+      setThinkingProgress(null);
     }
-    setAnalyzingThinking(null);
   };
 
   const openPostGameSummary = (game: Game) => {
@@ -249,7 +265,6 @@ export default function GamesPage() {
                       —
                     </div>
                   )}
-
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-base font-semibold">
@@ -283,6 +298,34 @@ export default function GamesPage() {
                   </div>
                 )}
 
+                {/* AI Thinking progress bar */}
+                {analyzingThinking === game.id && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
+                      <span>AI analyzing entries...</span>
+                      {thinkingProgress && thinkingProgress.total > 0 ? (
+                        <span>{thinkingProgress.current}/{thinkingProgress.total} entries</span>
+                      ) : (
+                        <span>Starting...</span>
+                      )}
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-1 overflow-hidden">
+                      <div
+                        className={`h-2 rounded-full transition-all duration-500 ${
+                          thinkingProgress && thinkingProgress.total > 0
+                            ? 'bg-cyan-500'
+                            : 'bg-cyan-400 animate-pulse'
+                        }`}
+                        style={{
+                          width: thinkingProgress && thinkingProgress.total > 0
+                            ? `${Math.max(4, (thinkingProgress.current / thinkingProgress.total) * 100)}%`
+                            : '100%',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {/* Bottom row: action buttons */}
                 <div className="flex flex-wrap gap-2 mt-3">
                   <Link
@@ -291,7 +334,6 @@ export default function GamesPage() {
                   >
                     View
                   </Link>
-
                   {game.result !== null && (game.analysisCompleted ? (
                     <>
                       <Link
@@ -324,7 +366,6 @@ export default function GamesPage() {
                       )}
                     </button>
                   ))}
-
                   {game.result !== null && gamesWithEntries.has(game.id) && (
                     <>
                       <button
@@ -341,7 +382,6 @@ export default function GamesPage() {
                           '🧠 Analyze Thinking'
                         )}
                       </button>
-
                       {game.analysisCompleted && !existingSummaries.has(game.id) && (
                         <button
                           onClick={() => openPostGameSummary(game)}

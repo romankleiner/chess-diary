@@ -1,9 +1,7 @@
 Minor:
-  - In AI generated entries, the eval now shows 0.00 or -0.01. Probably divided by 100 incorrectly.
   - Add links to chess.com game in both the post-game summary and the Word export
 
 Mid:
-- Add progress bar to AI thinking analysis
 
 Major:
 - Optimise redis design to reduce network traffic. Only update the relevant key/values
