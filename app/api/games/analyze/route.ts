@@ -99,8 +99,8 @@ async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score
     const data = await response.json();
     
     if (data.eval !== undefined) {
-      // chess-api.com returns eval in pawn units (e.g. 0.7 = 70 centipawns)
-      // Multiply by 100 to convert to centipawns for consistent arithmetic
+      // chess-api.com returns eval in pawn units, always from white's perspective
+      // (positive = white winning). Convert to centipawns.
       const cpScore = data.eval * 100;
       const bestMove = data.move || '';
       
@@ -203,20 +203,21 @@ async function analyzeGameChessApiBatched(
         continue;
       }
       
-      // Convert to white's perspective (still in centipawns)
-      let evalBeforeWhite = isWhiteMove ? evalBefore.score : -evalBefore.score;
-      let evalAfterWhite = isWhiteMove ? -evalAfter.score : evalAfter.score;
-      
-      // Calculate CP loss in centipawns
+      // chess-api.com always returns eval from white's perspective.
+      // evalBefore and evalAfter are both in centipawns, white-POV.
+      const evalBeforeWhite = evalBefore.score;
+      const evalAfterWhite = evalAfter.score;
+
+      // CP loss: how much the eval dropped for the side that just moved
       let cpLoss = 0;
       if (isWhiteMove) {
-        cpLoss = evalBeforeWhite - evalAfterWhite;
+        cpLoss = evalBeforeWhite - evalAfterWhite; // white wants eval to go up
       } else {
-        cpLoss = evalAfterWhite - evalBeforeWhite;
+        cpLoss = evalAfterWhite - evalBeforeWhite; // black wants eval to go down
       }
       cpLoss = Math.max(0, Math.round(cpLoss));
-      
-      // Convert evaluation to pawn units for display (divide by 100)
+
+      // Store evaluation in pawn units for display
       const evalAfterPawns = Math.round(evalAfterWhite) / 100;
       
       // Add all moves to accuracy calculation
