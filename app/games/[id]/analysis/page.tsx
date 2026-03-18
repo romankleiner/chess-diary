@@ -84,13 +84,13 @@ export default function GameAnalysisPage() {
   };
 
   const formatEval = (evaluation: number) => {
-    if (Math.abs(evaluation) >= 10000) {
+    if (Math.abs(evaluation) >= 100) {
       // Mate score
       const mateIn = evaluation > 0 ? '+M' : '-M';
       return mateIn;
     }
-    // Centipawn score - convert to pawns
-    const pawns = (evaluation / 100).toFixed(2);
+    // Already in pawn units
+    const pawns = evaluation.toFixed(2);
     return evaluation > 0 ? `+${pawns}` : pawns;
   };
 
