@@ -99,7 +99,9 @@ async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score
     const data = await response.json();
     
     if (data.eval !== undefined) {
-      const cpScore = data.eval;
+      // chess-api.com returns eval in pawn units (e.g. 0.7 = 70 centipawns)
+      // Multiply by 100 to convert to centipawns for consistent arithmetic
+      const cpScore = data.eval * 100;
       const bestMove = data.move || '';
       
       // Normalize PV to array
@@ -201,22 +203,21 @@ async function analyzeGameChessApiBatched(
         continue;
       }
       
-      // Convert to white's perspective
+      // Convert to white's perspective (still in centipawns)
       let evalBeforeWhite = isWhiteMove ? evalBefore.score : -evalBefore.score;
       let evalAfterWhite = isWhiteMove ? -evalAfter.score : evalAfter.score;
       
-      // Round to 1 decimal place to avoid floating point ugliness
-      evalBeforeWhite = Math.round(evalBeforeWhite * 10) / 10;
-      evalAfterWhite = Math.round(evalAfterWhite * 10) / 10;
-      
-      // Calculate CP loss
+      // Calculate CP loss in centipawns
       let cpLoss = 0;
       if (isWhiteMove) {
         cpLoss = evalBeforeWhite - evalAfterWhite;
       } else {
         cpLoss = evalAfterWhite - evalBeforeWhite;
       }
-      cpLoss = Math.max(0, Math.round(cpLoss * 10) / 10);
+      cpLoss = Math.max(0, Math.round(cpLoss));
+      
+      // Convert evaluation to pawn units for display (divide by 100)
+      const evalAfterPawns = Math.round(evalAfterWhite) / 100;
       
       // Add all moves to accuracy calculation
       if (isWhiteMove) {
@@ -231,7 +232,7 @@ async function analyzeGameChessApiBatched(
         moveNumber: moveNumber,
         color: isWhiteMove ? 'white' : 'black',
         move: move.san,
-        evaluation: evalAfterWhite,
+        evaluation: evalAfterPawns,
         bestMove: evalBefore.bestMove,
         principalVariation: evalBefore.pv && evalBefore.pv.length > 0 ? evalBefore.pv.slice(0, 5) : undefined,
         centipawnLoss: cpLoss,
