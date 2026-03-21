@@ -1,5 +1,6 @@
 Minor:
-  - Add links to chess.com game in both the post-game summary and the Word export
+- Add links to chess.com game in both the post-game summary and the Word export
+- ≤25 CP loss should show Excellent, but .25 shows Good in analysis
 
 Mid:
 
