@@ -1,5 +1,5 @@
 Minor:
-  - Add links to chess.com game in both the post-game summary and the Word export
+  - 
 
 Mid:
 

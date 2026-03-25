@@ -9,16 +9,16 @@ export async function GET(request: NextRequest) {
     const format = searchParams.get('format') || 'json'; // json or docx
     const username = searchParams.get('username') || '';
     const includePostReviews = searchParams.get('includePostReviews') !== 'false'; // Default true
-    
+
     if (!endDate) {
       return NextResponse.json(
         { error: 'Missing endDate parameter' },
         { status: 400 }
       );
     }
-    
+
     const db = await getDb();
-    
+
     // Get all entries within date range, sorted chronologically (oldest first)
     const entries = db.journal_entries
       .filter(e => e.date >= startDate && e.date <= endDate)
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
         if (dateCompare !== 0) return dateCompare;
         return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
       });
-    
+
     // Group by date
     const groupedByDate: Record<string, any[]> = {};
     entries.forEach(entry => {
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       }
       groupedByDate[entry.date].push(entry);
     });
-    
+
     const groupedData = Object.keys(groupedByDate).sort().map(date => ({
       date,
       entries: groupedByDate[date].map(entry => {
@@ -47,14 +47,14 @@ export async function GET(request: NextRequest) {
         };
       })
     }));
-    
+
     if (format === 'docx') {
       // Generate Word document in-memory using docx library
-      const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import('docx');
-      
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink } = await import('docx');
+
       // Track processed entries to prevent duplicates
       const processedEntryIds = new Set<number>();
-      
+
       // Create document sections
       const docSections: any[] = [
         new Paragraph({
@@ -67,25 +67,25 @@ export async function GET(request: NextRequest) {
         }),
         new Paragraph({ text: '' }), // Empty line
       ];
-      
+
       // Add entries by date
       for (const { date, entries: dateEntries } of groupedData) {
         console.log(`[EXPORT] Processing date: ${date} with ${dateEntries.length} entries`);
-        
+
         // Date header
         docSections.push(
           new Paragraph({
-            text: new Date(date).toLocaleDateString('en-US', { 
-              weekday: 'long', 
-              year: 'numeric', 
-              month: 'long', 
-              day: 'numeric' 
+            text: new Date(date).toLocaleDateString('en-US', {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric'
             }),
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 }
           })
         );
-        
+
         // Add each entry
         for (const entry of dateEntries) {
           // Skip if already processed
@@ -94,10 +94,11 @@ export async function GET(request: NextRequest) {
             continue;
           }
           processedEntryIds.add(entry.id);
-          
+
           console.log(`[EXPORT] Processing entry ${entry.id} at ${new Date(entry.timestamp).toLocaleTimeString()}`);
+
           const game = entry.game;
-          
+
           if (game && entry.entryType !== 'post_game_summary') {
             // Game info
             docSections.push(
@@ -110,18 +111,17 @@ export async function GET(request: NextRequest) {
               })
             );
           }
-          
+
           // Add chess diagram from FEN or cached images (BEFORE entry content)
           // Priority: 1) Check cached images, 2) Generate from FEN if available
           // Skip for post-game summaries — they have no FEN or board position
           // Only use images[0] as board if entry actually has a FEN
           let usedFirstImageAsBoard = false;
-          
           if (entry.entryType !== 'post_game_summary' && entry.fen) {
             try {
               const { ImageRun } = await import('docx');
               let imageBuffer: Buffer | null = null;
-              
+
               // Try cached board image first (images[0] is reserved for board diagrams)
               const cachedImage = entry.images?.[0];
               if (cachedImage) {
@@ -129,11 +129,11 @@ export async function GET(request: NextRequest) {
                 imageBuffer = Buffer.from(base64Data, 'base64');
                 usedFirstImageAsBoard = true; // Mark that we used images[0]
                 console.log(`[EXPORT] Entry ${entry.id}: Using cached board image`);
-              } 
+              }
               // Generate from FEN if no cached image but FEN exists
               else if (entry.fen) {
                 console.log(`[EXPORT] Entry ${entry.id}: Generating board from FEN: ${entry.fen}`);
-                
+
                 // Determine POV (point of view) - which side the user is playing
                 let pov = 'white'; // default
                 if (game && username) {
@@ -142,21 +142,19 @@ export async function GET(request: NextRequest) {
                     pov = 'black';
                   }
                 }
-                
+
                 const boardUrl = `${request.nextUrl.origin}/api/board-image?fen=${encodeURIComponent(entry.fen)}&pov=${pov}`;
                 console.log(`[EXPORT] Fetching: ${boardUrl}`);
-                
                 const boardResponse = await fetch(boardUrl);
-                
                 if (boardResponse.ok) {
                   const arrayBuffer = await boardResponse.arrayBuffer();
                   imageBuffer = Buffer.from(arrayBuffer);
-                  
+
                   // Cache the generated image back to the entry for future exports
                   // Convert to base64 data URL
                   const base64 = imageBuffer.toString('base64');
                   const dataUrl = `data:image/png;base64,${base64}`;
-                  
+
                   // Find and update the ORIGINAL entry in db.journal_entries
                   const originalEntry = db.journal_entries.find(e => e.id === entry.id);
                   if (originalEntry) {
@@ -172,7 +170,7 @@ export async function GET(request: NextRequest) {
                   console.error(`[EXPORT] Entry ${entry.id}: Failed to generate board - ${boardResponse.status}: ${errorText}`);
                 }
               }
-              
+
               // Add image to document if we have one
               if (imageBuffer) {
                 try {
@@ -218,7 +216,7 @@ export async function GET(request: NextRequest) {
               );
             }
           }
-          
+
           // Entry content (AFTER chess diagram)
           const timestamp = new Date(entry.timestamp).toLocaleTimeString('en-US', {
             hour: '2-digit',
@@ -226,38 +224,61 @@ export async function GET(request: NextRequest) {
           });
 
           if (entry.entryType === 'post_game_summary') {
-            // ── Post-game summary ──────────────────────────────────────────
+            // ── Post-game summary ──────────────────────────────────────────────
             const pg = entry.postGameSummary;
             const snap = entry.gameSnapshot;
 
             // Header
             const opponent = snap?.opponent || (game ? game.opponent : '');
             const result = snap?.result || '';
-            const resultLabel = result ? `  ·  ${result.charAt(0).toUpperCase() + result.slice(1)}` : '';
+            const resultLabel = result ? ` · ${result.charAt(0).toUpperCase() + result.slice(1)}` : '';
             docSections.push(
               new Paragraph({
                 children: [
                   new TextRun({ text: '🏁 Post-Game Summary', bold: true, size: 26, color: '1D4ED8' }),
-                  new TextRun({ text: opponent ? `  vs. ${opponent}${resultLabel}` : '', size: 24, color: '1D4ED8' }),
+                  new TextRun({ text: opponent ? ` vs. ${opponent}${resultLabel}` : '', size: 24, color: '1D4ED8' }),
                 ],
                 spacing: { before: 200, after: 100 }
               })
             );
 
+            // Chess.com link
+            const chessUrl = snap?.url || (game ? game.url : null);
+            if (chessUrl) {
+              docSections.push(
+                new Paragraph({
+                  children: [
+                    new ExternalHyperlink({
+                      link: chessUrl,
+                      children: [
+                        new TextRun({
+                          text: '♟ View on Chess.com',
+                          color: '2563EB',
+                          underline: {},
+                          size: 20,
+                        }),
+                      ],
+                    }),
+                  ],
+                  spacing: { after: 120 },
+                })
+              );
+            }
+
             // Statistics
             if (pg?.statistics) {
               const s = pg.statistics;
               const parts: string[] = [];
-              if (s.accuracy != null)            parts.push(`Accuracy: ${s.accuracy}%`);
-              if (s.totalMoves)                  parts.push(`Moves: ${s.totalMoves}`);
-              if (s.blunders != null)            parts.push(`Blunders: ${s.blunders}`);
-              if (s.mistakes != null)            parts.push(`Mistakes: ${s.mistakes}`);
-              if (s.inaccuracies != null)        parts.push(`Inaccuracies: ${s.inaccuracies}`);
+              if (s.accuracy != null) parts.push(`Accuracy: ${s.accuracy}%`);
+              if (s.totalMoves) parts.push(`Moves: ${s.totalMoves}`);
+              if (s.blunders != null) parts.push(`Blunders: ${s.blunders}`);
+              if (s.mistakes != null) parts.push(`Mistakes: ${s.mistakes}`);
+              if (s.inaccuracies != null) parts.push(`Inaccuracies: ${s.inaccuracies}`);
               if (s.averageCentipawnLoss != null) parts.push(`Avg CP Loss: ${s.averageCentipawnLoss}`);
               if (parts.length) {
                 docSections.push(
                   new Paragraph({
-                    children: [new TextRun({ text: parts.join('  ·  '), size: 20, color: '555555' })],
+                    children: [new TextRun({ text: parts.join(' · '), size: 20, color: '555555' })],
                     spacing: { after: 120 }
                   })
                 );
@@ -267,11 +288,12 @@ export async function GET(request: NextRequest) {
             // Four reflection sections
             const reflections = pg?.reflections || {};
             const reflectionFields = [
-              { key: 'whatWentWell',   label: 'What Went Well' },
-              { key: 'mistakes',       label: 'Key Mistakes' },
+              { key: 'whatWentWell', label: 'What Went Well' },
+              { key: 'mistakes',     label: 'Key Mistakes' },
               { key: 'lessonsLearned', label: 'Lessons Learned' },
-              { key: 'nextSteps',      label: 'Next Steps' },
+              { key: 'nextSteps',    label: 'Next Steps' },
             ] as const;
+
             for (const { key, label } of reflectionFields) {
               const text: string = (reflections as any)[key]?.trim();
               if (!text) continue;
@@ -291,8 +313,9 @@ export async function GET(request: NextRequest) {
                 );
               });
             }
+
           } else {
-            // ── Regular entry ──────────────────────────────────────────────
+            // ── Regular entry ──────────────────────────────────────────────────
             docSections.push(
               new Paragraph({
                 children: [
@@ -315,31 +338,29 @@ export async function GET(request: NextRequest) {
               );
             }
           }
-          
+
           // Add additional user-uploaded images (if any beyond the first board image)
           // Skip first image only if we actually used it as a board diagram above
           // Not applicable to post-game summaries
-          const entryImages = entry.entryType !== 'post_game_summary' && entry.images && entry.images.length > 0
-            ? (usedFirstImageAsBoard ? entry.images.slice(1) : entry.images)
-            : [];
-          
+          const entryImages =
+            entry.entryType !== 'post_game_summary' && entry.images && entry.images.length > 0
+              ? (usedFirstImageAsBoard ? entry.images.slice(1) : entry.images)
+              : [];
+
           console.log(`[EXPORT] Entry ${entry.id}: Found ${entryImages.length} additional user image(s) (usedFirstImageAsBoard: ${usedFirstImageAsBoard})`);
-          
+
           if (entryImages.length > 0) {
             try {
               const { ImageRun } = await import('docx');
-              
               for (const [index, img] of entryImages.entries()) {
                 // Remove data URL prefix
                 const base64Data = img.split(',')[1] || img;
                 const imageBuffer = Buffer.from(base64Data, 'base64');
-                
                 console.log(`[EXPORT] Adding image ${index + 1}/${entryImages.length} - size: ${imageBuffer.length} bytes`);
-                
+
                 // Detect image dimensions to maintain aspect ratio
                 let width = 400;
                 let height = 300;
-                
                 try {
                   if (imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50) {
                     // PNG — dimensions at bytes 16-23
@@ -360,7 +381,6 @@ export async function GET(request: NextRequest) {
                       offset += 2 + segLen;
                     }
                   }
-                  
                   // Scale to max width of 500 while maintaining aspect ratio
                   const maxWidth = 500;
                   if (width > maxWidth) {
@@ -371,7 +391,7 @@ export async function GET(request: NextRequest) {
                 } catch (e) {
                   console.log(`[EXPORT] Could not detect image dimensions, using default`);
                 }
-                
+
                 try {
                   docSections.push(
                     new Paragraph({
@@ -395,7 +415,6 @@ export async function GET(request: NextRequest) {
               console.log(`[EXPORT] Successfully added ${entryImages.length} image(s) to entry ${entry.id}`);
             } catch (error) {
               console.error('[EXPORT] Error adding images to document:', error);
-              // Add a note that images couldn't be included
               docSections.push(
                 new Paragraph({
                   children: [
@@ -406,60 +425,45 @@ export async function GET(request: NextRequest) {
               );
             }
           }
-          
+
           // Add post-review and AI review only for regular entries (not post-game summaries)
           if (includePostReviews && entry.postReview && entry.entryType !== 'post_game_summary') {
             const reviewDate = new Date(entry.postReview.timestamp);
             const entryDate = new Date(entry.timestamp);
             const daysDiff = Math.floor((reviewDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
-            const timeLabel = daysDiff === 0 ? 'same day' : 
-                            daysDiff === 1 ? '1 day after game' : 
-                            `${daysDiff} days after game`;
-            
+            const timeLabel =
+              daysDiff === 0 ? 'same day' :
+              daysDiff === 1 ? '1 day after game' :
+              `${daysDiff} days after game`;
+
             // Add spacing before review
             docSections.push(new Paragraph({ spacing: { before: 200 } }));
-            
+
             // Add post-review as indented paragraphs with background shading
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ 
-                    text: '📝 POST-GAME REVIEW', 
-                    bold: true, 
-                    color: '92400E',
-                    size: 24
-                  })
+                  new TextRun({ text: '📝 POST-GAME REVIEW', bold: true, color: '92400E', size: 24 })
                 ],
                 shading: { fill: 'FEF3C7' },
                 indent: { left: 720 },
                 spacing: { after: 50 }
               })
             );
-            
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ 
-                    text: `Added ${timeLabel}`, 
-                    italics: true, 
-                    color: '92400E',
-                    size: 20
-                  })
+                  new TextRun({ text: `Added ${timeLabel}`, italics: true, color: '92400E', size: 20 })
                 ],
                 shading: { fill: 'FEF3C7' },
                 indent: { left: 720 },
                 spacing: { after: 100 }
               })
             );
-            
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ 
-                    text: entry.postReview.content, 
-                    italics: true,
-                    color: '1F2937'
-                  })
+                  new TextRun({ text: entry.postReview.content, italics: true, color: '1F2937' })
                 ],
                 shading: { fill: 'FEF3C7' },
                 indent: { left: 720 },
@@ -467,47 +471,39 @@ export async function GET(request: NextRequest) {
               })
             );
           }
-          
+
           // Add AI review if present and enabled (not for post-game summaries)
           if (includePostReviews && entry.aiReview && entry.entryType !== 'post_game_summary') {
             // Add spacing before review
             docSections.push(new Paragraph({ spacing: { before: 200 } }));
-            
+
             // Add AI review with cyan shading
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ 
-                    text: '🤖 AI ANALYSIS', 
-                    bold: true, 
-                    color: '0E7490',
-                    size: 24
-                  })
+                  new TextRun({ text: '🤖 AI ANALYSIS', bold: true, color: '0E7490', size: 24 })
                 ],
                 shading: { fill: 'CFFAFE' },
                 indent: { left: 720 },
                 spacing: { after: 50 }
               })
             );
-            
+
             // Add model info
-            const modelName = entry.aiReview.model ? entry.aiReview.model.replace('claude-', '').replace(/-/g, ' ') : 'AI';
+            const modelName = entry.aiReview.model
+              ? entry.aiReview.model.replace('claude-', '').replace(/-/g, ' ')
+              : 'AI';
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ 
-                    text: `Model: ${modelName}`, 
-                    italics: true, 
-                    color: '0E7490',
-                    size: 20
-                  })
+                  new TextRun({ text: `Model: ${modelName}`, italics: true, color: '0E7490', size: 20 })
                 ],
                 shading: { fill: 'CFFAFE' },
                 indent: { left: 720 },
                 spacing: { after: 100 }
               })
             );
-            
+
             // Split AI review content by newlines and create separate paragraphs
             const aiParagraphs = entry.aiReview.content.split('\n').filter((p: string) => p.trim());
             for (let i = 0; i < aiParagraphs.length; i++) {
@@ -515,23 +511,18 @@ export async function GET(request: NextRequest) {
               docSections.push(
                 new Paragraph({
                   children: [
-                    new TextRun({ 
-                      text: paragraph.trim(), 
-                      color: '1F2937'
-                    })
+                    new TextRun({ text: paragraph.trim(), color: '1F2937' })
                   ],
                   shading: { fill: 'CFFAFE' },
                   indent: { left: 720 },
-                  spacing: { 
-                    after: i === aiParagraphs.length - 1 ? 200 : 100 
-                  }
+                  spacing: { after: i === aiParagraphs.length - 1 ? 200 : 100 }
                 })
               );
             }
           }
         }
       }
-      
+
       // Try to save cached board images back to database (optional)
       // If Redis is full, we log but don't fail the export
       try {
@@ -539,23 +530,20 @@ export async function GET(request: NextRequest) {
         console.log('[EXPORT] Saved cached board images to database');
       } catch (saveError) {
         // Silently continue - export still works, images just won't be cached
-        console.warn('[EXPORT] Could not cache images (Redis may be full):', 
-          saveError instanceof Error ? saveError.message : String(saveError));
+        console.warn('[EXPORT] Could not cache images (Redis may be full):', saveError instanceof Error ? saveError.message : String(saveError));
       }
-      
+
       console.log(`[EXPORT] Total document sections: ${docSections.length}`);
       console.log(`[EXPORT] Processed ${processedEntryIds.size} unique entries`);
-      
+
       // Create document
       const doc = new Document({
-        sections: [{
-          children: docSections
-        }]
+        sections: [{ children: docSections }]
       });
-      
+
       // Generate buffer
       const buffer = await Packer.toBuffer(doc);
-      
+
       return new NextResponse(new Uint8Array(buffer), {
         headers: {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -563,15 +551,16 @@ export async function GET(request: NextRequest) {
         }
       });
     }
-    
+
     // Return JSON for client-side text export
-    return NextResponse.json({ 
+    return NextResponse.json({
       entries: entries.map(entry => ({
         ...entry,
         game: entry.gameId ? db.games[entry.gameId] : null
       })),
       groupedByDate: groupedData
     });
+
   } catch (error) {
     console.error('Error exporting journal:', error);
     return NextResponse.json(
