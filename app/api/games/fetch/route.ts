@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchPlayerGames, fetchActiveGames, parseChessComGame } from '@/lib/chesscom';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveGames } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
       };
     }
     
-    await saveDb(db);
+    await saveGames(db.games);
     
     return NextResponse.json({ 
       success: true, 

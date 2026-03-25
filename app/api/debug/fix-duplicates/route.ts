@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveJournal } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   // Only allow in development
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     const removedCount = db.journal_entries.length - fixedEntries.length;
     
     db.journal_entries = fixedEntries;
-    await saveDb(db);
+    await saveJournal(db.journal_entries);
     
     return NextResponse.json({
       success: true,

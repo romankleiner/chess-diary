@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveJournal } from '@/lib/db';
 
 // POST /api/debug/migrate-images - Convert legacy single images to arrays
 // PROTECTED: Only accessible in development mode
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     
     if (migratedCount > 0 || migrated.length > 0) {
       console.log(`[MIGRATE] Saving ${migratedCount} migrated entries...`);
-      await saveDb(db);
+      await saveJournal(db.journal_entries);
       console.log('[MIGRATE] Migration complete');
     }
     

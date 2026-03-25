@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveJournal } from '@/lib/db';
 
 function getLocalTimestamp(): string {
   const now = new Date();
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     };
 
     db.journal_entries.push(entry);
-    await saveDb(db);
+    await saveJournal(db.journal_entries);
 
     return NextResponse.json({ success: true, entry });
   } catch (error) {
@@ -133,7 +133,7 @@ export async function PUT(request: NextRequest) {
       reflections?.whatWentWell ||
       db.journal_entries[entryIndex].content;
 
-    await saveDb(db);
+    await saveJournal(db.journal_entries);
 
     return NextResponse.json({ success: true, entry: db.journal_entries[entryIndex] });
   } catch (error) {

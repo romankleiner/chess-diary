@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveJournal } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -526,8 +526,8 @@ export async function GET(request: NextRequest) {
       // Try to save cached board images back to database (optional)
       // If Redis is full, we log but don't fail the export
       try {
-        await saveDb(db);
-        console.log('[EXPORT] Saved cached board images to database');
+        await saveJournal(db.journal_entries);
+        console.log('[EXPORT] Saved cached board images to journal');
       } catch (saveError) {
         // Silently continue - export still works, images just won't be cached
         console.warn('[EXPORT] Could not cache images (Redis may be full):', saveError instanceof Error ? saveError.message : String(saveError));

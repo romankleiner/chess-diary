@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveJournal } from '@/lib/db';
 
 // One-off route to clear ALL cached board images from journal entries,
 // whether stored as base64 data URLs or Vercel Blob URLs.
@@ -31,7 +31,7 @@ export async function GET() {
     }
   }
 
-  await saveDb(db);
+  await saveJournal(db.journal_entries);
 
   return NextResponse.json({
     success: true,

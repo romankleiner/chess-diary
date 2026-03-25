@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveJournal } from '@/lib/db';
 
 // GET endpoint to check AI thinking analysis progress
 export async function GET(request: NextRequest) {
@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     // Clean up stale progress (older than 10 minutes)
     if (Date.now() - progress.timestamp > 600000) {
       delete db.thinking_progress[gameId];
-      saveDb(db).catch(() => {});
+      // Note: thinking_progress is in-memory only, no persistence needed
       return NextResponse.json({ current: 0, total: 0 });
     }
     return NextResponse.json({ current: progress.current, total: progress.total });
@@ -223,8 +223,8 @@ export async function POST(request: NextRequest) {
       console.error(`[AI-ANALYSIS] Error analyzing entry ${entry.id}:`, error);
     }
 
-    // Save updated entries
-    await saveDb(db);
+    // Save updated entries (only journal was modified with aiReview)
+    await saveJournal(db.journal_entries);
 
     const completed = entryIndex + 1 >= gameEntries.length;
 

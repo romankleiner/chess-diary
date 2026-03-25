@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveJournal } from '@/lib/db';
 
 // PUT /api/journal/[id] - Update an existing journal entry
 export async function PUT(
@@ -28,7 +28,7 @@ export async function PUT(
     if (body.postReview !== undefined) entry.postReview = body.postReview;
     if (body.aiReview !== undefined) entry.aiReview = body.aiReview;
     
-    await saveDb(db);
+    await saveJournal(db.journal_entries);
     
     return NextResponse.json({
       success: true,
@@ -63,7 +63,7 @@ export async function DELETE(
     }
     
     db.journal_entries.splice(entryIndex, 1);
-    await saveDb(db);
+    await saveJournal(db.journal_entries);
     
     return NextResponse.json({ success: true });
   } catch (error) {

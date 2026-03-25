@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveAnalyses, saveGames, saveProgress } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
 
 // Detect if running on Vercel
@@ -14,8 +14,7 @@ export async function setProgress(gameId: string, current: number, total: number
       db.analysis_progress = {};
     }
     db.analysis_progress[gameId] = { current, total, timestamp: Date.now() };
-    // AWAIT saveDb to ensure progress is persisted before continuing
-    await saveDb(db);
+    await saveProgress(db.analysis_progress);
   } catch (error) {
     console.error('[PROGRESS] setProgress error:', error);
   }
@@ -41,7 +40,7 @@ export async function GET(request: NextRequest) {
     // Clean up stale progress (older than 10 minutes)
     if (Date.now() - progress.timestamp > 600000) {
       delete db.analysis_progress[gameId];
-      saveDb(db).catch(err => console.error('[PROGRESS] Cleanup error:', err));
+      saveProgress(db.analysis_progress).catch(err => console.error('[PROGRESS] Cleanup error:', err));
       return NextResponse.json({ current: 0, total: 0 });
     }
     
@@ -449,9 +448,14 @@ export async function POST(request: NextRequest) {
         if (dbAny.analysis_progress?.[gameId]) {
           delete dbAny.analysis_progress[gameId];
         }
+        await Promise.all([
+          saveAnalyses(db.game_analyses!),
+          saveGames(db.games),
+          saveProgress(dbAny.analysis_progress || {}),
+        ]);
+      } else {
+        await saveAnalyses(db.game_analyses!);
       }
-      
-      await saveDb(db);
       
       return NextResponse.json({
         success: true,
@@ -490,7 +494,11 @@ export async function POST(request: NextRequest) {
         delete dbAny.analysis_progress[gameId];
       }
       
-      await saveDb(db);
+      await Promise.all([
+        saveAnalyses(db.game_analyses!),
+        saveGames(db.games),
+        saveProgress(dbAny.analysis_progress || {}),
+      ]);
       
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`[ANALYZE] Analysis complete in ${duration}s - White: ${analysis.whiteAccuracy}%, Black: ${analysis.blackAccuracy}%`);

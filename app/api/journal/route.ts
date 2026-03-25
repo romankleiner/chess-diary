@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveJournal } from '@/lib/db';
 
 // Helper function to get current time in local timezone
 function getLocalTimestamp(): string {
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     };
     
     db.journal_entries.push(newEntry);
-    await saveDb(db);
+    await saveJournal(db.journal_entries);
     
     return NextResponse.json({ entry: newEntry });
   } catch (error) {
@@ -84,7 +84,7 @@ export async function DELETE(request: NextRequest) {
       (entry: any) => entry.id !== entryId
     );
     
-    await saveDb(db);
+    await saveJournal(db.journal_entries);
     
     return NextResponse.json({ success: true });
   } catch (error) {

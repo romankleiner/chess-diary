@@ -30,4 +30,29 @@ export async function saveDb(data: DatabaseData, userId?: string): Promise<void>
   return module.saveDb(data, userId);
 }
 
+export async function saveJournal(entries: any[], userId?: string): Promise<void> {
+  const module = await getDbModule();
+  return module.saveJournal(entries, userId);
+}
+
+export async function saveGames(games: Record<string, any>, userId?: string): Promise<void> {
+  const module = await getDbModule();
+  return module.saveGames(games, userId);
+}
+
+export async function saveAnalyses(analyses: Record<string, any>, userId?: string): Promise<void> {
+  const module = await getDbModule();
+  return module.saveAnalyses(analyses, userId);
+}
+
+export async function saveSettings(settings: Record<string, string>, userId?: string): Promise<void> {
+  const module = await getDbModule();
+  return module.saveSettings(settings, userId);
+}
+
+export async function saveProgress(progress: Record<string, any>, userId?: string): Promise<void> {
+  const module = await getDbModule();
+  return module.saveProgress(progress, userId);
+}
+
 export default getDb;

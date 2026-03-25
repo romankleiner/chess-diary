@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveAnalyses, saveGames } from '@/lib/db';
 
 // POST /api/debug/delete-analyses - Delete ALL game analyses
 // PROTECTED: Only accessible in development mode
@@ -29,7 +29,10 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    await saveDb(db);
+    await Promise.all([
+      saveAnalyses(db.game_analyses!),
+      saveGames(db.games),
+    ]);
     
     console.log(`[DELETE] Deleted ${analysisCount} analyses and cleared ${flagsCleared} flags`);
     

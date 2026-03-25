@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveDb } from '@/lib/db';
+import getDb, { saveSettings } from '@/lib/db';
 
 // GET /api/settings - Get all settings
 export async function GET(request: NextRequest) {
@@ -34,7 +34,7 @@ export async function PUT(request: NextRequest) {
       ...body
     };
     
-    await saveDb(db);
+    await saveSettings(db.settings);
     
     return NextResponse.json({
       success: true,
