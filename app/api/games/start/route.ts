@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveGames, saveJournal } from '@/lib/db';
+import { getSettings, getGames, getJournal, saveGames, saveJournal } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,10 +13,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = await getDb();
+    const [settings, games, journalEntries] = await Promise.all([
+      getSettings(),
+      getGames(),
+      getJournal(),
+    ]);
     
     // Get username from settings
-    const username = db.settings.chesscom_username;
+    const username = settings.chesscom_username;
     
     if (!username) {
       return NextResponse.json({ error: 'Chess.com username not configured' }, { status: 400 });
@@ -32,7 +36,7 @@ export async function POST(request: NextRequest) {
     const today = new Date().toISOString().split('T')[0];
     
     // Create a game entry (will be updated when game completes)
-    db.games[gameId] = {
+    games[gameId] = {
       id: gameId,
       opponent: 'TBD',
       date: today,
@@ -46,8 +50,8 @@ export async function POST(request: NextRequest) {
     };
     
     // Add journal entry for game start
-    db.journal_entries.push({
-      id: db.journal_entries.length + 1,
+    journalEntries.push({
+      id: journalEntries.length + 1,
       date: today,
       gameId,
       entryType: 'game_start',
@@ -58,8 +62,8 @@ export async function POST(request: NextRequest) {
     });
     
     await Promise.all([
-      saveGames(db.games),
-      saveJournal(db.journal_entries),
+      saveGames(games),
+      saveJournal(journalEntries),
     ]);
     
     return NextResponse.json({ 

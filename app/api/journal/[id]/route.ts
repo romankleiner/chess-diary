@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveJournal } from '@/lib/db';
+import { getJournal, saveJournal } from '@/lib/db';
 
 // PUT /api/journal/[id] - Update an existing journal entry
 export async function PUT(
@@ -9,10 +9,10 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
-    const db = await getDb();
+    const entries = await getJournal();
     
     const entryId = parseInt(id);
-    const entry = db.journal_entries.find(e => e.id === entryId);
+    const entry = entries.find(e => e.id === entryId);
     
     if (!entry) {
       return NextResponse.json(
@@ -28,7 +28,7 @@ export async function PUT(
     if (body.postReview !== undefined) entry.postReview = body.postReview;
     if (body.aiReview !== undefined) entry.aiReview = body.aiReview;
     
-    await saveJournal(db.journal_entries);
+    await saveJournal(entries);
     
     return NextResponse.json({
       success: true,
@@ -50,10 +50,10 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const db = await getDb();
+    const entries = await getJournal();
     
     const entryId = parseInt(id);
-    const entryIndex = db.journal_entries.findIndex(e => e.id === entryId);
+    const entryIndex = entries.findIndex(e => e.id === entryId);
     
     if (entryIndex === -1) {
       return NextResponse.json(
@@ -62,8 +62,8 @@ export async function DELETE(
       );
     }
     
-    db.journal_entries.splice(entryIndex, 1);
-    await saveJournal(db.journal_entries);
+    entries.splice(entryIndex, 1);
+    await saveJournal(entries);
     
     return NextResponse.json({ success: true });
   } catch (error) {

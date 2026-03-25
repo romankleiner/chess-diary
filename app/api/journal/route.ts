@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveJournal } from '@/lib/db';
+import { getJournal, saveJournal } from '@/lib/db';
 
 // Helper function to get current time in local timezone
 function getLocalTimestamp(): string {
@@ -11,8 +11,7 @@ function getLocalTimestamp(): string {
 
 export async function GET(request: NextRequest) {
   try {
-    const db = await getDb() as any;
-    const entries = db.journal_entries || [];
+    const entries = await getJournal();
     
     // Get date filters from query params
     const { searchParams } = new URL(request.url);
@@ -40,11 +39,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const db = await getDb() as any;
-    
-    if (!db.journal_entries) {
-      db.journal_entries = [];
-    }
+    const entries = await getJournal();
     
     const newEntry = {
       id: Date.now(),
@@ -52,8 +47,8 @@ export async function POST(request: NextRequest) {
       ...body,
     };
     
-    db.journal_entries.push(newEntry);
-    await saveJournal(db.journal_entries);
+    entries.push(newEntry);
+    await saveJournal(entries);
     
     return NextResponse.json({ entry: newEntry });
   } catch (error) {
@@ -77,14 +72,14 @@ export async function DELETE(request: NextRequest) {
       );
     }
     
-    const db = await getDb() as any;
+    const entries = await getJournal();
     const entryId = parseInt(id);
     
-    db.journal_entries = db.journal_entries.filter(
+    const filtered = entries.filter(
       (entry: any) => entry.id !== entryId
     );
     
-    await saveJournal(db.journal_entries);
+    await saveJournal(filtered);
     
     return NextResponse.json({ success: true });
   } catch (error) {

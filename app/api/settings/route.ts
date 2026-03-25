@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveSettings } from '@/lib/db';
+import { getSettings, saveSettings } from '@/lib/db';
 
 // GET /api/settings - Get all settings
 export async function GET(request: NextRequest) {
   try {
-    const db = await getDb();
+    const settings = await getSettings();
     
     return NextResponse.json({
-      settings: db.settings || {}
+      settings: settings || {}
     });
   } catch (error) {
     console.error('Error loading settings:', error);
@@ -22,23 +22,19 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const db = await getDb();
-    
-    if (!db.settings) {
-      db.settings = {};
-    }
+    const settings = await getSettings();
     
     // Update settings - merge with existing
-    db.settings = {
-      ...db.settings,
+    const updated = {
+      ...settings,
       ...body
     };
     
-    await saveSettings(db.settings);
+    await saveSettings(updated);
     
     return NextResponse.json({
       success: true,
-      settings: db.settings
+      settings: updated
     });
   } catch (error) {
     console.error('Error updating settings:', error);

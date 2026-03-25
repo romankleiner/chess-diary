@@ -1,24 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveJournal } from '@/lib/db';
+import { getGames, getJournal, getAnalyses, getSettings, saveJournal } from '@/lib/db';
 
 // GET endpoint to check AI thinking analysis progress
+// Note: thinking_progress is not persisted in Redis; this is a placeholder
 export async function GET(request: NextRequest) {
   const gameId = request.nextUrl.searchParams.get('gameId');
   if (!gameId) return NextResponse.json({ current: 0, total: 0 });
-  try {
-    const db = await getDb() as any;
-    const progress = db.thinking_progress?.[gameId];
-    if (!progress) return NextResponse.json({ current: 0, total: 0 });
-    // Clean up stale progress (older than 10 minutes)
-    if (Date.now() - progress.timestamp > 600000) {
-      delete db.thinking_progress[gameId];
-      // Note: thinking_progress is in-memory only, no persistence needed
-      return NextResponse.json({ current: 0, total: 0 });
-    }
-    return NextResponse.json({ current: progress.current, total: progress.total });
-  } catch {
-    return NextResponse.json({ current: 0, total: 0 });
-  }
+  return NextResponse.json({ current: 0, total: 0 });
 }
 
 export async function POST(request: NextRequest) {
@@ -30,22 +18,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
     }
 
-    const db = await getDb();
+    const [games, journalEntries, gameAnalyses, settings] = await Promise.all([
+      getGames(),
+      getJournal(),
+      getAnalyses(),
+      getSettings(),
+    ]);
 
     // Check if game exists
-    const game = db.games[gameId];
+    const game = games[gameId];
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
     // Get all journal entries for this game
-    const gameEntries = db.journal_entries.filter(e => e.gameId === gameId);
+    const gameEntries = journalEntries.filter(e => e.gameId === gameId);
     if (gameEntries.length === 0) {
       return NextResponse.json({ error: 'No journal entries found for this game' }, { status: 404 });
     }
 
     // Check if engine analysis exists
-    const hasEngineAnalysis = !!db.game_analyses?.[gameId];
+    const hasEngineAnalysis = !!gameAnalyses[gameId];
     if (!hasEngineAnalysis && !reanalyzeEngine) {
       return NextResponse.json({
         needsEngineAnalysis: true,
@@ -63,19 +56,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const analysis = db.game_analyses?.[gameId] || null;
+    const analysis = gameAnalyses[gameId] || null;
 
     // Get game info and user color
-    const gameInfo = db.games[gameId];
-    const username = db.settings?.chesscom_username?.toLowerCase() || '';
+    const username = settings?.chesscom_username?.toLowerCase() || '';
     const userColor: 'white' | 'black' =
-      gameInfo && username && gameInfo.white.toLowerCase() === username ? 'white' : 'black';
+      game && username && game.white.toLowerCase() === username ? 'white' : 'black';
 
     console.log(`[AI-ANALYSIS] User is playing ${userColor}`);
 
     // Get AI settings
-    const verbosity = db.settings?.ai_analysis_verbosity || 'detailed';
-    const model = db.settings?.ai_model || 'claude-sonnet-4-6'; // Default to Claude Sonnet 4.6
+    const verbosity = settings?.ai_analysis_verbosity || 'detailed';
+    const model = settings?.ai_model || 'claude-sonnet-4-6'; // Default to Claude Sonnet 4.6
 
     console.log(`[AI-ANALYSIS] Using verbosity: ${verbosity}, model: ${model}`);
 
@@ -224,7 +216,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Save updated entries (only journal was modified with aiReview)
-    await saveJournal(db.journal_entries);
+    await saveJournal(journalEntries);
 
     const completed = entryIndex + 1 >= gameEntries.length;
 

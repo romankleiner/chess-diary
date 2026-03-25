@@ -10,3 +10,6 @@ Major:
 - Add chess.com diary export
 - Show opponent's last move on the game diagram
 - Switch to an interactive board in diagrams?
+
+Cleanup:
+- Remove admin and temporary .md files

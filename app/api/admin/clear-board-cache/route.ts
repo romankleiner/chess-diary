@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import getDb, { saveJournal } from '@/lib/db';
+import { getJournal, saveJournal } from '@/lib/db';
 
 // One-off route to clear ALL cached board images from journal entries,
 // whether stored as base64 data URLs or Vercel Blob URLs.
@@ -14,10 +14,10 @@ export async function GET() {
     return NextResponse.json({ error: 'Not allowed in production' }, { status: 403 });
   }
 
-  const db = await getDb() as any;
+  const journalEntries = await getJournal();
   let cleared = 0;
 
-  for (const entry of db.journal_entries) {
+  for (const entry of journalEntries) {
     if (!entry.fen || !Array.isArray(entry.images) || entry.images.length === 0) continue;
     const img = entry.images[0];
     if (!img) continue;
@@ -31,7 +31,7 @@ export async function GET() {
     }
   }
 
-  await saveJournal(db.journal_entries);
+  await saveJournal(journalEntries);
 
   return NextResponse.json({
     success: true,

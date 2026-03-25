@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveJournal } from '@/lib/db';
+import { getJournal, getGames, saveJournal } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,10 +17,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const db = await getDb();
+    const [journalEntries, games] = await Promise.all([
+      getJournal(),
+      getGames(),
+    ]);
 
     // Get all entries within date range, sorted chronologically (oldest first)
-    const entries = db.journal_entries
+    const entries = journalEntries
       .filter(e => e.date >= startDate && e.date <= endDate)
       .sort((a, b) => {
         const dateCompare = a.date.localeCompare(b.date);
@@ -43,7 +46,7 @@ export async function GET(request: NextRequest) {
         console.log(`[EXPORT] Entry ${entry.id} on ${date} at ${new Date(entry.timestamp).toLocaleTimeString()} - gameId: ${entry.gameId}`);
         return {
           ...entry,
-          game: entry.gameId ? db.games[entry.gameId] : null
+          game: entry.gameId ? games[entry.gameId] : null
         };
       })
     }));
@@ -156,7 +159,7 @@ export async function GET(request: NextRequest) {
                   const dataUrl = `data:image/png;base64,${base64}`;
 
                   // Find and update the ORIGINAL entry in db.journal_entries
-                  const originalEntry = db.journal_entries.find(e => e.id === entry.id);
+                  const originalEntry = journalEntries.find(e => e.id === entry.id);
                   if (originalEntry) {
                     if (!originalEntry.images) {
                       originalEntry.images = [dataUrl];
@@ -526,7 +529,7 @@ export async function GET(request: NextRequest) {
       // Try to save cached board images back to database (optional)
       // If Redis is full, we log but don't fail the export
       try {
-        await saveJournal(db.journal_entries);
+        await saveJournal(journalEntries);
         console.log('[EXPORT] Saved cached board images to journal');
       } catch (saveError) {
         // Silently continue - export still works, images just won't be cached
@@ -556,7 +559,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       entries: entries.map(entry => ({
         ...entry,
-        game: entry.gameId ? db.games[entry.gameId] : null
+        game: entry.gameId ? games[entry.gameId] : null
       })),
       groupedByDate: groupedData
     });

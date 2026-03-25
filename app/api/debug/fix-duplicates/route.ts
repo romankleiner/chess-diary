@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import getDb, { saveJournal } from '@/lib/db';
+import { getJournal, saveJournal } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   // Only allow in development
@@ -14,11 +14,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const db = await getDb(userId);
+    const journalEntries = await getJournal(userId);
     
     // Find duplicate entry IDs
     const idCounts: Record<number, number> = {};
-    db.journal_entries.forEach(entry => {
+    journalEntries.forEach(entry => {
       idCounts[entry.id] = (idCounts[entry.id] || 0) + 1;
     });
     
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     
     // For each duplicate ID, keep only the first occurrence
     const seen = new Set<number>();
-    const fixedEntries = db.journal_entries.filter(entry => {
+    const fixedEntries = journalEntries.filter(entry => {
       if (seen.has(entry.id)) {
         console.log(`[FIX-DUPLICATES] Removing duplicate entry ${entry.id}`);
         return false; // Remove duplicate
@@ -47,10 +47,9 @@ export async function POST(request: NextRequest) {
       return true; // Keep first occurrence
     });
     
-    const removedCount = db.journal_entries.length - fixedEntries.length;
+    const removedCount = journalEntries.length - fixedEntries.length;
     
-    db.journal_entries = fixedEntries;
-    await saveJournal(db.journal_entries);
+    await saveJournal(fixedEntries, userId);
     
     return NextResponse.json({
       success: true,

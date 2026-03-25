@@ -55,4 +55,32 @@ export async function saveProgress(progress: Record<string, any>, userId?: strin
   return module.saveProgress(progress, userId);
 }
 
+
+// --- Partial-read helpers ---
+
+export async function getGames(userId?: string): Promise<Record<string, any>> {
+  const module = await getDbModule();
+  return module.getGames(userId);
+}
+
+export async function getJournal(userId?: string): Promise<any[]> {
+  const module = await getDbModule();
+  return module.getJournal(userId);
+}
+
+export async function getAnalyses(userId?: string): Promise<Record<string, any>> {
+  const module = await getDbModule();
+  return module.getAnalyses(userId);
+}
+
+export async function getSettings(userId?: string): Promise<Record<string, string>> {
+  const module = await getDbModule();
+  return module.getSettings(userId);
+}
+
+export async function getProgress(userId?: string): Promise<Record<string, any>> {
+  const module = await getDbModule();
+  return module.getProgress(userId);
+}
+
 export default getDb;

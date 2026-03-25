@@ -89,6 +89,43 @@ export async function getDb(userId?: string): Promise<DatabaseData> {
   }
 }
 
+// --- Partial-read helpers (single key each) ---
+
+export async function getGames(userId?: string): Promise<Record<string, any>> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  const data = await client.get(`chess-diary:${uid}:games`);
+  return data ? JSON.parse(data) : {};
+}
+
+export async function getJournal(userId?: string): Promise<any[]> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  const data = await client.get(`chess-diary:${uid}:journal`);
+  return data ? JSON.parse(data) : [];
+}
+
+export async function getAnalyses(userId?: string): Promise<Record<string, any>> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  const data = await client.get(`chess-diary:${uid}:analyses`);
+  return data ? JSON.parse(data) : {};
+}
+
+export async function getSettings(userId?: string): Promise<Record<string, string>> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  const data = await client.get(`chess-diary:${uid}:settings`);
+  return data ? JSON.parse(data) : {};
+}
+
+export async function getProgress(userId?: string): Promise<Record<string, any>> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  const data = await client.get(`chess-diary:${uid}:progress`);
+  return data ? JSON.parse(data) : {};
+}
+
 // Save database - now writes to split keys
 export async function saveDb(data: DatabaseData, userId?: string): Promise<void> {
   const uid = userId || await getUserId();

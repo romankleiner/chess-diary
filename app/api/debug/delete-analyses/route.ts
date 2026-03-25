@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveAnalyses, saveGames } from '@/lib/db';
+import { getAnalyses, getGames, saveAnalyses, saveGames } from '@/lib/db';
 
 // POST /api/debug/delete-analyses - Delete ALL game analyses
 // PROTECTED: Only accessible in development mode
@@ -13,25 +13,25 @@ export async function POST(request: NextRequest) {
   }
   
   try {
-    const db = await getDb();
+    const [gameAnalyses, games] = await Promise.all([
+      getAnalyses(),
+      getGames(),
+    ]);
     
-    const analysisCount = Object.keys(db.game_analyses || {}).length;
-    
-    // Wipe all analyses
-    db.game_analyses = {};
+    const analysisCount = Object.keys(gameAnalyses).length;
     
     // Also clear all analysisCompleted flags
     let flagsCleared = 0;
-    for (const gameId in db.games) {
-      if (db.games[gameId].analysisCompleted) {
-        db.games[gameId].analysisCompleted = false;
+    for (const gameId in games) {
+      if (games[gameId].analysisCompleted) {
+        games[gameId].analysisCompleted = false;
         flagsCleared++;
       }
     }
     
     await Promise.all([
-      saveAnalyses(db.game_analyses!),
-      saveGames(db.games),
+      saveAnalyses({}),
+      saveGames(games),
     ]);
     
     console.log(`[DELETE] Deleted ${analysisCount} analyses and cleared ${flagsCleared} flags`);

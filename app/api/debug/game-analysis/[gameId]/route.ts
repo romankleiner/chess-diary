@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb from '@/lib/db-redis';
+import { getGames, getAnalyses } from '@/lib/db';
 
 // GET /api/debug/game-analysis/[gameId] - Check analysis data for a specific game
 // PROTECTED: Only accessible in development or to authenticated users
@@ -17,10 +17,13 @@ export async function GET(
   
   try {
     const { gameId } = await params;
-    const db = await getDb();
+    const [games, gameAnalyses] = await Promise.all([
+      getGames(),
+      getAnalyses(),
+    ]);
     
-    const game = db.games?.[gameId];
-    const analysis = db.game_analyses?.[gameId];
+    const game = games[gameId];
+    const analysis = gameAnalyses[gameId];
     
     return NextResponse.json({
       gameId,

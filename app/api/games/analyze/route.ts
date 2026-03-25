@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
-import getDb, { saveAnalyses, saveGames, saveProgress } from '@/lib/db';
+import { getGames, getSettings, getAnalyses, getProgress, saveAnalyses, saveGames, saveProgress } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
 
 // Detect if running on Vercel
@@ -9,12 +9,9 @@ const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undef
 // Store progress in database for persistence across requests
 export async function setProgress(gameId: string, current: number, total: number) {
   try {
-    const db = await getDb() as any;
-    if (!db.analysis_progress) {
-      db.analysis_progress = {};
-    }
-    db.analysis_progress[gameId] = { current, total, timestamp: Date.now() };
-    await saveProgress(db.analysis_progress);
+    const progress = await getProgress();
+    progress[gameId] = { current, total, timestamp: Date.now() };
+    await saveProgress(progress);
   } catch (error) {
     console.error('[PROGRESS] setProgress error:', error);
   }
@@ -30,21 +27,21 @@ export async function GET(request: NextRequest) {
   }
   
   try {
-    const db = await getDb() as any;
-    const progress = db.analysis_progress?.[gameId];
+    const progress = await getProgress();
+    const entry = progress[gameId];
     
-    if (!progress) {
+    if (!entry) {
       return NextResponse.json({ current: 0, total: 0 });
     }
     
     // Clean up stale progress (older than 10 minutes)
-    if (Date.now() - progress.timestamp > 600000) {
-      delete db.analysis_progress[gameId];
-      saveProgress(db.analysis_progress).catch(err => console.error('[PROGRESS] Cleanup error:', err));
+    if (Date.now() - entry.timestamp > 600000) {
+      delete progress[gameId];
+      saveProgress(progress).catch(err => console.error('[PROGRESS] Cleanup error:', err));
       return NextResponse.json({ current: 0, total: 0 });
     }
     
-    return NextResponse.json({ current: progress.current, total: progress.total });
+    return NextResponse.json({ current: entry.current, total: entry.total });
   } catch (error) {
     console.error('[PROGRESS] GET error:', error);
     return NextResponse.json({ current: 0, total: 0 });
@@ -147,8 +144,8 @@ async function analyzeGameChessApiBatched(
   console.log('[CHESS-API] Total moves in game:', history.length);
   
   // Load existing analysis if any
-  const db = await getDb();
-  const existingAnalysis = db.game_analyses?.[gameId];
+  const existingAnalyses = await getAnalyses();
+  const existingAnalysis = existingAnalyses[gameId];
   
   // Only keep existing moves if we're continuing a batch (startMoveIndex > 0)
   // If starting from 0, this is a fresh analysis or re-analysis
@@ -397,9 +394,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
     }
     
-    const db = await getDb();
+    const [games, settings, gameAnalyses, analysisProgress] = await Promise.all([
+      getGames(),
+      getSettings(),
+      getAnalyses(),
+      getProgress(),
+    ]);
     
-    const game = db.games[gameId];
+    const game = games[gameId];
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
@@ -408,8 +410,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game has no PGN data' }, { status: 400 });
     }
     
-    const depth = parseInt(db.settings?.analysis_depth || '10');
-    const username = db.settings?.chesscom_username?.toLowerCase() || '';
+    const depth = parseInt(settings?.analysis_depth || '10');
+    const username = settings?.chesscom_username?.toLowerCase() || '';
     const userColor: 'white' | 'black' = game.white.toLowerCase() === username ? 'white' : 'black';
     
     let result;
@@ -422,11 +424,7 @@ export async function POST(request: NextRequest) {
       const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, batchSize);
       
       // Save progress
-      if (!db.game_analyses) {
-        db.game_analyses = {};
-      }
-      
-      db.game_analyses[gameId] = {
+      gameAnalyses[gameId] = {
         gameId,
         analyzedAt: new Date().toISOString(),
         whitePlayer: game.white,
@@ -439,39 +437,32 @@ export async function POST(request: NextRequest) {
       };
       
       if (batchResult.completed) {
-        db.games[gameId].analysisCompleted = true;
-        db.games[gameId].analysisDepth = depth;
-        db.games[gameId].analysisEngine = 'chess-api.com';
+        games[gameId].analysisCompleted = true;
+        games[gameId].analysisDepth = depth;
+        games[gameId].analysisEngine = 'chess-api.com';
         console.log(`[ANALYZE] Vercel analysis complete - set flags for game ${gameId}`);
-        // Clear progress from db before saving
-        const dbAny = db as any;
-        if (dbAny.analysis_progress?.[gameId]) {
-          delete dbAny.analysis_progress[gameId];
-        }
+        // Clear progress before saving
+        delete analysisProgress[gameId];
         await Promise.all([
-          saveAnalyses(db.game_analyses!),
-          saveGames(db.games),
-          saveProgress(dbAny.analysis_progress || {}),
+          saveAnalyses(gameAnalyses),
+          saveGames(games),
+          saveProgress(analysisProgress),
         ]);
       } else {
-        await saveAnalyses(db.game_analyses!);
+        await saveAnalyses(gameAnalyses);
       }
       
       return NextResponse.json({
         success: true,
         completed: batchResult.completed,
         nextMoveIndex: batchResult.nextMoveIndex,
-        analysis: db.game_analyses[gameId],
+        analysis: gameAnalyses[gameId],
       });
     } else {
       // Local analysis ignores startMoveIndex - always analyzes full game  
       const analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
       
-      if (!db.game_analyses) {
-        db.game_analyses = {};
-      }
-      
-      db.game_analyses[gameId] = {
+      gameAnalyses[gameId] = {
         gameId,
         analyzedAt: new Date().toISOString(),
         whitePlayer: game.white,
@@ -483,21 +474,18 @@ export async function POST(request: NextRequest) {
         engine: 'Stockfish',
       };
       
-      db.games[gameId].analysisCompleted = true;
-      db.games[gameId].analysisDepth = depth;
-      db.games[gameId].analysisEngine = 'Stockfish';
+      games[gameId].analysisCompleted = true;
+      games[gameId].analysisDepth = depth;
+      games[gameId].analysisEngine = 'Stockfish';
       console.log(`[ANALYZE] Local analysis complete - set flags for game ${gameId}`);
       
-      // Clear progress from this db before saving
-      const dbAny = db as any;
-      if (dbAny.analysis_progress?.[gameId]) {
-        delete dbAny.analysis_progress[gameId];
-      }
+      // Clear progress before saving
+      delete analysisProgress[gameId];
       
       await Promise.all([
-        saveAnalyses(db.game_analyses!),
-        saveGames(db.games),
-        saveProgress(dbAny.analysis_progress || {}),
+        saveAnalyses(gameAnalyses),
+        saveGames(games),
+        saveProgress(analysisProgress),
       ]);
       
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -506,7 +494,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         completed: true,
-        analysis: db.game_analyses[gameId],
+        analysis: gameAnalyses[gameId],
       });
     }
   } catch (error) {

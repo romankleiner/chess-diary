@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import getDb, { saveJournal } from '@/lib/db';
+import { getJournal, getGames, getAnalyses, getSettings, saveJournal } from '@/lib/db';
 
 function getLocalTimestamp(): string {
   const now = new Date();
@@ -18,8 +18,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'gameId required' }, { status: 400 });
     }
 
-    const db = await getDb() as any;
-    const entries: any[] = db.journal_entries || [];
+    const entries = await getJournal();
 
     const summary = entries.find(
       (e: any) => e.entryType === 'post_game_summary' && e.gameId === gameId
@@ -42,14 +41,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'gameId required' }, { status: 400 });
     }
 
-    const db = await getDb() as any;
-
-    if (!db.journal_entries) {
-      db.journal_entries = [];
-    }
+    const [journalEntries, games, gameAnalyses, settings] = await Promise.all([
+      getJournal(),
+      getGames(),
+      getAnalyses(),
+      getSettings(),
+    ]);
 
     // Prevent duplicates
-    const existing = db.journal_entries.find(
+    const existing = journalEntries.find(
       (e: any) => e.entryType === 'post_game_summary' && e.gameId === gameId
     );
     if (existing) {
@@ -59,9 +59,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const game = db.games?.[gameId] || null;
-    const gameAnalysis = db.game_analyses?.[gameId] || null;
-    const username = db.settings?.chesscomUsername?.toLowerCase() || '';
+    const game = games[gameId] || null;
+    const gameAnalysis = gameAnalyses[gameId] || null;
+    const username = (settings as any)?.chesscomUsername?.toLowerCase() || '';
 
     const statistics = gameAnalysis
       ? computeStatistics(gameAnalysis, username)
@@ -97,8 +97,8 @@ export async function POST(request: NextRequest) {
         : null,
     };
 
-    db.journal_entries.push(entry);
-    await saveJournal(db.journal_entries);
+    journalEntries.push(entry);
+    await saveJournal(journalEntries);
 
     return NextResponse.json({ success: true, entry });
   } catch (error) {
@@ -117,25 +117,25 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Entry id required' }, { status: 400 });
     }
 
-    const db = await getDb() as any;
-    const entryIndex = db.journal_entries.findIndex((e: any) => e.id === id);
+    const entries = await getJournal();
+    const entryIndex = entries.findIndex((e: any) => e.id === id);
 
     if (entryIndex === -1) {
       return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
     }
 
-    db.journal_entries[entryIndex].postGameSummary.reflections = {
-      ...db.journal_entries[entryIndex].postGameSummary.reflections,
+    entries[entryIndex].postGameSummary.reflections = {
+      ...entries[entryIndex].postGameSummary.reflections,
       ...reflections,
     };
-    db.journal_entries[entryIndex].content =
+    entries[entryIndex].content =
       reflections?.lessonsLearned ||
       reflections?.whatWentWell ||
-      db.journal_entries[entryIndex].content;
+      entries[entryIndex].content;
 
-    await saveJournal(db.journal_entries);
+    await saveJournal(entries);
 
-    return NextResponse.json({ success: true, entry: db.journal_entries[entryIndex] });
+    return NextResponse.json({ success: true, entry: entries[entryIndex] });
   } catch (error) {
     console.error('Error updating post-game summary:', error);
     return NextResponse.json({ error: 'Failed to update summary' }, { status: 500 });
