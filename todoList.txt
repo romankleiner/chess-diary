@@ -1,5 +1,5 @@
 Minor:
-  - 
+- ≤25 CP loss should show Excellent, but .25 shows Good in analysis
 
 Mid:
 
