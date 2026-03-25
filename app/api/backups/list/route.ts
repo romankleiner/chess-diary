@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { list } from '@vercel/blob';
+import { isAdmin } from '@/lib/admin';
 
 export async function GET() {
   try {
+    const { isAdmin: admin } = await isAdmin();
+    if (!admin) {
+      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    }
+
     const { blobs } = await list({ prefix: 'backups/' });
     
     // Sort by upload date (newest first)

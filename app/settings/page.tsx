@@ -14,9 +14,11 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     loadSettings();
+    fetch('/api/admin/check').then(r => r.json()).then(d => setIsAdmin(d.isAdmin)).catch(() => {});
   }, []);
 
   const loadSettings = async () => {
@@ -234,7 +236,8 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {/* Database Backup */}
+        {/* Database Backup (admin only) */}
+        {isAdmin && (
         <div className="pt-4 border-t">
           <h3 className="text-lg font-semibold mb-3">Database Backup</h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
@@ -272,6 +275,7 @@ export default function SettingsPage() {
             This creates a complete backup of all your data. Store it safely in case you need to restore later.
           </p>
         </div>
+        )}
       </div>
 
       {/* Additional Info */}

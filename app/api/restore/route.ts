@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Redis from 'ioredis';
+import { isAdmin } from '@/lib/admin';
 
 export async function POST(request: NextRequest) {
   try {
+    const { isAdmin: admin } = await isAdmin();
+    if (!admin) {
+      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    }
+
     const { backupUrl } = await request.json();
     
     if (!backupUrl) {

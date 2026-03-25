@@ -1,10 +1,9 @@
 Minor:
-- ≤25 CP loss should show Excellent, but .25 shows Good in analysis
+- Test backup and admin / non-admin role
 
 Mid:
 
 Major:
-- Add admin role and restrict restore and backup operations to it
 - Redesign redis schema with key per game/entry rather than composite journal/game keys
 - Add chess.com diary export
 - Add detection of opening book during engine analysis

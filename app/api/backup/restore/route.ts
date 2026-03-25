@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import getDb, { saveDb } from '@/lib/db';
+import { isAdmin } from '@/lib/admin';
 
 export async function POST(request: NextRequest) {
   try {
+    const { isAdmin: admin } = await isAdmin();
+    if (!admin) {
+      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    }
+
     const backup = await request.json();
     
     // Validate backup format

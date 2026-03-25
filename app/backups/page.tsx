@@ -14,9 +14,14 @@ export default function BackupsPage() {
   const [backups, setBackups] = useState<Backup[]>([]);
   const [loading, setLoading] = useState(true);
   const [restoring, setRestoring] = useState(false);
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {
-    loadBackups();
+    fetch('/api/admin/check').then(r => r.json()).then(d => {
+      setIsAdmin(d.isAdmin);
+      if (d.isAdmin) loadBackups();
+      else setLoading(false);
+    }).catch(() => { setIsAdmin(false); setLoading(false); });
   }, []);
 
   const loadBackups = async () => {
@@ -65,6 +70,17 @@ export default function BackupsPage() {
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6">
         <div className="container mx-auto">
           <p>Loading backups...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6">
+        <div className="container mx-auto">
+          <p className="text-gray-600 dark:text-gray-400">Admin access required to view backups.</p>
+          <Link href="/" className="text-blue-600 hover:underline dark:text-blue-400 mt-4 inline-block">← Back to Home</Link>
         </div>
       </div>
     );
