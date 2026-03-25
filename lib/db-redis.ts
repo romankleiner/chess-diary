@@ -119,6 +119,32 @@ export async function getSettings(userId?: string): Promise<Record<string, strin
   return data ? JSON.parse(data) : {};
 }
 
+// --- Per-game progress helpers (TTL-based, no read-modify-write) ---
+
+const PROGRESS_TTL = 600; // 10 minutes
+
+export async function setGameProgress(gameId: string, current: number, total: number, userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  const key = `chess-diary:${uid}:progress:${gameId}`;
+  await client.setex(key, PROGRESS_TTL, JSON.stringify({ current, total }));
+}
+
+export async function getGameProgress(gameId: string, userId?: string): Promise<{ current: number; total: number } | null> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  const key = `chess-diary:${uid}:progress:${gameId}`;
+  const data = await client.get(key);
+  return data ? JSON.parse(data) : null;
+}
+
+export async function clearGameProgress(gameId: string, userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  await client.del(`chess-diary:${uid}:progress:${gameId}`);
+}
+
+// Legacy bulk progress helpers (kept for getDb/saveDb compatibility)
 export async function getProgress(userId?: string): Promise<Record<string, any>> {
   const uid = userId || await getUserId();
   const client = getRedisClient();
@@ -176,7 +202,7 @@ export async function saveSettings(settings: Record<string, string>, userId?: st
   await client.set(`chess-diary:${uid}:settings`, JSON.stringify(settings));
 }
 
-// Helper: Save only progress (for progress operations)
+// Legacy: Save bulk progress key (kept for saveDb compatibility)
 export async function saveProgress(progress: Record<string, any>, userId?: string): Promise<void> {
   const uid = userId || await getUserId();
   const client = getRedisClient();

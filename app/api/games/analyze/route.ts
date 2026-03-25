@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
-import { getGames, getSettings, getAnalyses, getProgress, saveAnalyses, saveGames, saveProgress } from '@/lib/db';
+import { getGames, getSettings, getAnalyses, setGameProgress, getGameProgress, clearGameProgress, saveAnalyses, saveGames } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
 
 // Detect if running on Vercel
 const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
 
-// Store progress in database for persistence across requests
+// Store progress as a per-game Redis key with 10min TTL — no read-modify-write
 export async function setProgress(gameId: string, current: number, total: number) {
   try {
-    const progress = await getProgress();
-    progress[gameId] = { current, total, timestamp: Date.now() };
-    await saveProgress(progress);
+    await setGameProgress(gameId, current, total);
   } catch (error) {
     console.error('[PROGRESS] setProgress error:', error);
   }
@@ -27,21 +25,14 @@ export async function GET(request: NextRequest) {
   }
   
   try {
-    const progress = await getProgress();
-    const entry = progress[gameId];
+    const progress = await getGameProgress(gameId);
     
-    if (!entry) {
+    if (!progress) {
       return NextResponse.json({ current: 0, total: 0 });
     }
     
-    // Clean up stale progress (older than 10 minutes)
-    if (Date.now() - entry.timestamp > 600000) {
-      delete progress[gameId];
-      saveProgress(progress).catch(err => console.error('[PROGRESS] Cleanup error:', err));
-      return NextResponse.json({ current: 0, total: 0 });
-    }
-    
-    return NextResponse.json({ current: entry.current, total: entry.total });
+    // No manual staleness check needed — Redis TTL handles expiration
+    return NextResponse.json({ current: progress.current, total: progress.total });
   } catch (error) {
     console.error('[PROGRESS] GET error:', error);
     return NextResponse.json({ current: 0, total: 0 });
@@ -394,11 +385,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
     }
     
-    const [games, settings, gameAnalyses, analysisProgress] = await Promise.all([
+    const [games, settings, gameAnalyses] = await Promise.all([
       getGames(),
       getSettings(),
       getAnalyses(),
-      getProgress(),
     ]);
     
     const game = games[gameId];
@@ -441,12 +431,10 @@ export async function POST(request: NextRequest) {
         games[gameId].analysisDepth = depth;
         games[gameId].analysisEngine = 'chess-api.com';
         console.log(`[ANALYZE] Vercel analysis complete - set flags for game ${gameId}`);
-        // Clear progress before saving
-        delete analysisProgress[gameId];
         await Promise.all([
           saveAnalyses(gameAnalyses),
           saveGames(games),
-          saveProgress(analysisProgress),
+          clearGameProgress(gameId),
         ]);
       } else {
         await saveAnalyses(gameAnalyses);
@@ -479,13 +467,10 @@ export async function POST(request: NextRequest) {
       games[gameId].analysisEngine = 'Stockfish';
       console.log(`[ANALYZE] Local analysis complete - set flags for game ${gameId}`);
       
-      // Clear progress before saving
-      delete analysisProgress[gameId];
-      
       await Promise.all([
         saveAnalyses(gameAnalyses),
         saveGames(games),
-        saveProgress(analysisProgress),
+        clearGameProgress(gameId),
       ]);
       
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);

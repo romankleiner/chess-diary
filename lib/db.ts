@@ -83,4 +83,21 @@ export async function getProgress(userId?: string): Promise<Record<string, any>>
   return module.getProgress(userId);
 }
 
+// --- Per-game progress helpers (TTL-based) ---
+
+export async function setGameProgress(gameId: string, current: number, total: number, userId?: string): Promise<void> {
+  const module = await getDbModule();
+  return module.setGameProgress(gameId, current, total, userId);
+}
+
+export async function getGameProgress(gameId: string, userId?: string): Promise<{ current: number; total: number } | null> {
+  const module = await getDbModule();
+  return module.getGameProgress(gameId, userId);
+}
+
+export async function clearGameProgress(gameId: string, userId?: string): Promise<void> {
+  const module = await getDbModule();
+  return module.clearGameProgress(gameId, userId);
+}
+
 export default getDb;
