@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getJournal, saveJournal } from '@/lib/db';
+import { getJournalEntry, saveJournalEntry, deleteJournalEntry } from '@/lib/db';
 
 // PUT /api/journal/[id] - Update an existing journal entry
 export async function PUT(
@@ -9,10 +9,8 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
-    const entries = await getJournal();
-    
     const entryId = parseInt(id);
-    const entry = entries.find(e => e.id === entryId);
+    const entry = await getJournalEntry(entryId);
     
     if (!entry) {
       return NextResponse.json(
@@ -28,7 +26,7 @@ export async function PUT(
     if (body.postReview !== undefined) entry.postReview = body.postReview;
     if (body.aiReview !== undefined) entry.aiReview = body.aiReview;
     
-    await saveJournal(entries);
+    await saveJournalEntry(entry);
     
     return NextResponse.json({
       success: true,
@@ -50,20 +48,17 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const entries = await getJournal();
-    
     const entryId = parseInt(id);
-    const entryIndex = entries.findIndex(e => e.id === entryId);
+    const entry = await getJournalEntry(entryId);
     
-    if (entryIndex === -1) {
+    if (!entry) {
       return NextResponse.json(
         { error: 'Entry not found' },
         { status: 404 }
       );
     }
     
-    entries.splice(entryIndex, 1);
-    await saveJournal(entries);
+    await deleteJournalEntry(entryId);
     
     return NextResponse.json({ success: true });
   } catch (error) {

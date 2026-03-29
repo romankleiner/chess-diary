@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSettings, saveSettings } from '@/lib/db';
+import { getSettings, saveSetting } from '@/lib/db';
 
 // GET /api/settings - Get all settings
 export async function GET(request: NextRequest) {
@@ -22,15 +22,14 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const settings = await getSettings();
     
-    // Update settings - merge with existing
-    const updated = {
-      ...settings,
-      ...body
-    };
+    // Write each changed setting individually
+    await Promise.all(
+      Object.entries(body).map(([key, value]) => saveSetting(key, String(value)))
+    );
     
-    await saveSettings(updated);
+    // Return the full merged settings
+    const updated = await getSettings();
     
     return NextResponse.json({
       success: true,

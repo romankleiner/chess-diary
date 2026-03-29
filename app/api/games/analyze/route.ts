@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
-import { getGames, getSettings, getAnalyses, setGameProgress, getGameProgress, clearGameProgress, saveAnalyses, saveGames } from '@/lib/db';
+import { getGame, getAnalysis, getSetting, setGameProgress, getGameProgress, clearGameProgress, saveAnalysis, saveGame } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
 
 // Detect if running on Vercel
@@ -135,8 +135,7 @@ async function analyzeGameChessApiBatched(
   console.log('[CHESS-API] Total moves in game:', history.length);
   
   // Load existing analysis if any
-  const existingAnalyses = await getAnalyses();
-  const existingAnalysis = existingAnalyses[gameId];
+  const existingAnalysis = await getAnalysis(gameId);
   
   // Only keep existing moves if we're continuing a batch (startMoveIndex > 0)
   // If starting from 0, this is a fresh analysis or re-analysis
@@ -385,13 +384,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
     }
     
-    const [games, settings, gameAnalyses] = await Promise.all([
-      getGames(),
-      getSettings(),
-      getAnalyses(),
+    const [game, depthSetting, usernameSetting] = await Promise.all([
+      getGame(gameId),
+      getSetting('analysis_depth'),
+      getSetting('chesscom_username'),
     ]);
     
-    const game = games[gameId];
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
@@ -400,8 +398,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game has no PGN data' }, { status: 400 });
     }
     
-    const depth = parseInt(settings?.analysis_depth || '10');
-    const username = settings?.chesscom_username?.toLowerCase() || '';
+    const depth = parseInt(depthSetting || '10');
+    const username = usernameSetting?.toLowerCase() || '';
     const userColor: 'white' | 'black' = game.white.toLowerCase() === username ? 'white' : 'black';
     
     let result;
@@ -413,8 +411,8 @@ export async function POST(request: NextRequest) {
       const batchSize = depth <= 10 ? 5 : depth <= 14 ? 3 : depth <= 18 ? 2 : 1;
       const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, batchSize);
       
-      // Save progress
-      gameAnalyses[gameId] = {
+      // Save analysis result
+      const analysisData = {
         gameId,
         analyzedAt: new Date().toISOString(),
         whitePlayer: game.white,
@@ -422,35 +420,35 @@ export async function POST(request: NextRequest) {
         whiteAccuracy: batchResult.whiteAccuracy,
         blackAccuracy: batchResult.blackAccuracy,
         moves: batchResult.moves,
-        depth: depth, // Store the depth used
-        engine: 'chess-api.com', // Store which engine was used
+        depth: depth,
+        engine: 'chess-api.com',
       };
       
       if (batchResult.completed) {
-        games[gameId].analysisCompleted = true;
-        games[gameId].analysisDepth = depth;
-        games[gameId].analysisEngine = 'chess-api.com';
+        game.analysisCompleted = true;
+        game.analysisDepth = depth;
+        game.analysisEngine = 'chess-api.com';
         console.log(`[ANALYZE] Vercel analysis complete - set flags for game ${gameId}`);
         await Promise.all([
-          saveAnalyses(gameAnalyses),
-          saveGames(games),
+          saveAnalysis(gameId, analysisData),
+          saveGame(gameId, game),
           clearGameProgress(gameId),
         ]);
       } else {
-        await saveAnalyses(gameAnalyses);
+        await saveAnalysis(gameId, analysisData);
       }
       
       return NextResponse.json({
         success: true,
         completed: batchResult.completed,
         nextMoveIndex: batchResult.nextMoveIndex,
-        analysis: gameAnalyses[gameId],
+        analysis: analysisData,
       });
     } else {
       // Local analysis ignores startMoveIndex - always analyzes full game  
       const analysis = await analyzeGame(game.pgn, depth, userColor, gameId);
       
-      gameAnalyses[gameId] = {
+      const analysisData = {
         gameId,
         analyzedAt: new Date().toISOString(),
         whitePlayer: game.white,
@@ -462,14 +460,14 @@ export async function POST(request: NextRequest) {
         engine: 'Stockfish',
       };
       
-      games[gameId].analysisCompleted = true;
-      games[gameId].analysisDepth = depth;
-      games[gameId].analysisEngine = 'Stockfish';
+      game.analysisCompleted = true;
+      game.analysisDepth = depth;
+      game.analysisEngine = 'Stockfish';
       console.log(`[ANALYZE] Local analysis complete - set flags for game ${gameId}`);
       
       await Promise.all([
-        saveAnalyses(gameAnalyses),
-        saveGames(games),
+        saveAnalysis(gameId, analysisData),
+        saveGame(gameId, game),
         clearGameProgress(gameId),
       ]);
       
@@ -479,7 +477,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         completed: true,
-        analysis: gameAnalyses[gameId],
+        analysis: analysisData,
       });
     }
   } catch (error) {

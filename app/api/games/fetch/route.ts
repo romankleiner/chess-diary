@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchPlayerGames, fetchActiveGames, parseChessComGame } from '@/lib/chesscom';
-import { getSettings, getGames, saveGames } from '@/lib/db';
+import { getSetting, getGame, saveGame } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,13 +9,8 @@ export async function POST(request: NextRequest) {
     const year = parseInt(searchParams.get('year') || new Date().getFullYear().toString());
     const month = parseInt(searchParams.get('month') || (new Date().getMonth() + 1).toString());
     
-    const [settings, existingGames] = await Promise.all([
-      getSettings(),
-      getGames(),
-    ]);
-    
     // Get username from settings
-    const username = settings.chesscom_username;
+    const username = await getSetting('chesscom_username');
     
     if (!username) {
       return NextResponse.json({ error: 'Chess.com username not configured' }, { status: 400 });
@@ -73,16 +68,14 @@ export async function POST(request: NextRequest) {
     );
     
     // Store in database - preserve existing analysis flags
-    for (const game of uniqueGames) {
-      const existing = existingGames[game.id];
-      existingGames[game.id] = {
+    await Promise.all(uniqueGames.map(async (game) => {
+      const existing = await getGame(game.id);
+      const merged = {
         ...game,
-        // Preserve the analysisCompleted flag if it was already set
         analysisCompleted: existing?.analysisCompleted || game.analysisCompleted || false
       };
-    }
-    
-    await saveGames(existingGames);
+      return saveGame(game.id, merged);
+    }));
     
     return NextResponse.json({ 
       success: true, 

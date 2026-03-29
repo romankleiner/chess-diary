@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getJournal, getGames, getAnalyses, getSettings, saveJournal } from '@/lib/db';
+import { getJournal, getGame, getAnalysis, getSetting, saveJournalEntry, getJournalEntry } from '@/lib/db';
 
 function getLocalTimestamp(): string {
   const now = new Date();
@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'gameId required' }, { status: 400 });
     }
 
+    // Still needs full journal scan — no secondary index for entryType+gameId
     const entries = await getJournal();
 
     const summary = entries.find(
@@ -41,11 +42,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'gameId required' }, { status: 400 });
     }
 
-    const [journalEntries, games, gameAnalyses, settings] = await Promise.all([
-      getJournal(),
-      getGames(),
-      getAnalyses(),
-      getSettings(),
+    const [journalEntries, game, gameAnalysis, username] = await Promise.all([
+      getJournal(),  // needed for duplicate check
+      getGame(gameId),
+      getAnalysis(gameId),
+      getSetting('chesscomUsername'),
     ]);
 
     // Prevent duplicates
@@ -59,12 +60,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const game = games[gameId] || null;
-    const gameAnalysis = gameAnalyses[gameId] || null;
-    const username = (settings as any)?.chesscomUsername?.toLowerCase() || '';
-
     const statistics = gameAnalysis
-      ? computeStatistics(gameAnalysis, username)
+      ? computeStatistics(gameAnalysis, username?.toLowerCase() || '')
       : null;
 
     const today = new Date().toISOString().split('T')[0];
@@ -97,8 +94,7 @@ export async function POST(request: NextRequest) {
         : null,
     };
 
-    journalEntries.push(entry);
-    await saveJournal(journalEntries);
+    await saveJournalEntry(entry);
 
     return NextResponse.json({ success: true, entry });
   } catch (error) {
@@ -117,25 +113,24 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Entry id required' }, { status: 400 });
     }
 
-    const entries = await getJournal();
-    const entryIndex = entries.findIndex((e: any) => e.id === id);
+    const entry = await getJournalEntry(id);
 
-    if (entryIndex === -1) {
+    if (!entry) {
       return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
     }
 
-    entries[entryIndex].postGameSummary.reflections = {
-      ...entries[entryIndex].postGameSummary.reflections,
+    entry.postGameSummary.reflections = {
+      ...entry.postGameSummary.reflections,
       ...reflections,
     };
-    entries[entryIndex].content =
+    entry.content =
       reflections?.lessonsLearned ||
       reflections?.whatWentWell ||
-      entries[entryIndex].content;
+      entry.content;
 
-    await saveJournal(entries);
+    await saveJournalEntry(entry);
 
-    return NextResponse.json({ success: true, entry: entries[entryIndex] });
+    return NextResponse.json({ success: true, entry });
   } catch (error) {
     console.error('Error updating post-game summary:', error);
     return NextResponse.json({ error: 'Failed to update summary' }, { status: 500 });

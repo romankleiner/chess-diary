@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getGames, saveGames } from '@/lib/db';
+import { getGame, saveGame } from '@/lib/db';
 
 // Toggle the turn for a game (switch from white to black or vice versa)
 export async function POST(
@@ -9,8 +9,7 @@ export async function POST(
   try {
     const { id: gameId } = await params;
     
-    const games = await getGames();
-    const game = games[gameId];
+    const game = await getGame(gameId);
     
     if (!game) {
       return NextResponse.json(
@@ -26,8 +25,7 @@ export async function POST(
       game.turn = 'white';
     }
     
-    games[gameId] = game;
-    await saveGames(games);
+    await saveGame(gameId, game);
     
     return NextResponse.json({ success: true, turn: game.turn });
   } catch (error) {

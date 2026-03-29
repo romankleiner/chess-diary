@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getGames, getJournal, getAnalyses, getSettings, saveJournal } from '@/lib/db';
+import { getGame, getJournal, getAnalysis, getSetting, saveJournalEntry } from '@/lib/db';
 
 // GET endpoint to check AI thinking analysis progress
 // Note: thinking_progress is not persisted in Redis; this is a placeholder
@@ -18,15 +18,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing gameId' }, { status: 400 });
     }
 
-    const [games, journalEntries, gameAnalyses, settings] = await Promise.all([
-      getGames(),
+    const [game, journalEntries, analysis, username, verbosity, model] = await Promise.all([
+      getGame(gameId),
       getJournal(),
-      getAnalyses(),
-      getSettings(),
+      getAnalysis(gameId),
+      getSetting('chesscom_username'),
+      getSetting('ai_analysis_verbosity'),
+      getSetting('ai_model'),
     ]);
 
     // Check if game exists
-    const game = games[gameId];
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if engine analysis exists
-    const hasEngineAnalysis = !!gameAnalyses[gameId];
+    const hasEngineAnalysis = !!analysis;
     if (!hasEngineAnalysis && !reanalyzeEngine) {
       return NextResponse.json({
         needsEngineAnalysis: true,
@@ -56,20 +57,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const analysis = gameAnalyses[gameId] || null;
-
     // Get game info and user color
-    const username = settings?.chesscom_username?.toLowerCase() || '';
+    const usernameLC = username?.toLowerCase() || '';
     const userColor: 'white' | 'black' =
-      game && username && game.white.toLowerCase() === username ? 'white' : 'black';
+      game && usernameLC && game.white.toLowerCase() === usernameLC ? 'white' : 'black';
 
     console.log(`[AI-ANALYSIS] User is playing ${userColor}`);
 
-    // Get AI settings
-    const verbosity = settings?.ai_analysis_verbosity || 'detailed';
-    const model = settings?.ai_model || 'claude-sonnet-4-6'; // Default to Claude Sonnet 4.6
+    const verbosityVal = verbosity || 'detailed';
+    const modelVal = model || 'claude-sonnet-4-6';
 
-    console.log(`[AI-ANALYSIS] Using verbosity: ${verbosity}, model: ${model}`);
+    console.log(`[AI-ANALYSIS] Using verbosity: ${verbosityVal}, model: ${modelVal}`);
 
     // Process the single entry at entryIndex
     const entry = gameEntries[entryIndex];
@@ -154,7 +152,7 @@ export async function POST(request: NextRequest) {
       entry.myMove,
       entry.fen,
       moveAnalysis,
-      verbosity,
+      verbosityVal,
       pgnMoves
     );
 
@@ -163,13 +161,13 @@ export async function POST(request: NextRequest) {
     console.log(`========== END PROMPT ==========\n`);
 
     const maxTokens =
-      verbosity === 'brief'
+      verbosityVal === 'brief'
         ? 300
-        : verbosity === 'concise'
+        : verbosityVal === 'concise'
         ? 500
-        : verbosity === 'detailed'
+        : verbosityVal === 'detailed'
         ? 1200
-        : verbosity === 'extensive'
+        : verbosityVal === 'extensive'
         ? 2000
         : 500;
 
@@ -182,7 +180,7 @@ export async function POST(request: NextRequest) {
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: model,
+          model: modelVal,
           max_tokens: maxTokens,
           messages: [{ role: 'user', content: prompt }],
         }),
@@ -192,7 +190,7 @@ export async function POST(request: NextRequest) {
         const errorText = await response.text();
         console.error(`[AI-ANALYSIS] API error for entry ${entry.id}: ${response.status}`);
         console.error(`[AI-ANALYSIS] Error details:`, errorText);
-        console.error(`[AI-ANALYSIS] Request was for model: ${model}`);
+        console.error(`[AI-ANALYSIS] Request was for model: ${modelVal}`);
       } else {
         const data = await response.json();
         const aiResponse = data.content[0]?.text || '';
@@ -204,7 +202,7 @@ export async function POST(request: NextRequest) {
         entry.aiReview = {
           content: aiResponse,
           timestamp: new Date().toISOString(),
-          model: model,
+          model: modelVal,
           engineEval: moveAnalysis?.evaluation,
           engineBestMove: moveAnalysis?.best_move,
         };
@@ -215,8 +213,8 @@ export async function POST(request: NextRequest) {
       console.error(`[AI-ANALYSIS] Error analyzing entry ${entry.id}:`, error);
     }
 
-    // Save updated entries (only journal was modified with aiReview)
-    await saveJournal(journalEntries);
+    // Save the updated entry (only aiReview was modified)
+    await saveJournalEntry(entry);
 
     const completed = entryIndex + 1 >= gameEntries.length;
 

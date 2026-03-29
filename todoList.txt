@@ -1,6 +1,5 @@
 Minor:
 - Test backup and admin / non-admin role
-- Remove temporary migration button in settings
 
 Mid:
 
@@ -12,6 +11,7 @@ Major:
 - Switch to an interactive board in diagrams?
 
 Cleanup:
+- Remove temporary migration button in settings
 - Remove admin and temporary .md files
 
 SDLC:

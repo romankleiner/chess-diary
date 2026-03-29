@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAnalyses } from '@/lib/db';
+import { getAnalysis } from '@/lib/db';
 
 export async function GET(
   request: NextRequest,
@@ -7,18 +7,16 @@ export async function GET(
 ) {
   try {
     const { id: gameId } = await params;
-    const gameAnalyses = await getAnalyses();
+    const analysis = await getAnalysis(gameId);
     
-    if (!gameAnalyses[gameId]) {
+    if (!analysis) {
       return NextResponse.json(
         { error: 'Analysis not found for this game' },
         { status: 404 }
       );
     }
     
-    return NextResponse.json({
-      analysis: gameAnalyses[gameId],
-    });
+    return NextResponse.json({ analysis });
   } catch (error) {
     console.error('Error fetching analysis:', error);
     return NextResponse.json(
