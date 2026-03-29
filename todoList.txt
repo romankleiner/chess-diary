@@ -4,7 +4,6 @@ Minor:
 Mid:
 
 Major:
-- Redesign redis schema with key per game/entry rather than composite journal/game keys
 - Add chess.com diary export
 - Add detection of opening book during engine analysis
 - Show opponent's last move on the game diagram

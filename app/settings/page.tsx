@@ -274,35 +274,6 @@ export default function SettingsPage() {
           <p className="text-xs text-gray-500 mt-2">
             This creates a complete backup of all your data. Store it safely in case you need to restore later.
           </p>
-
-          {/* Schema Migration */}
-          <h3 className="text-lg font-semibold mb-3 mt-6">Schema Migration</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-            Migrate Redis data from JSON blobs to per-record hash keys. Safe to run multiple times.
-          </p>
-          <button
-            onClick={async () => {
-              if (!confirm('Run schema migration? This converts Redis STRING keys to HASH keys. Make sure you have a backup first.')) return;
-              setSaveMessage('⏳ Migrating...');
-              try {
-                const response = await fetch('/api/admin/migrate-schema', { method: 'POST' });
-                const data = await response.json();
-                if (data.success) {
-                  setSaveMessage(`✓ Migration complete — ${data.migratedUsers} user(s) migrated`);
-                  console.log('Migration results:', data.results);
-                } else {
-                  setSaveMessage(`✗ Migration failed: ${data.error}`);
-                }
-              } catch (error) {
-                console.error('Migration error:', error);
-                setSaveMessage('✗ Migration failed');
-              }
-              setTimeout(() => setSaveMessage(''), 5000);
-            }}
-            className="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700"
-          >
-            🔄 Run Schema Migration
-          </button>
         </div>
         )}
       </div>
