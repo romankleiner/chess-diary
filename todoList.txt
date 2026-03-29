@@ -1,5 +1,6 @@
 Minor:
 - Test backup and admin / non-admin role
+- Remove temporary migration button in settings
 
 Mid:
 
@@ -12,3 +13,7 @@ Major:
 
 Cleanup:
 - Remove admin and temporary .md files
+
+SDLC:
+- Add auto-tests
+- Add documentation

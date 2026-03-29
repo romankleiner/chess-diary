@@ -3,7 +3,7 @@ import Redis from 'ioredis';
 
 const ADMIN_KEY = 'chess-diary:admin';
 
-// Reuse the same singleton pattern as db-redis.ts
+// Reuse the same singleton pattern as db.ts
 let redis: Redis | null = null;
 
 function getRedisClient(): Redis {
