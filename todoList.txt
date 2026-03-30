@@ -2,16 +2,12 @@ Minor:
 - Test backup and admin / non-admin role
 
 Mid:
+- Add individual per-position FEN into the prompt during blog export
 
 Major:
-- Add chess.com diary export
 - Add detection of opening book during engine analysis
 - Show opponent's last move on the game diagram
 - Switch to an interactive board in diagrams?
-
-Cleanup:
-- Remove temporary migration button in settings
-- Remove admin and temporary .md files
 
 SDLC:
 - Add auto-tests

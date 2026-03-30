@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import PostGameSummaryForm from '@/components/PostGameSummaryForm';
+import BlogPostModal from '@/components/BlogPostModal';
 
 interface Game {
   id: string;
@@ -39,6 +40,11 @@ export default function GamesPage() {
   const [analyzingThinking, setAnalyzingThinking] = useState<string | null>(null);
   const [thinkingProgress, setThinkingProgress] = useState<{ current: number; total: number } | null>(null);
   const [gamesWithEntries, setGamesWithEntries] = useState<Set<string>>(new Set());
+
+  // ── Blog post state ────────────────────────────────────────────────────
+  const [showBlogModal, setShowBlogModal] = useState<string | null>(null);
+  const [blogGameData, setBlogGameData] = useState<{ opponent: string; result: string | null } | null>(null);
+  // ──────────────────────────────────────────────────────────────────────
 
   // ── Post-game summary state ────────────────────────────────────────────
   const [showSummaryForm, setShowSummaryForm] = useState<string | null>(null);
@@ -400,6 +406,17 @@ export default function GamesPage() {
                       )}
                     </>
                   )}
+                  {game.result !== null && game.analysisCompleted && gamesWithEntries.has(game.id) && (
+                    <button
+                      onClick={() => {
+                        setShowBlogModal(game.id);
+                        setBlogGameData({ opponent: game.opponent, result: game.result });
+                      }}
+                      className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm"
+                    >
+                      Blog Post
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -427,6 +444,17 @@ export default function GamesPage() {
             />
           </div>
         </div>
+      )}
+      {showBlogModal && blogGameData && (
+        <BlogPostModal
+          gameId={showBlogModal}
+          opponent={blogGameData.opponent}
+          result={blogGameData.result}
+          onClose={() => {
+            setShowBlogModal(null);
+            setBlogGameData(null);
+          }}
+        />
       )}
     </div>
   );
