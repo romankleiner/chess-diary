@@ -3,6 +3,7 @@ Minor:
 
 Mid:
 - Add individual per-position FEN into the prompt during blog export
+- Proceed to mocked auto-tests
 
 Major:
 - Add detection of opening book during engine analysis
@@ -10,5 +11,5 @@ Major:
 - Switch to an interactive board in diagrams?
 
 SDLC:
-- Add auto-tests
 - Add documentation
+- Document creation of dev environment

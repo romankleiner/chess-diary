@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getJournal, saveJournalEntry, deleteJournalEntry } from '@/lib/db';
-
-// Helper function to get current time in local timezone
-function getLocalTimestamp(): string {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60000;
-  const localTime = new Date(now.getTime() - offset);
-  return localTime.toISOString().slice(0, -1); // Remove 'Z'
-}
+import { getLocalTimestamp, filterEntriesByDate } from '@/lib/timestamps';
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,13 +11,7 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
     
-    let filteredEntries = entries;
-    
-    if (startDate && endDate) {
-      filteredEntries = entries.filter((entry: any) => {
-        return entry.date >= startDate && entry.date <= endDate;
-      });
-    }
+    const filteredEntries = filterEntriesByDate(entries, startDate, endDate);
     
     return NextResponse.json({ entries: filteredEntries });
   } catch (error) {

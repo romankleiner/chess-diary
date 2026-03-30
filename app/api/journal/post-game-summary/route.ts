@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getJournal, getGame, getAnalysis, getSetting, saveJournalEntry, getJournalEntry } from '@/lib/db';
-
-function getLocalTimestamp(): string {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60000;
-  const localTime = new Date(now.getTime() - offset);
-  return localTime.toISOString().slice(0, -1);
-}
+import { computeStatistics } from '@/lib/analysis-utils';
+import { getLocalTimestamp } from '@/lib/timestamps';
 
 // GET: Check if a post-game summary exists for a gameId
 export async function GET(request: NextRequest) {
@@ -137,58 +132,3 @@ export async function PUT(request: NextRequest) {
   }
 }
 
-// Compute statistics for only the user's moves.
-//
-// game_analyses stores:
-//   whitePlayer, blackPlayer   — Chess.com usernames
-//   whiteAccuracy, blackAccuracy — per-side accuracy (0-100)
-//   moves[]                    — each move has { color: 'white'|'black', centipawnLoss, moveQuality }
-//
-// We match username against whitePlayer to determine the user's color,
-// then filter moves to only that color before counting mistakes.
-function computeStatistics(gameAnalysis: any, username: string) {
-  if (!gameAnalysis?.moves) return null;
-
-  // Determine which color the user played
-  const userColor: 'white' | 'black' =
-    gameAnalysis.whitePlayer?.toLowerCase() === username ? 'white' : 'black';
-
-  // Pick the pre-computed per-side accuracy stored by the analyze route
-  const accuracy: number | null =
-    userColor === 'white'
-      ? gameAnalysis.whiteAccuracy ?? null
-      : gameAnalysis.blackAccuracy ?? null;
-
-  // Filter to only the user's moves
-  const userMoves: any[] = gameAnalysis.moves.filter(
-    (m: any) => m.color === userColor
-  );
-
-  const totalMoves = userMoves.length;
-  let blunders = 0, mistakes = 0, inaccuracies = 0;
-  let totalCentipawnLoss = 0, movesWithEval = 0;
-
-  for (const move of userMoves) {
-    const quality: string = move.moveQuality || move.quality || '';
-    if (quality === 'blunder') blunders++;
-    else if (quality === 'mistake') mistakes++;
-    else if (quality === 'inaccuracy') inaccuracies++;
-
-    if (typeof move.centipawnLoss === 'number') {
-      totalCentipawnLoss += move.centipawnLoss;
-      movesWithEval++;
-    }
-  }
-
-  const averageCentipawnLoss =
-    movesWithEval > 0 ? Math.round(totalCentipawnLoss / movesWithEval) : null;
-
-  return {
-    totalMoves,
-    accuracy,
-    blunders,
-    mistakes,
-    inaccuracies,
-    averageCentipawnLoss,
-  };
-}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
 import { getGame, getAnalysis, getSetting, setGameProgress, getGameProgress, clearGameProgress, saveAnalysis, saveGame } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
+import { calculateAccuracy, getMoveQuality } from '@/lib/analysis-utils';
 
 // Detect if running on Vercel
 const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
@@ -37,29 +38,6 @@ export async function GET(request: NextRequest) {
     console.error('[PROGRESS] GET error:', error);
     return NextResponse.json({ current: 0, total: 0 });
   }
-}
-
-function calculateAccuracy(centipawnLosses: number[]): number {
-  if (centipawnLosses.length === 0) return 100;
-  
-  let totalAccuracy = 0;
-  
-  for (const loss of centipawnLosses) {
-    const winPercentageLost = 50 * (2 / (1 + Math.exp(0.00368208 * loss)) - 1);
-    const moveAccuracy = 100 - Math.abs(winPercentageLost);
-    totalAccuracy += moveAccuracy;
-  }
-  
-  const accuracy = totalAccuracy / centipawnLosses.length;
-  return Math.max(0, Math.min(100, Math.round(accuracy * 10) / 10));
-}
-
-function getMoveQuality(cpLoss: number): string {
-  if (cpLoss <= 25) return 'excellent';
-  if (cpLoss <= 50) return 'good';
-  if (cpLoss <= 100) return 'inaccuracy';
-  if (cpLoss <= 200) return 'mistake';
-  return 'blunder';
 }
 
 // ========== CHESS-API.COM EVALUATION (for Vercel) ==========

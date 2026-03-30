@@ -93,7 +93,7 @@ export function parseChessComGame(game: any, username: string): Game | null {
   };
 }
 
-function determineResult(game: any, username: string): string {
+export function determineResult(game: any, username: string): string {
   // Handle both formats
   let whiteResult: string;
   let blackResult: string;
