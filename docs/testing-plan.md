@@ -74,42 +74,42 @@ vitest.config.ts
 
 These run in milliseconds and protect the most complex logic.
 
-- [ ] `parseChessComGame` — archived vs. active format, non-daily returns null, ID extraction from URL, opponent selection
-- [ ] `determineResult` — win/loss/draw from each player's perspective
-- [ ] `calculateAccuracy` — empty array → 100, zero CP loss → ~100, large CP loss → approaches 0, always clamped 0–100
-- [ ] `getMoveQuality` — boundary values at exactly 25/50/100/200 cp
-- [ ] `computeStatistics` — user is white vs. black; correct blunder/mistake/inaccuracy counts; missing `moves` → null
-- [ ] `buildAnalysisPrompt` — FEN included/omitted; PV as array vs. string; each verbosity mode produces different instructions
-- [ ] Date filter logic — boundary dates included, out-of-range excluded, no params → all entries
+- [x] `parseChessComGame` — archived vs. active format, non-daily returns null, ID extraction from URL, opponent selection
+- [x] `determineResult` — win/loss/draw from each player's perspective
+- [x] `calculateAccuracy` — empty array → 100, zero CP loss → ~100, large CP loss → approaches 0, always clamped 0–100
+- [x] `getMoveQuality` — boundary values at exactly 25/50/100/200 cp
+- [x] `computeStatistics` — user is white vs. black; correct blunder/mistake/inaccuracy counts; missing `moves` → null
+- [x] `buildAnalysisPrompt` — FEN included/omitted; PV as array vs. string; each verbosity mode produces different instructions
+- [x] Date filter logic — boundary dates included, out-of-range excluded, no params → all entries
 
 ### Tier 2 — DB layer with in-memory Redis mock
 
-- [ ] `getGame` / `saveGame` / `deleteGame` — full round-trip, delete → null
-- [ ] `saveJournalEntry` / `getJournal` — empty hash returns `[]` not null/undefined
-- [ ] `getSetting` with missing key returns `null` (not the string `"null"`)
-- [ ] `setGameProgress` / `clearGameProgress` — TTL is set; cleared key returns null
-- [ ] `getDb` — correct `DatabaseData` shape assembled; error in one sub-call returns `getEmptyDb()` shape
+- [x] `getGame` / `saveGame` / `deleteGame` — full round-trip, delete → null
+- [x] `saveJournalEntry` / `getJournal` — empty hash returns `[]` not null/undefined
+- [x] `getSetting` with missing key returns `null` (not the string `"null"`)
+- [x] `setGameProgress` / `clearGameProgress` — TTL is set; cleared key returns null
+- [x] `getDb` — correct `DatabaseData` shape assembled; error in one sub-call returns `getEmptyDb()` shape
 
 ### Tier 3 — Route handlers with mocked DB module
 
-- [ ] `GET /api/games` — `analysisCompleted` merged from analyses, not game objects; sorted by date desc
-- [ ] `GET /api/journal` — date params filter correctly
-- [ ] `POST /api/journal` — `id` assigned as number, `timestamp` set, entry returned
-- [ ] `PUT /api/journal/[id]` — 404 on missing entry; only allowed fields merged
-- [ ] `POST /api/games/start` — 400 on missing `gameUrl`; 400 when username not set
-- [ ] `POST /api/games/fetch` — deduplicates by ID; preserves existing `analysisCompleted`
-- [ ] `POST /api/journal/post-game-summary` — 409 on duplicate; `computeStatistics` called with lowercased username
-- [ ] `GET/PUT /api/settings` — empty object returned when nothing set; each key saved
+- [x] `GET /api/games` — `analysisCompleted` merged from analyses, not game objects; sorted by date desc
+- [x] `GET /api/journal` — date params filter correctly
+- [x] `POST /api/journal` — `id` assigned as number, `timestamp` set, entry returned
+- [x] `PUT /api/journal/[id]` — 404 on missing entry; only allowed fields merged
+- [x] `POST /api/games/start` — 400 on missing `gameUrl`; 400 when username not set
+- [x] `POST /api/games/fetch` — deduplicates by ID; preserves existing `analysisCompleted`
+- [x] `POST /api/journal/post-game-summary` — 409 on duplicate; `computeStatistics` called with lowercased username
+- [x] `GET/PUT /api/settings` — empty object returned when nothing set; each key saved
 
 ### Tier 4 — Routes with mocked `fetch` (Anthropic / Chess.com)
 
-- [ ] `POST /api/games/[id]/blog-post` — 404 on missing game; prompt contains PGN and analysis stats; FEN entries produce `[DIAGRAM:...]` markers; response returns `{ post, prompt }`; Anthropic failure → 500
-- [ ] `POST /api/games/analyze-thinking` — skips empty-content entries; saves `aiReview` on success; `maxTokens` varies by verbosity; `needsEngineAnalysis: true` when no engine data
+- [x] `POST /api/games/[id]/blog-post` — 404 on missing game; prompt contains PGN and analysis stats; FEN entries produce `[DIAGRAM:...]` markers; response returns `{ post, prompt }`; Anthropic failure → 500
+- [x] `POST /api/games/analyze-thinking` — skips empty-content entries; saves `aiReview` on success; `maxTokens` varies by verbosity; `needsEngineAnalysis: true` when no engine data
 
 ### Tier 5 — Write last (complex, diminishing returns)
 
-- [ ] `POST /api/games/analyze` — `calculateAccuracy` + `getMoveQuality` integration through a full batch result; `IS_VERCEL` branching (requires `vi.resetModules()` + dynamic import)
-- [ ] `GET /api/journal/export?format=docx` — duplicate-entry dedup; PNG/JPEG magic-byte image detection; docx library invoked
+- [x] `POST /api/games/analyze` — `calculateAccuracy` + `getMoveQuality` integration through a full batch result; `IS_VERCEL` branching (requires `vi.resetModules()` + dynamic import)
+- [x] `GET /api/journal/export?format=docx` — duplicate-entry dedup; PNG/JPEG magic-byte image detection; docx library invoked
 
 ---
 

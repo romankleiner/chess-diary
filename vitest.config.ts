@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
     environment: 'node',
+    setupFiles: ['__tests__/helpers/mock-clerk.ts'],
     coverage: {
       provider: 'v8',
       include: ['lib/**', 'app/api/**'],
