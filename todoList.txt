@@ -1,8 +1,13 @@
+Blog export:
+- Add eval after every move
+- Make sure diagrams get exported into the blog
+- Improve formatting of headers and general L&F
+
 Minor:
 - Test backup and admin / non-admin role
 
 Mid:
-- Add individual per-position FEN into the prompt during blog export
+- 
 
 Major:
 - Add detection of opening book during engine analysis
