@@ -1,6 +1,6 @@
 Minor:
 - Test backup and admin / non-admin role
--  Get a total of tests run and test succeeded at the end of the test run
+- Get a total of tests run and test succeeded at the end of the test run
 
 Mid:
 - Add individual per-position FEN into the prompt during blog export
