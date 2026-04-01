@@ -1,6 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGame, getJournal, getAnalysis, getSetting } from '@/lib/db';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface EngineEval {
+  moveQuality: string;
+  centipawnLoss: number;
+  evaluation: number; // white-POV, pawn units
+}
+
+interface MoveSection {
+  type: 'move';
+  header: string;     // e.g. "Move 2: Nf3"
+  timestamp: string;  // formatted HH:MM AM/PM
+  fen: string | null;
+  userColor: 'white' | 'black';
+  thinking: string;
+  engineEval: EngineEval | null;
+  aiReview: string | null;
+  postReview: string | null;
+}
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -21,127 +43,134 @@ export async function POST(
     }
 
     const modelVal = model || 'claude-sonnet-4-6';
-
-    // Filter journal entries for this game, sorted chronologically
-    const gameEntries = journalEntries
-      .filter((e: any) => e.gameId === gameId)
-      .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-    // Determine player color
     const usernameLC = (username || '').toLowerCase();
     const userColor: 'white' | 'black' =
       usernameLC && game.white?.toLowerCase() === usernameLC ? 'white' : 'black';
 
-    // Build prompt
-    let prompt = `You are helping a chess player write a Chess.com blog post about a specific game.
+    // ── Filter & sort entries chronologically ─────────────────────────────
 
-GAME METADATA
-- Date: ${game.date}
-- White: ${game.white} | Black: ${game.black}
-- Result: ${game.result} (player was ${userColor})
-- Time control: ${game.timeControl || 'unknown'}
-- Chess.com link: ${game.url || 'not available'}
+    const gameEntries = journalEntries
+      .filter((e: any) => e.gameId === gameId)
+      .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-PGN
-${game.pgn || 'Not available'}`;
-
-    // Add analysis statistics if available
-    if (analysis?.summary) {
-      const s = analysis.summary;
-      const parts: string[] = [];
-      if (s.accuracy !== undefined && s.accuracy !== null) parts.push(`Accuracy: ${s.accuracy}%`);
-      if (s.blunders !== undefined) parts.push(`Blunders: ${s.blunders}`);
-      if (s.mistakes !== undefined) parts.push(`Mistakes: ${s.mistakes}`);
-      if (s.inaccuracies !== undefined) parts.push(`Inaccuracies: ${s.inaccuracies}`);
-      if (parts.length > 0) {
-        prompt += `\n\nANALYSIS STATISTICS\n- ${parts.join(' | ')}`;
-      }
-    }
-
-    // Find post-game summary entry
     const summaryEntry = gameEntries.find((e: any) => e.entryType === 'post_game_summary');
-    const regularEntries = gameEntries.filter((e: any) => e.entryType !== 'post_game_summary');
+    const moveEntries  = gameEntries.filter((e: any) => e.entryType !== 'post_game_summary');
 
-    // Add journal notes if any
-    if (regularEntries.length > 0) {
-      prompt += `\n\nJOURNAL NOTES (chronological)`;
-      for (const entry of regularEntries) {
-        if (!entry.content?.trim()) continue;
+    // ── Build per-entry sections (no Claude) ──────────────────────────────
+
+    const sections: MoveSection[] = moveEntries
+      .filter((e: any) => e.content?.trim())
+      .map((entry: any) => {
+        const time = new Date(entry.timestamp).toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+
         const notation = entry.moveNotation || entry.myMove || '';
-        const moveLabel = entry.moveNumber
-          ? (notation ? `Move ${entry.moveNumber} (${notation})` : `Move ${entry.moveNumber}`)
-          : null;
-        const fenTag = entry.fen ? ` [FEN: ${entry.fen}]` : '';
-        if (moveLabel) {
-          prompt += `\n${moveLabel}${fenTag}: ${entry.content}`;
-        } else {
-          prompt += `\n${entry.content}`;
+
+        // Format date as "March 10, 2026" from entry.date (YYYY-MM-DD), avoiding
+        // timezone shifts by splitting manually instead of using new Date().
+        const entryDateLabel = (() => {
+          const d = (entry.date || entry.timestamp?.slice(0, 10) || '').split('-').map(Number);
+          if (d.length !== 3 || !d[0]) return entry.date || '';
+          const months = [
+            'January','February','March','April','May','June',
+            'July','August','September','October','November','December',
+          ];
+          return `${months[d[1] - 1]} ${d[2]}, ${d[0]}`;
+        })();
+
+        const header = entry.moveNumber
+          ? (notation ? `Move ${entry.moveNumber}: ${notation}` : `Move ${entry.moveNumber}`)
+          : entryDateLabel;
+
+        // Match to engine analysis by fullmove number + SAN notation
+        let engineEval: EngineEval | null = null;
+        if (entry.moveNumber && entry.moveNotation && Array.isArray(analysis?.moves)) {
+          const hit = analysis.moves.find(
+            (m: any) => m.moveNumber === entry.moveNumber && m.move === entry.moveNotation
+          );
+          if (hit) {
+            engineEval = {
+              moveQuality:   hit.moveQuality,
+              centipawnLoss: hit.centipawnLoss,
+              evaluation:    hit.evaluation,
+            };
+          }
         }
-        if (entry.aiReview?.content) {
-          prompt += `\n  → AI review: ${entry.aiReview.content}`;
-        }
+
+        return {
+          type: 'move' as const,
+          header,
+          timestamp: time,
+          fen:        entry.fen        ?? null,
+          userColor,
+          thinking:   entry.content.trim(),
+          engineEval,
+          aiReview:   entry.aiReview?.content  ?? null,
+          postReview: entry.postReview?.content ?? null,
+        };
+      });
+
+    // ── Build Claude prompt for the overall summary only ──────────────────
+
+    let prompt =
+      `Write a 150-250 word overall summary for a chess blog post about the following game.\n` +
+      `Plain paragraphs only - no headers, no bullet points.\n\n` +
+      `Game: ${game.white} (White) vs ${game.black} (Black)\n` +
+      `Date: ${game.date}\n` +
+      `Result: ${game.result} (you played as ${userColor})\n` +
+      `Time control: ${game.timeControl || 'unknown'}`;
+
+    if (analysis) {
+      const acc: string[] = [];
+      if (analysis.whiteAccuracy != null) acc.push(`White accuracy: ${analysis.whiteAccuracy}%`);
+      if (analysis.blackAccuracy != null) acc.push(`Black accuracy: ${analysis.blackAccuracy}%`);
+      if (acc.length) prompt += `\nAccuracy: ${acc.join(', ')}`;
+    }
+
+    // Include notable moments as context for Claude
+    const notableMoves = sections.filter(
+      s => s.engineEval && ['mistake', 'blunder', 'excellent'].includes(s.engineEval.moveQuality)
+    );
+    if (notableMoves.length) {
+      prompt += `\n\nNotable moments:`;
+      for (const s of notableMoves) {
+        const snippet = s.thinking.slice(0, 120);
+        prompt += `\n- ${s.header}: "${snippet}" (${s.engineEval!.moveQuality})`;
       }
     }
 
-    // Add post-game reflections at the end of context (will appear at end of blog too)
-    const hasReflections = !!(summaryEntry?.postGameSummary?.reflections);
-    if (hasReflections) {
+    if (summaryEntry?.postGameSummary?.reflections) {
       const r = summaryEntry.postGameSummary.reflections;
-      prompt += `\n\nPOST-GAME REFLECTIONS (use these verbatim as the closing section of the blog post)`;
-      if (r.whatWentWell) prompt += `\n- What went well: ${r.whatWentWell}`;
-      if (r.mistakes) prompt += `\n- Key mistakes: ${r.mistakes}`;
+      prompt += `\n\nPost-game reflections:`;
+      if (r.whatWentWell)   prompt += `\n- What went well: ${r.whatWentWell}`;
+      if (r.mistakes)       prompt += `\n- Key mistakes: ${r.mistakes}`;
       if (r.lessonsLearned) prompt += `\n- Lessons learned: ${r.lessonsLearned}`;
-      if (r.nextSteps) prompt += `\n- Next steps: ${r.nextSteps}`;
+      if (r.nextSteps)      prompt += `\n- Next steps: ${r.nextSteps}`;
     }
 
-    const displayName = username || 'I';
-    prompt += `\n\n---
+    console.log(`[BLOG-POST] Game ${gameId}: ${sections.length} sections, calling ${modelVal} for summary`);
 
-Write an engaging Chess.com blog post (400–600 words) about this game. Follow these rules carefully:
-
-STRUCTURE:
-- Open with a hook about the game's key moment or result
-- Walk through the game move by move, using the JOURNAL NOTES as the backbone of the narrative
-${hasReflections ? '- End with a closing section based on the POST-GAME REFLECTIONS — this must come last' : '- Close with lessons learned or what to work on next'}
-
-VOICE & CONTENT:
-- Write in first person from ${displayName}'s perspective
-- For each journal note, quote or closely paraphrase what was actually written — do not invent new thoughts or deviate significantly from the original wording; you may clean up grammar and flow
-- Use the AI review notes as supporting context, but keep the player's own words front and center
-- Use a friendly, reflective tone appropriate for a chess community blog
-- Do not mention that this was AI-generated
-
-DIAGRAMS:
-- Where a journal note includes a [FEN: ...] tag, place a diagram marker on its own line immediately after the paragraph about that move, using this exact format: [DIAGRAM:<fen>:${userColor}]
-- Use the exact FEN string from the tag — do not modify it
-- Only emit diagram markers for positions that have a [FEN: ...] tag in the journal notes
-
-FORMAT:
-- Plain paragraphs separated by blank lines (no markdown headers, no bullet points)
-- Diagram markers go on their own line between paragraphs`;
-
-    console.log(`[BLOG-POST] Generating blog post for game ${gameId} using model ${modelVal}`);
-    console.log(`\n========== BLOG POST PROMPT ==========`);
-    console.log(prompt);
-    console.log(`========== END PROMPT ==========\n`);
+    // ── Call Claude for the summary ───────────────────────────────────────
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+        'Content-Type':      'application/json',
+        'x-api-key':         process.env.ANTHROPIC_API_KEY || '',
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: modelVal,
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }],
+        model:      modelVal,
+        max_tokens: 600,
+        messages:   [{ role: 'user', content: prompt }],
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[BLOG-POST] API error: ${response.status}`, errorText);
+      console.error(`[BLOG-POST] Claude API error: ${response.status}`, errorText);
       return NextResponse.json(
         { error: `Claude API error: ${response.status}` },
         { status: 500 }
@@ -149,11 +178,11 @@ FORMAT:
     }
 
     const data = await response.json();
-    const post = data.content[0]?.text || '';
+    const summary = data.content[0]?.text || '';
 
-    console.log(`[BLOG-POST] Generated blog post (${post.length} chars) for game ${gameId}`);
+    console.log(`[BLOG-POST] Summary generated (${summary.length} chars) for game ${gameId}`);
 
-    return NextResponse.json({ post, prompt });
+    return NextResponse.json({ sections, summary, prompt, pgn: game.pgn || '', userColor });
   } catch (error) {
     console.error('[BLOG-POST] Error:', error);
     return NextResponse.json(

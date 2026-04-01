@@ -17,10 +17,10 @@ vi.stubGlobal('fetch', fetchMock);
 import { POST } from '@/app/api/games/[id]/blog-post/route';
 import { getGame, getJournal, getAnalysis, getSetting } from '@/lib/db';
 
-const mockGetGame = vi.mocked(getGame);
-const mockGetJournal = vi.mocked(getJournal);
+const mockGetGame     = vi.mocked(getGame);
+const mockGetJournal  = vi.mocked(getJournal);
 const mockGetAnalysis = vi.mocked(getAnalysis);
-const mockGetSetting = vi.mocked(getSetting);
+const mockGetSetting  = vi.mocked(getSetting);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ function makeReq(gameId = gameA.id) {
   return new NextRequest(`http://localhost/api/games/${gameId}/blog-post`, { method: 'POST' });
 }
 
-function stubFetchSuccess(text = 'Generated blog post content.') {
+function stubFetchSuccess(text = 'Overall this was a strong game.') {
   fetchMock.mockResolvedValue({
     ok: true,
     json: async () => ({ content: [{ text }] }),
@@ -51,7 +51,6 @@ function stubFetchFailure(status = 500) {
 beforeEach(() => {
   vi.clearAllMocks();
   fetchMock.mockReset();
-  // Default: username + model configured
   mockGetSetting.mockImplementation(async (key: string) => {
     if (key === 'chesscom_username') return 'testuser';
     if (key === 'ai_model') return 'claude-sonnet-4-6';
@@ -73,167 +72,272 @@ describe('POST /api/games/[id]/blog-post — 404', () => {
   });
 });
 
-// ─── Prompt contents ──────────────────────────────────────────────────────────
+// ─── sections assembly (no Claude needed) ─────────────────────────────────────
 
-describe('POST /api/games/[id]/blog-post — prompt construction', () => {
-  beforeEach(() => mockGetGame.mockResolvedValue(gameA));
+describe('POST /api/games/[id]/blog-post — sections', () => {
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue(gameA);
+    stubFetchSuccess();
+  });
 
-  it('prompt includes the game PGN', async () => {
+  it('returns a sections array', async () => {
     mockGetJournal.mockResolvedValue([thoughtEntry]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
-
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.messages[0].content).toContain(gameA.pgn);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(Array.isArray(sections)).toBe(true);
   });
 
-  it('prompt includes game metadata (white, black, date)', async () => {
-    mockGetJournal.mockResolvedValue([]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
-
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    const content: string = body.messages[0].content;
-    expect(content).toContain(gameA.white);
-    expect(content).toContain(gameA.black);
-    expect(content).toContain(gameA.date);
+  it('one section per non-summary entry with non-empty content', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry, moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections).toHaveLength(2);
   });
 
-  it('prompt includes analysis statistics when analysis.summary is present', async () => {
-    mockGetAnalysis.mockResolvedValue({
-      summary: { accuracy: 88.5, blunders: 1, mistakes: 2, inaccuracies: 4 },
-    });
-    mockGetJournal.mockResolvedValue([]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
-
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    const content: string = body.messages[0].content;
-    expect(content).toContain('ANALYSIS STATISTICS');
-    expect(content).toContain('88.5%');
-    expect(content).toContain('Blunders: 1');
+  it('excludes post_game_summary entries from sections', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry, summaryEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    // summaryEntry is post_game_summary → excluded from sections
+    expect(sections).toHaveLength(1);
   });
 
-  it('prompt omits ANALYSIS STATISTICS section when analysis has no summary', async () => {
-    mockGetAnalysis.mockResolvedValue({ moves: [] }); // analysis exists but no summary
-    mockGetJournal.mockResolvedValue([]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
-
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.messages[0].content).not.toContain('ANALYSIS STATISTICS');
+  it('skips entries with empty content', async () => {
+    const emptyEntry = { ...thoughtEntry, content: '   ' };
+    mockGetJournal.mockResolvedValue([emptyEntry, thoughtEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections).toHaveLength(1);
   });
 
-  it('prompt includes JOURNAL NOTES when entries exist', async () => {
-    mockGetJournal.mockResolvedValue([thoughtEntry]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
-
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.messages[0].content).toContain('JOURNAL NOTES');
-    expect(body.messages[0].content).toContain(thoughtEntry.content);
-  });
-
-  it('prompt skips journal entries with empty content', async () => {
-    // An entry with real content alongside one with whitespace-only content.
-    // Only the real entry's text should appear in the prompt.
-    const realEntry  = { ...thoughtEntry, id: 9001, content: 'SHOULD_APPEAR_IN_PROMPT' };
-    const emptyEntry = { ...thoughtEntry, id: 9002, content: '   ' }; // whitespace-only
-    mockGetJournal.mockResolvedValue([realEntry, emptyEntry]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
-
-    const content: string = JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content;
-    expect(content).toContain('SHOULD_APPEAR_IN_PROMPT');
-    // The whitespace-only entry contributes nothing — no empty placeholder line
-    // between paragraphs where only spaces appear
-    const lines = content.split('\n');
-    const blankButNotEmpty = lines.filter(l => l.length > 0 && l.trim() === '');
-    expect(blankButNotEmpty).toHaveLength(0);
-  });
-
-  it('FEN-tagged entries include [FEN: ...] inline in the prompt', async () => {
-    mockGetJournal.mockResolvedValue([moveEntry]); // moveEntry has a FEN
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
-
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.messages[0].content).toContain(`[FEN: ${moveEntry.fen}]`);
-  });
-
-  it('prompt includes [DIAGRAM:...] marker instructions for FEN entries', async () => {
+  it('section header includes move number and notation for move entries', async () => {
     mockGetJournal.mockResolvedValue([moveEntry]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
-
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    // The instructions tell Claude to emit [DIAGRAM:<fen>:color] markers
-    expect(body.messages[0].content).toContain('[DIAGRAM:');
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].header).toContain(String(moveEntry.moveNumber));
+    expect(sections[0].header).toContain(moveEntry.moveNotation);
   });
 
-  it('prompt includes POST-GAME REFLECTIONS when a summary entry exists', async () => {
-    mockGetJournal.mockResolvedValue([summaryEntry]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
+  it('section header is the formatted date when moveNumber is absent', async () => {
+    // thoughtEntry.date = '2026-03-10' → "March 10, 2026"
+    const general = { ...thoughtEntry, moveNumber: undefined, moveNotation: undefined };
+    mockGetJournal.mockResolvedValue([general]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].header).toBe('March 10, 2026');
+  });
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.messages[0].content).toContain('POST-GAME REFLECTIONS');
-    expect(body.messages[0].content).toContain(
-      summaryEntry.postGameSummary!.reflections.lessonsLearned!
+  it('section contains the original thinking text', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].thinking).toBe(thoughtEntry.content.trim());
+  });
+
+  it('section includes fen when present on the entry', async () => {
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].fen).toBe(moveEntry.fen);
+  });
+
+  it('fen is null when the entry has no FEN', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry]); // thoughtEntry has no fen
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].fen).toBeNull();
+  });
+
+  it('userColor is white when the player is white', async () => {
+    // gameA.white === 'testuser' and getSetting returns 'testuser'
+    mockGetJournal.mockResolvedValue([thoughtEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].userColor).toBe('white');
+  });
+
+  it('userColor is black when the player is black', async () => {
+    // gameB.black === TEST_USERNAME
+    const { gameB } = await import('../helpers/fixtures');
+    mockGetGame.mockResolvedValue(gameB);
+    mockGetJournal.mockResolvedValue([{ ...thoughtEntry, gameId: gameB.id }]);
+    const res = await POST(
+      new NextRequest(`http://localhost/api/games/${gameB.id}/blog-post`, { method: 'POST' }),
+      params(gameB.id)
     );
+    const { sections } = await res.json();
+    expect(sections[0].userColor).toBe('black');
+  });
+});
+
+// ─── engineEval matching ─────────────────────────────────────────────────────
+
+describe('POST /api/games/[id]/blog-post — engineEval', () => {
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue(gameA);
+    stubFetchSuccess();
   });
 
-  it('post-game summary entry is not included in the JOURNAL NOTES section', async () => {
-    mockGetJournal.mockResolvedValue([summaryEntry]);
-    stubFetchSuccess();
-    await POST(makeReq(), params(gameA.id));
+  it('engineEval is populated when analysis move matches by moveNumber + moveNotation', async () => {
+    // analysisA.moves[0] = { color: 'white', centipawnLoss: 10, moveQuality: 'excellent' }
+    // We need a move with moveNumber and moveNotation matching an analysisA move.
+    // analysisA doesn't store move SAN — let's build a custom analysis with the move SAN.
+    const customAnalysis = {
+      ...analysisA,
+      moves: [
+        { moveNumber: 2, color: 'white', move: 'Nf3', centipawnLoss: 10, moveQuality: 'excellent', evaluation: 0.3 },
+      ],
+    };
+    mockGetAnalysis.mockResolvedValue(customAnalysis);
+    mockGetJournal.mockResolvedValue([moveEntry]); // moveEntry: moveNumber=2, moveNotation='Nf3'
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    const content: string = body.messages[0].content;
-    // When only a summary entry exists, regularEntries is empty, so the
-    // JOURNAL NOTES (chronological) section header should not be present.
-    // (The instructions text may still reference "JOURNAL NOTES" as a concept.)
-    expect(content).not.toContain('JOURNAL NOTES (chronological)');
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval).not.toBeNull();
+    expect(sections[0].engineEval.moveQuality).toBe('excellent');
+    expect(sections[0].engineEval.centipawnLoss).toBe(10);
+    expect(sections[0].engineEval.evaluation).toBe(0.3);
+  });
+
+  it('engineEval is null when no analysis is available', async () => {
+    mockGetAnalysis.mockResolvedValue(null);
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval).toBeNull();
+  });
+
+  it('engineEval is null when moveNotation does not match any analysis move', async () => {
+    mockGetAnalysis.mockResolvedValue(analysisA); // analysisA moves have no .move field
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval).toBeNull();
+  });
+
+  it('engineEval is null for entries without moveNotation (general thoughts)', async () => {
+    mockGetAnalysis.mockResolvedValue(analysisA);
+    mockGetJournal.mockResolvedValue([thoughtEntry]); // no moveNotation
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval).toBeNull();
+  });
+});
+
+// ─── aiReview and postReview passthrough ──────────────────────────────────────
+
+describe('POST /api/games/[id]/blog-post — aiReview / postReview', () => {
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue(gameA);
+    stubFetchSuccess();
+  });
+
+  it('aiReview content is included when present on the entry', async () => {
+    const entryWithAi = {
+      ...thoughtEntry,
+      aiReview: { content: 'Knight controls key squares.', model: 'claude-sonnet-4-6', timestamp: '' },
+    };
+    mockGetJournal.mockResolvedValue([entryWithAi]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].aiReview).toBe('Knight controls key squares.');
+  });
+
+  it('aiReview is null when not present', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].aiReview).toBeNull();
+  });
+
+  it('postReview content is included when present on the entry', async () => {
+    const entryWithPost = {
+      ...thoughtEntry,
+      postReview: { content: 'In hindsight, Nc3 was better.', timestamp: '' },
+    };
+    mockGetJournal.mockResolvedValue([entryWithPost]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].postReview).toBe('In hindsight, Nc3 was better.');
+  });
+
+  it('postReview is null when not present', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].postReview).toBeNull();
+  });
+});
+
+// ─── Claude summary prompt ────────────────────────────────────────────────────
+
+describe('POST /api/games/[id]/blog-post — Claude summary prompt', () => {
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue(gameA);
+    mockGetJournal.mockResolvedValue([thoughtEntry]);
+    stubFetchSuccess();
+  });
+
+  it('prompt includes game metadata (white, black, result)', async () => {
+    const { prompt } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(prompt).toContain(gameA.white);
+    expect(prompt).toContain(gameA.black);
+    expect(prompt).toContain(gameA.result);
+  });
+
+  it('prompt includes accuracy statistics when analysis is present', async () => {
+    mockGetAnalysis.mockResolvedValue(analysisA);
+    const { prompt } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(prompt).toContain('accuracy');
+  });
+
+  it('prompt includes post-game reflections when a summary entry is present', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry, summaryEntry]);
+    const { prompt } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(prompt).toContain(summaryEntry.postGameSummary!.reflections.lessonsLearned!);
   });
 
   it('uses default model when ai_model setting is null', async () => {
     mockGetSetting.mockImplementation(async (key: string) => {
       if (key === 'chesscom_username') return 'testuser';
-      return null; // ai_model not set
+      return null;
     });
-    mockGetJournal.mockResolvedValue([]);
-    stubFetchSuccess();
     await POST(makeReq(), params(gameA.id));
-
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('max_tokens for summary is 600', async () => {
+    await POST(makeReq(), params(gameA.id));
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.max_tokens).toBe(600);
   });
 });
 
 // ─── Response shape ───────────────────────────────────────────────────────────
 
-describe('POST /api/games/[id]/blog-post — response', () => {
+describe('POST /api/games/[id]/blog-post — response shape', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);
     mockGetJournal.mockResolvedValue([thoughtEntry]);
   });
 
-  it('returns { post, prompt } on success', async () => {
-    stubFetchSuccess('My amazing chess story.');
+  it('returns { sections, summary, prompt } on success', async () => {
+    stubFetchSuccess('A great game.');
     const res = await POST(makeReq(), params(gameA.id));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.post).toBe('My amazing chess story.');
+    expect(Array.isArray(body.sections)).toBe(true);
+    expect(typeof body.summary).toBe('string');
     expect(typeof body.prompt).toBe('string');
-    expect(body.prompt.length).toBeGreaterThan(0);
   });
 
-  it('the returned prompt matches what was sent to Claude', async () => {
+  it('summary contains the Claude-generated text', async () => {
+    stubFetchSuccess('An excellent game from start to finish.');
+    const { summary } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(summary).toBe('An excellent game from start to finish.');
+  });
+
+  it('prompt matches what was sent to Claude', async () => {
     stubFetchSuccess();
-    const res = await POST(makeReq(), params(gameA.id));
-    const { prompt } = await res.json();
+    const { prompt } = await (await POST(makeReq(), params(gameA.id))).json();
     const fetchBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(fetchBody.messages[0].content).toBe(prompt);
+  });
+
+  it('returns pgn from the game record', async () => {
+    stubFetchSuccess();
+    const { pgn } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(pgn).toBe(gameA.pgn);
+  });
+
+  it('returns userColor derived from the chesscom_username setting', async () => {
+    // gameA.white === 'testuser' → white
+    stubFetchSuccess();
+    const { userColor } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(userColor).toBe('white');
   });
 });
 
@@ -242,7 +346,7 @@ describe('POST /api/games/[id]/blog-post — response', () => {
 describe('POST /api/games/[id]/blog-post — Anthropic errors', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);
-    mockGetJournal.mockResolvedValue([]);
+    mockGetJournal.mockResolvedValue([thoughtEntry]);
   });
 
   it('returns 500 when Anthropic responds with an error status', async () => {
