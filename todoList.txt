@@ -5,6 +5,8 @@ Blog export:
 
 Minor:
 - Test backup and admin / non-admin role
+- Analysis fails
+- Allow modifying move when editing game-specific entry
 
 Mid:
 - 
