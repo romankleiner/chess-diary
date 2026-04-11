@@ -22,6 +22,8 @@ export async function PUT(
     // Update entry fields
     if (body.content !== undefined) entry.content = body.content;
     if (body.myMove !== undefined) entry.myMove = body.myMove;
+    if (body.moveNotation !== undefined) entry.moveNotation = body.moveNotation;
+    if (body.moveNumber !== undefined) entry.moveNumber = body.moveNumber;
     if (body.images !== undefined) entry.images = body.images;
     if (body.postReview !== undefined) entry.postReview = body.postReview;
     if (body.aiReview !== undefined) entry.aiReview = body.aiReview;

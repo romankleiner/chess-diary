@@ -1163,7 +1163,7 @@ export default function JournalPage() {
             </p>
           </div>
           
-          {entryMode === 'game' && !editingEntry && (
+          {entryMode === 'game' && (
             <div>
               <label className="block text-sm font-medium mb-2">
                 My Move (optional)
@@ -1176,7 +1176,9 @@ export default function JournalPage() {
                 placeholder="e.g., Nf3, e4, O-O"
               />
               <p className="text-xs text-gray-500 mt-1">
-                If you've decided on your move, enter it here. This will mark the game as no longer waiting on you.
+                {editingEntry
+                  ? 'Update the move you decided upon.'
+                  : 'If you\'ve decided on your move, enter it here. This will mark the game as no longer waiting on you.'}
               </p>
             </div>
           )}
