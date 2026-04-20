@@ -372,7 +372,7 @@ export default function GamesPage() {
                       )}
                     </button>
                   ))}
-                  {game.result !== null && gamesWithEntries.has(game.id) && (
+                  {game.result !== null && game.analysisCompleted && gamesWithEntries.has(game.id) && (
                     <>
                       <button
                         onClick={() => analyzeThinking(game.id)}
