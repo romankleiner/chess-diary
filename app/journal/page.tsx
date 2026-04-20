@@ -284,10 +284,28 @@ export default function JournalPage() {
     }
   };
 
+  const applyGameFilter = (gameId: string | null) => {
+    if (gameId) {
+      // Switching to a specific game — save the current range and show all-time so entries appear
+      if (filterGameId === 'all' || filterGameId === 'general') {
+        setSavedViewRangeDays(viewRangeDays);
+        setViewRangeDays(9999);
+      }
+      setFilterGameId(gameId);
+    } else {
+      // Clearing game selection — restore the previous range if we had overridden it
+      if (filterGameId !== 'all' && filterGameId !== 'general') {
+        setViewRangeDays(savedViewRangeDays);
+        setFilterGameId('all');
+      }
+    }
+  };
+
   const selectGame = (gameId: string) => {
     setCurrentGameId(gameId);
     setEntryMode('game');
-    
+    applyGameFilter(gameId);
+
     // Find the game and set its FEN
     const game = allGames.find(g => g.id === gameId);
     if (game && game.fen) {
@@ -388,6 +406,7 @@ export default function JournalPage() {
           if (shouldClearGame) {
             await toggleGameTurn(currentGameId);
             setCurrentGameId(null);
+            applyGameFilter(null);
             // Only reload games to update turn status
             loadActiveGames();
           }
@@ -838,6 +857,7 @@ export default function JournalPage() {
               setEntryMode('general');
               setCurrentGameId(null);
               setCurrentFen(null);
+              applyGameFilter(null);
             }}
             className={`flex-1 py-3 px-4 rounded-lg border-2 transition ${
               entryMode === 'general'
