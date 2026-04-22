@@ -304,7 +304,9 @@ export default function JournalPage() {
   const selectGame = (gameId: string) => {
     setCurrentGameId(gameId);
     setEntryMode('game');
-    applyGameFilter(gameId);
+    if (entries.some(e => e.gameId === gameId)) {
+      applyGameFilter(gameId);
+    }
 
     // Find the game and set its FEN
     const game = allGames.find(g => g.id === gameId);
