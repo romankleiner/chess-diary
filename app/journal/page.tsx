@@ -1267,10 +1267,15 @@ export default function JournalPage() {
                   const gamesWithEntries = allGames.filter(g => entries.some(e => e.gameId === g.id));
                   
                   // Separate active from finished games
-                  const activeGames = gamesWithEntries.filter(g => 
-                    !g.result || g.result === 'null' || g.result.includes('progress')
-                  );
-                  const finishedGames = gamesWithEntries.filter(g => 
+                  const activeGames = gamesWithEntries
+                    .filter(g => !g.result || g.result === 'null' || g.result.includes('progress'))
+                    .sort((a, b) => {
+                      if (!a.move_by && !b.move_by) return a.opponent.localeCompare(b.opponent);
+                      if (!a.move_by) return 1;
+                      if (!b.move_by) return -1;
+                      return a.move_by - b.move_by;
+                    });
+                  const finishedGames = gamesWithEntries.filter(g =>
                     g.result && g.result !== 'null' && !g.result.includes('progress')
                   );
                   
