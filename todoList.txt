@@ -5,6 +5,7 @@ Blog export:
 
 Minor:
 - Test backup and admin / non-admin role
+- Older entries export as FEN rather than diagram
 
 Mid:
 - 
