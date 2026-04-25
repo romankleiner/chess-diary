@@ -6,9 +6,11 @@ Blog export:
 Minor:
 - Test backup and admin / non-admin role
 - Older entries export as FEN rather than diagram
+- In eval, if a mate is missed, the delta is very high
 
 Mid:
 - Implement backup age strategy
+- Review prompt to AI: it often shows incorrect eval post-move. It also shows deviation on top moves.
 
 Major:
 - Add detection of opening book during engine analysis
