@@ -5,7 +5,7 @@ Blog export:
 
 Minor:
 - Test backup and admin / non-admin role
-- Add analysis eval in post-game comments
+- 
 
 Mid:
 - Review prompt to AI: it often shows incorrect eval post-move. It also shows deviation on top moves.
