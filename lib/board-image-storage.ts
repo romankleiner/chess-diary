@@ -1,4 +1,4 @@
-import { put, head } from '@vercel/blob';
+import { put, head, list, del } from '@vercel/blob';
 
 /**
  * Get a cached board image from Vercel Blob storage (PUBLIC store)
@@ -94,6 +94,41 @@ export async function getImageUrl(
   });
   
   console.log(`[IMAGE-MIGRATE] Migrated: ${blob.url}`);
-  
+
   return blob.url;
+}
+
+/**
+ * Delete cached board images older than maxAgeDays.
+ * Called from the automated backup route so it runs on the same schedule.
+ * Returns the number of blobs deleted.
+ */
+export async function cleanupOldBoardImages(maxAgeDays = 90): Promise<number> {
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  let deletedCount = 0;
+
+  console.log(`[BOARD-CACHE] Cleaning up board images older than ${maxAgeDays} days...`);
+
+  // list() is paginated — iterate until done
+  let cursor: string | undefined;
+  do {
+    const { blobs, cursor: nextCursor, hasMore } = await list({
+      prefix: 'boards/',
+      token: process.env.BLOB_IMAGES_READ_WRITE_TOKEN,
+      cursor,
+    });
+
+    for (const blob of blobs) {
+      if (new Date(blob.uploadedAt).getTime() < cutoff) {
+        await del(blob.url, { token: process.env.BLOB_IMAGES_READ_WRITE_TOKEN });
+        console.log('[BOARD-CACHE] Deleted expired image:', blob.pathname);
+        deletedCount++;
+      }
+    }
+
+    cursor = hasMore ? nextCursor : undefined;
+  } while (cursor);
+
+  console.log(`[BOARD-CACHE] Cleanup complete — ${deletedCount} image(s) deleted`);
+  return deletedCount;
 }

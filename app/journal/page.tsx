@@ -116,20 +116,6 @@ export default function JournalPage() {
     checkForDraft(); // Check for saved draft on mount
   }, []); // Only run once on mount
 
-  // Advance the selected date to today when the user returns to the tab after midnight.
-  useEffect(() => {
-    const syncDate = () => {
-      const today = new Date().toISOString().split('T')[0];
-      setSelectedDate(prev => (prev !== today ? today : prev));
-    };
-    document.addEventListener('visibilitychange', syncDate);
-    window.addEventListener('focus', syncDate);
-    return () => {
-      document.removeEventListener('visibilitychange', syncDate);
-      window.removeEventListener('focus', syncDate);
-    };
-  }, []);
-
   const saveDraft = useCallback(() => {
     // Only save if there's content
     if (!thought.trim() && !myMove.trim() && images.length === 0) {
@@ -331,7 +317,19 @@ export default function JournalPage() {
 
   const addEntry = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
+    // Always use today's date at submission time — handles the case where the
+    // page was left open overnight and the calendar rolled over.
+    // setSelectedDate is async, so capture the correct date in a local variable
+    // and use it directly in the POST body below.
+    const entryDate = editingEntry
+      ? selectedDate
+      : (() => {
+          const today = new Date().toISOString().split('T')[0];
+          if (today !== selectedDate) setSelectedDate(today);
+          return today;
+        })();
+
     if (!thought.trim()) {
       alert('Please enter your thoughts');
       return;
@@ -389,7 +387,7 @@ export default function JournalPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            date: selectedDate,
+            date: entryDate,
             gameId: entryMode === 'game' ? currentGameId : null,
             entryType: 'thought',
             content: thought,

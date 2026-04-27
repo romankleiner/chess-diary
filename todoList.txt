@@ -5,10 +5,8 @@ Blog export:
 
 Minor:
 - Test backup and admin / non-admin role
-- In eval, if a mate is missed, the delta is very high
 
 Mid:
-- Implement backup age strategy
 - Review prompt to AI: it often shows incorrect eval post-move. It also shows deviation on top moves.
 
 Major:
