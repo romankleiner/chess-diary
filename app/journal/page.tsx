@@ -116,6 +116,20 @@ export default function JournalPage() {
     checkForDraft(); // Check for saved draft on mount
   }, []); // Only run once on mount
 
+  // Advance the selected date to today when the user returns to the tab after midnight.
+  useEffect(() => {
+    const syncDate = () => {
+      const today = new Date().toISOString().split('T')[0];
+      setSelectedDate(prev => (prev !== today ? today : prev));
+    };
+    document.addEventListener('visibilitychange', syncDate);
+    window.addEventListener('focus', syncDate);
+    return () => {
+      document.removeEventListener('visibilitychange', syncDate);
+      window.removeEventListener('focus', syncDate);
+    };
+  }, []);
+
   const saveDraft = useCallback(() => {
     // Only save if there's content
     if (!thought.trim() && !myMove.trim() && images.length === 0) {

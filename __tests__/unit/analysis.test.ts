@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateAccuracy, getMoveQuality } from '@/lib/analysis-utils';
+import { calculateAccuracy, getMoveQuality, normalizeCpLoss } from '@/lib/analysis-utils';
 
 // ─── calculateAccuracy ────────────────────────────────────────────────────────
 
@@ -92,5 +92,36 @@ describe('getMoveQuality', () => {
     expect(getMoveQuality(50)).toBe('good');        // not 'inaccuracy'
     expect(getMoveQuality(100)).toBe('inaccuracy'); // not 'mistake'
     expect(getMoveQuality(200)).toBe('mistake');    // not 'blunder'
+  });
+});
+
+// ─── normalizeCpLoss ─────────────────────────────────────────────────────────
+
+describe('normalizeCpLoss', () => {
+  it('leaves cp loss unchanged when the resulting position is not clearly winning', () => {
+    expect(normalizeCpLoss(300, 100)).toBe(300);  // slight edge, no cap
+    expect(normalizeCpLoss(500, 0)).toBe(500);    // equal position, no cap
+    expect(normalizeCpLoss(9200, -500)).toBe(9200); // losing — no cap
+  });
+
+  it('caps at 100 (inaccuracy) when playerEvalAfter is 300–499 cp', () => {
+    expect(normalizeCpLoss(9200, 300)).toBe(100);
+    expect(normalizeCpLoss(9200, 499)).toBe(100);
+    expect(normalizeCpLoss(50, 400)).toBe(50);    // already under cap — unchanged
+  });
+
+  it('caps at 50 (good) when playerEvalAfter is 500+ cp', () => {
+    expect(normalizeCpLoss(9200, 500)).toBe(50);
+    expect(normalizeCpLoss(9200, 10000)).toBe(50); // forced mate scenario
+    expect(normalizeCpLoss(20, 800)).toBe(20);     // already under cap — unchanged
+  });
+
+  it('handles the "played a slower mate" scenario correctly', () => {
+    // Best move: forced mate → 10 000 cp; played move leaves +800 cp.
+    // Raw loss = 9 200 → should become ≤ 50 ("good"), not "blunder".
+    const rawLoss = 10000 - 800; // 9200
+    const playerEvalAfterMove = 800;
+    expect(normalizeCpLoss(rawLoss, playerEvalAfterMove)).toBe(50);
+    expect(getMoveQuality(normalizeCpLoss(rawLoss, playerEvalAfterMove))).toBe('good');
   });
 });

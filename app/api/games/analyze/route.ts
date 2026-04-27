@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
 import { getGame, getAnalysis, getSetting, setGameProgress, getGameProgress, clearGameProgress, saveAnalysis, saveGame } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
-import { calculateAccuracy, getMoveQuality } from '@/lib/analysis-utils';
+import { calculateAccuracy, getMoveQuality, normalizeCpLoss } from '@/lib/analysis-utils';
 
 // Detect if running on Vercel
 const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
@@ -181,18 +181,23 @@ async function analyzeGameChessApiBatched(
       }
       cpLoss = Math.max(0, Math.round(cpLoss));
 
+      // Cap cp loss when the player is still clearly winning — prevents "played
+      // a slower mate" from being labelled a blunder due to eval ceiling artifacts.
+      const playerEvalAfter = isWhiteMove ? evalAfterWhite : -evalAfterWhite;
+      cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter);
+
       // Store evaluation in pawn units for display
       const evalAfterPawns = Math.round(evalAfterWhite) / 100;
-      
+
       // Add all moves to accuracy calculation
       if (isWhiteMove) {
         whiteLosses.push(cpLoss);
       } else {
         blackLosses.push(cpLoss);
       }
-      
+
       const moveNumber = Math.floor(i / 2) + 1;
-      
+
       analyses.push({
         moveNumber: moveNumber,
         color: isWhiteMove ? 'white' : 'black',
@@ -308,18 +313,24 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
         } else {
           cpLoss = evalAfter - evalBefore;
         }
-        
+
         cpLoss = Math.max(0, cpLoss);
-        
+
+        // Cap cp loss when the player is still clearly winning — prevents "played
+        // a slower mate" from being labelled a blunder due to eval ceiling artifacts.
+        // evalAfter is white-POV; flip sign for black to get the player's advantage.
+        const playerEvalAfter = isWhiteMove ? evalAfter : -evalAfter;
+        cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter);
+
         const moveNumber = Math.floor(i / 2) + 1;
-        
+
         // Add all moves to accuracy calculation
         if (isWhiteMove) {
           whiteLosses.push(cpLoss);
         } else {
           blackLosses.push(cpLoss);
         }
-        
+
         analyses.push({
           moveNumber: moveNumber,
           color: isWhiteMove ? 'white' : 'black',

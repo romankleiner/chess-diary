@@ -24,6 +24,24 @@ export function calculateAccuracy(centipawnLosses: number[]): number {
 }
 
 /**
+ * Cap a centipawn loss when the resulting position is still clearly winning.
+ *
+ * Raw cp deltas are misleading when the best move is a forced mate but the
+ * played move keeps a large material advantage — e.g. best=M5 (10 000 cp),
+ * played move result=+8 pawns (800 cp) gives a raw loss of 9 200 cp (blunder),
+ * even though the position is objectively still winning.
+ *
+ * @param cpLoss         Raw centipawn loss (>= 0).
+ * @param playerEvalAfter  Evaluation after the move in centipawns, from the
+ *                         perspective of the player who just moved (positive = winning).
+ */
+export function normalizeCpLoss(cpLoss: number, playerEvalAfter: number): number {
+  if (playerEvalAfter >= 500) return Math.min(cpLoss, 50);   // still very winning → at most "good"
+  if (playerEvalAfter >= 300) return Math.min(cpLoss, 100);  // clearly winning   → at most "inaccuracy"
+  return cpLoss;
+}
+
+/**
  * Classify a move's quality based on centipawn loss.
  */
 export function getMoveQuality(cpLoss: number): string {

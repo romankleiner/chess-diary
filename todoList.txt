@@ -5,7 +5,6 @@ Blog export:
 
 Minor:
 - Test backup and admin / non-admin role
-- Older entries export as FEN rather than diagram
 - In eval, if a mate is missed, the delta is very high
 
 Mid:
