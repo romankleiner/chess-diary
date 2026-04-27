@@ -28,6 +28,10 @@ interface JournalEntry {
     content: string;
     timestamp: string;
     type: 'manual' | 'ai';
+    evalBefore?: number;     // white-POV, pawn units
+    evalAfter?: number;      // white-POV, pawn units
+    moveQuality?: string;
+    centipawnLoss?: number;
   };
   aiReview?: {
     content: string;
@@ -74,6 +78,9 @@ export default function JournalPage() {
   const [savedViewRangeDays, setSavedViewRangeDays] = useState<number>(7);
   const [addingReviewToEntry, setAddingReviewToEntry] = useState<number | null>(null);
   const [reviewContent, setReviewContent] = useState('');
+  const [pendingReviewEval, setPendingReviewEval] = useState<{
+    evalBefore?: number; evalAfter?: number; moveQuality?: string; centipawnLoss?: number;
+  } | null>(null);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [showRestoreDraft, setShowRestoreDraft] = useState(false);
   const [showPostReviews, setShowPostReviews] = useState(true);
@@ -535,9 +542,35 @@ export default function JournalPage() {
     }, 100);
   };
 
-  const handleAddPostReview = (entryId: number) => {
+  const handleAddPostReview = async (entryId: number) => {
     setAddingReviewToEntry(entryId);
     setReviewContent('');
+    setPendingReviewEval(null);
+
+    // Try to look up the engine eval for this entry's move
+    const entry = entries.find(e => e.id === entryId);
+    if (entry?.gameId && entry.moveNotation) {
+      try {
+        const res = await fetch(`/api/games/${entry.gameId}/analysis`);
+        if (res.ok) {
+          const { analysis } = await res.json();
+          const moves: any[] = analysis?.moves ?? [];
+          const idx = moves.findIndex(
+            (m: any) => m.moveNumber === entry.moveNumber && m.move === entry.moveNotation
+          );
+          if (idx !== -1) {
+            const evalAfter  = moves[idx].evaluation;           // white-POV after the move
+            const evalBefore = idx > 0 ? moves[idx - 1].evaluation : 0; // white-POV before
+            setPendingReviewEval({
+              evalBefore,
+              evalAfter,
+              moveQuality:   moves[idx].moveQuality,
+              centipawnLoss: moves[idx].centipawnLoss,
+            });
+          }
+        }
+      } catch { /* eval is optional — silently skip on error */ }
+    }
   };
 
   const handleSavePostReview = async (entryId: number) => {
@@ -554,7 +587,8 @@ export default function JournalPage() {
           postReview: {
             content: reviewContent,
             timestamp: getLocalTimestamp(),
-            type: 'manual'
+            type: 'manual',
+            ...pendingReviewEval,
           }
         }),
       });
@@ -571,6 +605,7 @@ export default function JournalPage() {
         
         setAddingReviewToEntry(null);
         setReviewContent('');
+        setPendingReviewEval(null);
       } else {
         alert('Failed to save post-review');
       }
@@ -1640,6 +1675,7 @@ export default function JournalPage() {
                                     onClick={() => {
                                       setAddingReviewToEntry(null);
                                       setReviewContent('');
+                                      setPendingReviewEval(null);
                                     }}
                                     className="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded hover:bg-gray-400 dark:hover:bg-gray-500"
                                   >
@@ -1665,10 +1701,19 @@ export default function JournalPage() {
                                     const reviewDate = new Date(entry.postReview.timestamp);
                                     const entryDate = new Date(entry.timestamp);
                                     const daysDiff = Math.floor((reviewDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
-                                    return daysDiff === 0 ? 'same day' : 
-                                           daysDiff === 1 ? '1 day after game' : 
+                                    return daysDiff === 0 ? 'same day' :
+                                           daysDiff === 1 ? '1 day after game' :
                                            `${daysDiff} days after game`;
                                   })()}
+                                  {entry.postReview.evalBefore !== undefined && entry.postReview.evalAfter !== undefined && (
+                                    <span className="ml-2">
+                                      · {entry.postReview.evalBefore > 0 ? '+' : ''}{entry.postReview.evalBefore.toFixed(2)}
+                                      {' → '}
+                                      {entry.postReview.evalAfter > 0 ? '+' : ''}{entry.postReview.evalAfter.toFixed(2)}
+                                      {entry.postReview.moveQuality && ` · ${entry.postReview.moveQuality}`}
+                                      {entry.postReview.centipawnLoss !== undefined && ` · ${entry.postReview.centipawnLoss} cp`}
+                                    </span>
+                                  )}
                                 </div>
                                 
                                 {/* Separator */}
