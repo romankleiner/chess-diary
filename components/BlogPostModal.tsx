@@ -310,7 +310,9 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
                       <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
                         {section.header}
                       </span>
-                      <span className="text-xs text-gray-400">{section.timestamp}</span>
+                      <span className="text-xs text-gray-400">
+                        {new Date(section.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
                     </div>
 
                     <div className="p-4 space-y-3">

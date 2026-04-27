@@ -61,10 +61,8 @@ export async function POST(
     const sections: MoveSection[] = moveEntries
       .filter((e: any) => e.content?.trim())
       .map((entry: any) => {
-        const time = new Date(entry.timestamp).toLocaleTimeString('en-US', {
-          hour: '2-digit',
-          minute: '2-digit',
-        });
+        // Pass the raw timestamp; the client converts to local time.
+        const time = entry.timestamp as string;
 
         const notation = entry.moveNotation || entry.myMove || '';
 

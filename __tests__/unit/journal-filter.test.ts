@@ -78,24 +78,21 @@ describe('getLocalTimestamp', () => {
     expect(typeof getLocalTimestamp()).toBe('string');
   });
 
-  it('does not end with Z (local time, not UTC)', () => {
-    expect(getLocalTimestamp()).not.toMatch(/Z$/);
+  it('ends with Z (UTC, parsed correctly by clients in any timezone)', () => {
+    expect(getLocalTimestamp()).toMatch(/Z$/);
   });
 
-  it('matches ISO datetime format without trailing Z', () => {
-    // e.g. "2026-03-29T14:30:00.000"
-    expect(getLocalTimestamp()).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}$/);
+  it('matches ISO datetime format with trailing Z', () => {
+    // e.g. "2026-03-29T14:30:00.000Z"
+    expect(getLocalTimestamp()).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
 
   it('reflects the current time within a 5-second window', () => {
     const before = Date.now();
     const ts = getLocalTimestamp();
     const after = Date.now();
-    // Re-add the 'Z' to make it parseable as UTC for comparison
-    const parsed = new Date(ts + 'Z').getTime();
-    // The local timestamp offsets by timezone, so compare within the same offset
-    const offset = new Date().getTimezoneOffset() * 60000;
-    expect(parsed + offset).toBeGreaterThanOrEqual(before - 100);
-    expect(parsed + offset).toBeLessThanOrEqual(after + 100);
+    const parsed = new Date(ts).getTime();
+    expect(parsed).toBeGreaterThanOrEqual(before - 100);
+    expect(parsed).toBeLessThanOrEqual(after + 100);
   });
 });
