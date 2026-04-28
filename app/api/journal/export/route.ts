@@ -429,51 +429,8 @@ export async function GET(request: NextRequest) {
             }
           }
 
-          // Add post-review and AI review only for regular entries (not post-game summaries)
-          if (includePostReviews && entry.postReview && entry.entryType !== 'post_game_summary') {
-            const reviewDate = new Date(entry.postReview.timestamp);
-            const entryDate = new Date(entry.timestamp);
-            const daysDiff = Math.floor((reviewDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
-            const timeLabel =
-              daysDiff === 0 ? 'same day' :
-              daysDiff === 1 ? '1 day after game' :
-              `${daysDiff} days after game`;
-
-            // Add spacing before review
-            docSections.push(new Paragraph({ spacing: { before: 200 } }));
-
-            // Add post-review as indented paragraphs with background shading
-            docSections.push(
-              new Paragraph({
-                children: [
-                  new TextRun({ text: '📝 POST-GAME REVIEW', bold: true, color: '92400E', size: 24 })
-                ],
-                shading: { fill: 'FEF3C7' },
-                indent: { left: 720 },
-                spacing: { after: 50 }
-              })
-            );
-            docSections.push(
-              new Paragraph({
-                children: [
-                  new TextRun({ text: `Added ${timeLabel}`, italics: true, color: '92400E', size: 20 })
-                ],
-                shading: { fill: 'FEF3C7' },
-                indent: { left: 720 },
-                spacing: { after: 100 }
-              })
-            );
-            docSections.push(
-              new Paragraph({
-                children: [
-                  new TextRun({ text: entry.postReview.content, italics: true, color: '1F2937' })
-                ],
-                shading: { fill: 'FEF3C7' },
-                indent: { left: 720 },
-                spacing: { after: 200 }
-              })
-            );
-          }
+          // Add AI review and post-review only for regular entries (not post-game summaries).
+          // AI review is shown first, then the user's own post-game review.
 
           // Add AI review if present and enabled (not for post-game summaries)
           if (includePostReviews && entry.aiReview && entry.entryType !== 'post_game_summary') {
@@ -522,6 +479,50 @@ export async function GET(request: NextRequest) {
                 })
               );
             }
+          }
+
+          // Add post-review after AI review (not for post-game summaries)
+          if (includePostReviews && entry.postReview && entry.entryType !== 'post_game_summary') {
+            const reviewDate = new Date(entry.postReview.timestamp);
+            const entryDate = new Date(entry.timestamp);
+            const daysDiff = Math.floor((reviewDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
+            const timeLabel =
+              daysDiff === 0 ? 'same day' :
+              daysDiff === 1 ? '1 day after game' :
+              `${daysDiff} days after game`;
+
+            docSections.push(new Paragraph({ spacing: { before: 200 } }));
+
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: '📝 POST-GAME REVIEW', bold: true, color: '92400E', size: 24 })
+                ],
+                shading: { fill: 'FEF3C7' },
+                indent: { left: 720 },
+                spacing: { after: 50 }
+              })
+            );
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `Added ${timeLabel}`, italics: true, color: '92400E', size: 20 })
+                ],
+                shading: { fill: 'FEF3C7' },
+                indent: { left: 720 },
+                spacing: { after: 100 }
+              })
+            );
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: entry.postReview.content, italics: true, color: '1F2937' })
+                ],
+                shading: { fill: 'FEF3C7' },
+                indent: { left: 720 },
+                spacing: { after: 200 }
+              })
+            );
           }
         }
       }

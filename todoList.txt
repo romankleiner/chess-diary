@@ -7,7 +7,6 @@ Minor:
 - Test backup and admin / non-admin role
 - Eval on post-move comments does not appear
 - Summary blog includes blunder and error count for my opponent, not me (if I play white)
-- Swap the order of AI and manual comments
 
 Mid:
 - Review prompt to AI: it often shows incorrect eval post-move. It also shows deviation on top moves.

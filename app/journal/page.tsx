@@ -547,30 +547,48 @@ export default function JournalPage() {
     setReviewContent('');
     setPendingReviewEval(null);
 
-    // Try to look up the engine eval for this entry's move
+    // Try to look up the engine eval for this entry's move.
     const entry = entries.find(e => e.id === entryId);
-    if (entry?.gameId && entry.moveNotation) {
-      try {
-        const res = await fetch(`/api/games/${entry.gameId}/analysis`);
-        if (res.ok) {
-          const { analysis } = await res.json();
-          const moves: any[] = analysis?.moves ?? [];
-          const idx = moves.findIndex(
-            (m: any) => m.moveNumber === entry.moveNumber && m.move === entry.moveNotation
-          );
-          if (idx !== -1) {
-            const evalAfter  = moves[idx].evaluation;           // white-POV after the move
-            const evalBefore = idx > 0 ? moves[idx - 1].evaluation : 0; // white-POV before
-            setPendingReviewEval({
-              evalBefore,
-              evalAfter,
-              moveQuality:   moves[idx].moveQuality,
-              centipawnLoss: moves[idx].centipawnLoss,
-            });
-          }
-        }
-      } catch { /* eval is optional — silently skip on error */ }
+    if (!entry?.gameId) return;
+
+    // Prefer the explicit moveNotation; fall back to the "My Move" field the user typed.
+    const notation = entry.moveNotation || entry.myMove;
+
+    // moveNumber may be null on entries created by the current UI — derive it from the
+    // FEN's full-move counter (part 6) when it is absent.
+    let moveNumber: number | null = entry.moveNumber ?? null;
+    if (!moveNumber && entry.fen) {
+      const fenParts = entry.fen.split(' ');
+      if (fenParts.length >= 6) moveNumber = parseInt(fenParts[5], 10) || null;
     }
+
+    if (!notation || !moveNumber) return;
+
+    try {
+      const res = await fetch(`/api/games/${entry.gameId}/analysis`);
+      if (!res.ok) return;
+      const { analysis } = await res.json();
+      const moves: any[] = analysis?.moves ?? [];
+
+      // Match both move number AND SAN to unambiguously identify the user's ply
+      // (both players share the same move number).
+      const idx = moves.findIndex(
+        (m: any) => m.moveNumber === moveNumber && m.move === notation
+      );
+      if (idx === -1) return;
+
+      // Convert white-POV evaluations to player-POV so the arrow direction is
+      // intuitive: a positive delta always means the player improved their position.
+      const isBlack = moves[idx].color === 'black';
+      const rawAfter  = moves[idx].evaluation;
+      const rawBefore = idx > 0 ? moves[idx - 1].evaluation : 0;
+      setPendingReviewEval({
+        evalBefore:    isBlack ? -rawBefore : rawBefore,
+        evalAfter:     isBlack ? -rawAfter  : rawAfter,
+        moveQuality:   moves[idx].moveQuality,
+        centipawnLoss: moves[idx].centipawnLoss,
+      });
+    } catch { /* eval is optional — silently skip on error */ }
   };
 
   const handleSavePostReview = async (entryId: number) => {
@@ -1648,6 +1666,90 @@ export default function JournalPage() {
                               </div>
                             )}
                             
+                            {/* AI Review Section */}
+                            {showAiReviews && showPostReviews && (
+                              <>
+                                {editingAiReview === entry.id ? (
+                                  <div className="mt-4 ml-8 bg-cyan-50 dark:bg-cyan-900/20 border-2 border-cyan-200 dark:border-cyan-700 rounded-lg p-4">
+                                    <div className="font-bold text-cyan-900 dark:text-cyan-100 mb-2">
+                                      🤖 EDIT AI ANALYSIS
+                                    </div>
+                                    <textarea
+                                      value={aiReviewContent}
+                                      onChange={(e) => setAiReviewContent(e.target.value)}
+                                      className="w-full p-2 border rounded resize-none dark:bg-gray-800 dark:border-gray-600"
+                                      rows={4}
+                                      autoFocus
+                                    />
+                                    <div className="mt-2 flex gap-2">
+                                      <button
+                                        onClick={() => handleSaveAiReview(entry.id)}
+                                        className="px-3 py-1 bg-cyan-500 text-white rounded hover:bg-cyan-600"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setEditingAiReview(null);
+                                          setAiReviewContent('');
+                                        }}
+                                        className="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded hover:bg-gray-400"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : entry.aiReview && (
+                                  <div className="mt-4 ml-8 bg-cyan-50 dark:bg-cyan-900/20 border-2 border-cyan-200 dark:border-cyan-700 rounded-lg p-4 relative">
+                                    {/* Icon badge */}
+                                    <div className="absolute -left-3 -top-3 bg-cyan-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">
+                                      🤖
+                                    </div>
+
+                                    {/* Header */}
+                                    <div className="font-bold text-cyan-900 dark:text-cyan-100 mb-1">
+                                      AI ANALYSIS
+                                    </div>
+
+                                    {/* Model info */}
+                                    <div className="text-xs text-cyan-700 dark:text-cyan-300 mb-3">
+                                      {entry.aiReview.model.replace('claude-', '').replace('-20250514', '')} •
+                                      {entry.aiReview.engineEval !== undefined &&
+                                        ` Eval: ${entry.aiReview.engineEval > 0 ? '+' : ''}${entry.aiReview.engineEval.toFixed(2)}`
+                                      }
+                                      {entry.aiReview.engineBestMove &&
+                                        ` • Best: ${entry.aiReview.engineBestMove}`
+                                      }
+                                    </div>
+
+                                    {/* Separator */}
+                                    <div className="border-t border-cyan-300 dark:border-cyan-600 mb-3"></div>
+
+                                    {/* Content */}
+                                    <div className="text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap">
+                                      {entry.aiReview.content}
+                                    </div>
+
+                                    {/* Actions */}
+                                    <div className="mt-3 flex gap-2">
+                                      <button
+                                        onClick={() => handleEditAiReview(entry)}
+                                        className="text-sm text-cyan-600 hover:underline"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteAiReview(entry.id)}
+                                        className="text-sm text-red-600 hover:underline"
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            )}
+
                             {/* Post-Review Section - only show if toggle is enabled */}
                             {showPostReviews && (
                               <>
@@ -1689,12 +1791,12 @@ export default function JournalPage() {
                                 <div className="absolute -left-3 -top-3 bg-amber-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">
                                   📝
                                 </div>
-                                
+
                                 {/* Header */}
                                 <div className="font-bold text-amber-900 dark:text-amber-100 mb-1">
                                   POST-GAME REVIEW
                                 </div>
-                                
+
                                 {/* Timestamp */}
                                 <div className="text-xs text-amber-700 dark:text-amber-300 mb-3">
                                   Added {(() => {
@@ -1715,15 +1817,15 @@ export default function JournalPage() {
                                     </span>
                                   )}
                                 </div>
-                                
+
                                 {/* Separator */}
                                 <div className="border-t border-amber-300 dark:border-amber-600 mb-3"></div>
-                                
+
                                 {/* Content */}
                                 <div className="text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap">
                                   {entry.postReview.content}
                                 </div>
-                                
+
                                 {/* Actions */}
                                 <div className="mt-3 flex gap-2">
                                   <button
@@ -1741,90 +1843,6 @@ export default function JournalPage() {
                                 </div>
                               </div>
                             )}
-                              </>
-                            )}
-                            
-                            {/* AI Review Section */}
-                            {showAiReviews && showPostReviews && (
-                              <>
-                                {editingAiReview === entry.id ? (
-                                  <div className="mt-4 ml-8 bg-cyan-50 dark:bg-cyan-900/20 border-2 border-cyan-200 dark:border-cyan-700 rounded-lg p-4">
-                                    <div className="font-bold text-cyan-900 dark:text-cyan-100 mb-2">
-                                      🤖 EDIT AI ANALYSIS
-                                    </div>
-                                    <textarea
-                                      value={aiReviewContent}
-                                      onChange={(e) => setAiReviewContent(e.target.value)}
-                                      className="w-full p-2 border rounded resize-none dark:bg-gray-800 dark:border-gray-600"
-                                      rows={4}
-                                      autoFocus
-                                    />
-                                    <div className="mt-2 flex gap-2">
-                                      <button
-                                        onClick={() => handleSaveAiReview(entry.id)}
-                                        className="px-3 py-1 bg-cyan-500 text-white rounded hover:bg-cyan-600"
-                                      >
-                                        Save
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          setEditingAiReview(null);
-                                          setAiReviewContent('');
-                                        }}
-                                        className="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded hover:bg-gray-400"
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : entry.aiReview && (
-                                  <div className="mt-4 ml-8 bg-cyan-50 dark:bg-cyan-900/20 border-2 border-cyan-200 dark:border-cyan-700 rounded-lg p-4 relative">
-                                    {/* Icon badge */}
-                                    <div className="absolute -left-3 -top-3 bg-cyan-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg">
-                                      🤖
-                                    </div>
-                                    
-                                    {/* Header */}
-                                    <div className="font-bold text-cyan-900 dark:text-cyan-100 mb-1">
-                                      AI ANALYSIS
-                                    </div>
-                                    
-                                    {/* Model info */}
-                                    <div className="text-xs text-cyan-700 dark:text-cyan-300 mb-3">
-                                      {entry.aiReview.model.replace('claude-', '').replace('-20250514', '')} • 
-                                      {entry.aiReview.engineEval !== undefined && 
-                                        ` Eval: ${entry.aiReview.engineEval > 0 ? '+' : ''}${entry.aiReview.engineEval.toFixed(2)}`
-                                      }
-                                      {entry.aiReview.engineBestMove && 
-                                        ` • Best: ${entry.aiReview.engineBestMove}`
-                                      }
-                                    </div>
-                                    
-                                    {/* Separator */}
-                                    <div className="border-t border-cyan-300 dark:border-cyan-600 mb-3"></div>
-                                    
-                                    {/* Content */}
-                                    <div className="text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap">
-                                      {entry.aiReview.content}
-                                    </div>
-                                    
-                                    {/* Actions */}
-                                    <div className="mt-3 flex gap-2">
-                                      <button
-                                        onClick={() => handleEditAiReview(entry)}
-                                        className="text-sm text-cyan-600 hover:underline"
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        onClick={() => handleDeleteAiReview(entry.id)}
-                                        className="text-sm text-red-600 hover:underline"
-                                      >
-                                        Delete
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
                               </>
                             )}
                           </div>
