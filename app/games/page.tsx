@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import PostGameSummaryForm from '@/components/PostGameSummaryForm';
 import BlogPostModal from '@/components/BlogPostModal';
@@ -56,6 +56,11 @@ export default function GamesPage() {
   } | null>(null);
   const [existingSummaries, setExistingSummaries] = useState<Set<string>>(new Set());
   // ──────────────────────────────────────────────────────────────────────
+
+  // Ref to the analysis progress interval so it can be cleared on unmount
+  const analyzeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Guard: don't start a new progress poll while one is still in flight
+  const pollInFlightRef = useRef(false);
 
   const showToast = (message: string) => {
     setToast({ message, show: true });
@@ -115,6 +120,14 @@ export default function GamesPage() {
       .catch(() => {});
   }, []);
 
+  // Clear the progress-poll interval when the component unmounts (e.g. the user
+  // navigates away mid-analysis) so it doesn't keep firing in the background.
+  useEffect(() => {
+    return () => {
+      if (analyzeIntervalRef.current) clearInterval(analyzeIntervalRef.current);
+    };
+  }, []);
+
   const fetchFromChessCom = async () => {
     setFetching(true);
     try {
@@ -136,15 +149,27 @@ export default function GamesPage() {
   const analyzeGame = async (gameId: string) => {
     setAnalyzing(gameId);
     setAnalysisProgress(null);
-    let progressInterval: ReturnType<typeof setInterval>;
+    pollInFlightRef.current = false;
+
     try {
-      progressInterval = setInterval(async () => {
+      // Poll the in-memory progress endpoint every 2 s.
+      // The in-flight guard prevents concurrent polls from piling up when the
+      // server is slow (e.g. during Stockfish analysis locally).
+      analyzeIntervalRef.current = setInterval(async () => {
+        if (pollInFlightRef.current) return;
+        pollInFlightRef.current = true;
         try {
-          const res = await fetch(`/api/games/analyze?gameId=${gameId}`);
+          const res = await fetch(`/api/games/${gameId}/analysis/progress`, {
+            signal: AbortSignal.timeout(5000),
+          });
           const d = await res.json();
-          if (d.total > 0) setAnalysisProgress({ current: d.current, total: d.total });
-        } catch {}
-      }, 1000);
+          if ((d.total ?? 0) > 0) setAnalysisProgress({ current: d.current, total: d.total });
+        } catch {
+          // swallow — progress display is best-effort
+        } finally {
+          pollInFlightRef.current = false;
+        }
+      }, 2000);
 
       // Loop through batches until the server reports completed
       let startMoveIndex = 0;
@@ -169,7 +194,10 @@ export default function GamesPage() {
       console.error('[FRONTEND] Error analyzing game:', error);
       alert(`Failed to analyze game: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
-      clearInterval(progressInterval!);
+      if (analyzeIntervalRef.current) {
+        clearInterval(analyzeIntervalRef.current);
+        analyzeIntervalRef.current = null;
+      }
       setAnalyzing(null);
       setAnalysisProgress(null);
     }

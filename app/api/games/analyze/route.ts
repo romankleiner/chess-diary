@@ -3,16 +3,25 @@ import { Chess } from 'chess.js';
 import { getGame, getAnalysis, getSetting, setGameProgress, getGameProgress, clearGameProgress, saveAnalysis, saveGame } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
 import { calculateAccuracy, getMoveQuality, normalizeCpLoss } from '@/lib/analysis-utils';
+import {
+  setProgress as setInMemProgress,
+  clearProgress as clearInMemProgress,
+} from '@/app/api/games/[id]/analysis/progress/route';
 
 // Detect if running on Vercel
 const IS_VERCEL = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
 
-// Store progress as a per-game Redis key with 10min TTL — no read-modify-write
+// Write progress to in-memory (instant, no Redis) — available via the /progress endpoint
+// in the same process.  On Vercel, also persist to Redis so the GET lambda (possibly a
+// different instance) can read it.
 export async function setProgress(gameId: string, current: number, total: number) {
-  try {
-    await setGameProgress(gameId, current, total);
-  } catch (error) {
-    console.error('[PROGRESS] setProgress error:', error);
+  setInMemProgress(gameId, current, total);
+  if (IS_VERCEL) {
+    try {
+      await setGameProgress(gameId, current, total);
+    } catch (error) {
+      console.error('[PROGRESS] Redis write error:', error);
+    }
   }
 }
 
@@ -420,6 +429,7 @@ export async function POST(request: NextRequest) {
         game.analysisDepth = depth;
         game.analysisEngine = 'chess-api.com';
         console.log(`[ANALYZE] Vercel analysis complete - set flags for game ${gameId}`);
+        clearInMemProgress(gameId);
         await Promise.all([
           saveAnalysis(gameId, analysisData),
           saveGame(gameId, game),
@@ -455,7 +465,8 @@ export async function POST(request: NextRequest) {
       game.analysisDepth = depth;
       game.analysisEngine = 'Stockfish';
       console.log(`[ANALYZE] Local analysis complete - set flags for game ${gameId}`);
-      
+
+      clearInMemProgress(gameId);
       await Promise.all([
         saveAnalysis(gameId, analysisData),
         saveGame(gameId, game),

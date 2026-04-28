@@ -41,32 +41,42 @@ export default function GameAnalysisPage() {
   const [analysis, setAnalysis] = useState<GameAnalysis | null>(null);
   const [game, setGame] = useState<Game | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     loadAnalysis();
   }, [gameId]);
 
   const loadAnalysis = async () => {
+    setLoadError(null);
     try {
-      // Load game info
-      const gamesResponse = await fetch('/api/games');
-      const gamesData = await gamesResponse.json();
-      const gameInfo = gamesData.games.find((g: Game) => g.id === gameId);
+      // Fetch game info and analysis in parallel, both with a generous timeout.
+      const [gamesResponse, analysisResponse] = await Promise.all([
+        fetch('/api/games', { signal: AbortSignal.timeout(15000) }),
+        fetch(`/api/games/${gameId}/analysis`, { signal: AbortSignal.timeout(15000) }),
+      ]);
+
+      const [gamesData, analysisData] = await Promise.all([
+        gamesResponse.json(),
+        analysisResponse.json(),
+      ]);
+
+      const gameInfo = gamesData.games?.find((g: Game) => g.id === gameId) ?? null;
       setGame(gameInfo);
 
-      // Load analysis
-      const analysisResponse = await fetch(`/api/games/${gameId}/analysis`);
-      const analysisData = await analysisResponse.json();
-      
       if (analysisData.analysis) {
         setAnalysis(analysisData.analysis);
       } else {
-        alert('No analysis found for this game');
-        router.push('/games');
+        setLoadError('No analysis found for this game. Run engine analysis first.');
       }
     } catch (error) {
       console.error('Error loading analysis:', error);
-      alert('Failed to load analysis');
+      const msg = error instanceof Error ? error.message : String(error);
+      setLoadError(
+        msg.includes('timed out') || msg.includes('abort') || msg.includes('Abort')
+          ? 'Request timed out — the server may be slow. Try refreshing.'
+          : `Failed to load analysis: ${msg}`
+      );
     } finally {
       setLoading(false);
     }
@@ -96,6 +106,26 @@ export default function GameAnalysisPage() {
 
   if (loading) {
     return <div className="text-center py-8">Loading analysis...</div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <Link href="/games" className="text-blue-600 hover:underline mb-4 inline-block">
+          ← Back to Games
+        </Link>
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-center">
+          <p className="text-red-700 dark:text-red-300 font-medium mb-2">Could not load analysis</p>
+          <p className="text-red-600 dark:text-red-400 text-sm mb-3">{loadError}</p>
+          <button
+            onClick={loadAnalysis}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-medium"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (!analysis || !game) {
