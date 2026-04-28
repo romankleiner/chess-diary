@@ -98,30 +98,53 @@ describe('getMoveQuality', () => {
 // ─── normalizeCpLoss ─────────────────────────────────────────────────────────
 
 describe('normalizeCpLoss', () => {
-  it('leaves cp loss unchanged when the resulting position is not clearly winning', () => {
-    expect(normalizeCpLoss(300, 100)).toBe(300);  // slight edge, no cap
-    expect(normalizeCpLoss(500, 0)).toBe(500);    // equal position, no cap
-    expect(normalizeCpLoss(9200, -500)).toBe(9200); // losing — no cap
+  it('leaves cp loss unchanged when within the global ceiling and no extreme evals', () => {
+    expect(normalizeCpLoss(300, 100, -50)).toBe(300);  // slight edge both sides
+    expect(normalizeCpLoss(500, 0, 100)).toBe(500);    // equal → slight loss, under ceiling
+    expect(normalizeCpLoss(600, -100, 200)).toBe(600); // exactly at ceiling
+  });
+
+  it('applies the global ceiling (600 cp) when neither side was extreme', () => {
+    // Blundered from equal into forced mate — genuine blunder, but capped at 600
+    expect(normalizeCpLoss(10000, -10000, 0)).toBe(600);
+    expect(getMoveQuality(normalizeCpLoss(10000, -10000, 0))).toBe('blunder');
+  });
+
+  it('caps at 50 (good) when playerEvalAfter is 500+ cp — "played a slower win"', () => {
+    expect(normalizeCpLoss(9200, 500, 10000)).toBe(50);
+    expect(normalizeCpLoss(9200, 10000, 10000)).toBe(50);
+    expect(normalizeCpLoss(20, 800, 9000)).toBe(20);   // already under cap
   });
 
   it('caps at 100 (inaccuracy) when playerEvalAfter is 300–499 cp', () => {
-    expect(normalizeCpLoss(9200, 300)).toBe(100);
-    expect(normalizeCpLoss(9200, 499)).toBe(100);
-    expect(normalizeCpLoss(50, 400)).toBe(50);    // already under cap — unchanged
+    expect(normalizeCpLoss(9200, 300, 10000)).toBe(100);
+    expect(normalizeCpLoss(9200, 499, 10000)).toBe(100);
+    expect(normalizeCpLoss(50, 400, 500)).toBe(50);    // already under cap
   });
 
-  it('caps at 50 (good) when playerEvalAfter is 500+ cp', () => {
-    expect(normalizeCpLoss(9200, 500)).toBe(50);
-    expect(normalizeCpLoss(9200, 10000)).toBe(50); // forced mate scenario
-    expect(normalizeCpLoss(20, 800)).toBe(20);     // already under cap — unchanged
+  it('caps at 50 (good) when playerEvalBefore is ≤ −500 cp — "natural move in lost position"', () => {
+    // e.g. opponent was already down 10 pawns; allowing mate is not a new blunder
+    expect(normalizeCpLoss(9500, -10000, -1000)).toBe(50);
+    expect(normalizeCpLoss(9200, -10000, -600)).toBe(50);
+    expect(getMoveQuality(normalizeCpLoss(9200, -10000, -600))).toBe('good');
+  });
+
+  it('caps at 100 (inaccuracy) when playerEvalBefore is −300 to −499 cp', () => {
+    expect(normalizeCpLoss(9200, -10000, -300)).toBe(100);
+    expect(normalizeCpLoss(9200, -10000, -499)).toBe(100);
   });
 
   it('handles the "played a slower mate" scenario correctly', () => {
-    // Best move: forced mate → 10 000 cp; played move leaves +800 cp.
-    // Raw loss = 9 200 → should become ≤ 50 ("good"), not "blunder".
-    const rawLoss = 10000 - 800; // 9200
-    const playerEvalAfterMove = 800;
-    expect(normalizeCpLoss(rawLoss, playerEvalAfterMove)).toBe(50);
-    expect(getMoveQuality(normalizeCpLoss(rawLoss, playerEvalAfterMove))).toBe('good');
+    const rawLoss = 10000 - 800; // 9200 — best was forced mate, played keeps +800 cp
+    expect(normalizeCpLoss(rawLoss, 800, 10000)).toBe(50);
+    expect(getMoveQuality(normalizeCpLoss(rawLoss, 800, 10000))).toBe('good');
+  });
+
+  it('handles the "allowed forced mate from a lost position" scenario correctly', () => {
+    // Opponent was already at −1000 cp (down 10 pawns); their move allows forced mate.
+    // This is not a meaningful new blunder.
+    const rawLoss = 10000 - 1000; // 9000
+    expect(normalizeCpLoss(rawLoss, -10000, -1000)).toBe(50);
+    expect(getMoveQuality(normalizeCpLoss(rawLoss, -10000, -1000))).toBe('good');
   });
 });

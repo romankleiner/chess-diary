@@ -33,6 +33,7 @@ function getResultBadge(result: string | null): { label: string; className: stri
 export default function GamesPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [analysisProgress, setAnalysisProgress] = useState<{ current: number; total: number } | null>(null);
@@ -62,8 +63,12 @@ export default function GamesPage() {
   };
 
   const loadGames = async () => {
+    setLoadError(null);
     try {
-      const response = await fetch('/api/games');
+      const response = await fetch('/api/games', { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
       const data = await response.json();
       const loadedGames: Game[] = data.games || [];
       setGames(loadedGames);
@@ -73,7 +78,9 @@ export default function GamesPage() {
       if (loadedGames.length) {
         const summaryChecks = await Promise.allSettled(
           loadedGames.map((g: Game) =>
-            fetch(`/api/journal/post-game-summary?gameId=${g.id}`).then(r => r.json())
+            fetch(`/api/journal/post-game-summary?gameId=${g.id}`, {
+              signal: AbortSignal.timeout(10000),
+            }).then(r => r.json())
           )
         );
         const withSummaries = new Set<string>();
@@ -86,6 +93,10 @@ export default function GamesPage() {
       }
     } catch (error) {
       console.error('[FRONTEND] Error loading games:', error);
+      const msg = error instanceof Error ? error.message : String(error);
+      setLoadError(msg.includes('timed out') || msg.includes('abort') || msg.includes('Abort')
+        ? 'Request timed out — the server may be slow or unreachable. Try refreshing.'
+        : `Failed to load games: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -223,6 +234,23 @@ export default function GamesPage() {
     return (
       <div className="max-w-4xl mx-auto p-6">
         <p className="text-center text-gray-600">Loading games...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-center">
+          <p className="text-red-700 dark:text-red-300 font-medium mb-2">Could not load games</p>
+          <p className="text-red-600 dark:text-red-400 text-sm mb-3">{loadError}</p>
+          <button
+            onClick={loadGames}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-medium"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }

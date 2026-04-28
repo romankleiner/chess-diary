@@ -24,21 +24,44 @@ export function calculateAccuracy(centipawnLosses: number[]): number {
 }
 
 /**
- * Cap a centipawn loss when the resulting position is still clearly winning.
+ * Normalise a raw centipawn loss, removing two categories of ceiling artifact
+ * that arise from the ±10 000 sentinel used to represent forced mates:
  *
- * Raw cp deltas are misleading when the best move is a forced mate but the
- * played move keeps a large material advantage — e.g. best=M5 (10 000 cp),
- * played move result=+8 pawns (800 cp) gives a raw loss of 9 200 cp (blunder),
- * even though the position is objectively still winning.
+ * 1. "Played a slower win" — best move was a forced mate (10 000 cp sentinel)
+ *    but the played move still leaves a large material advantage.  The raw
+ *    delta looks enormous even though the position is objectively still winning.
+ *    → cap based on how good the resulting position still is for the mover.
  *
- * @param cpLoss         Raw centipawn loss (>= 0).
- * @param playerEvalAfter  Evaluation after the move in centipawns, from the
- *                         perspective of the player who just moved (positive = winning).
+ * 2. "Natural losing move in a lost position" — the mover was already clearly
+ *    losing before their move (e.g. −1000 cp = down 10 pawns), and their move
+ *    happens to allow a forced mate.  The raw delta is again huge, but the
+ *    position was already effectively decided — this is not a new blunder.
+ *    → cap based on how bad the position already was for the mover.
+ *
+ * Both cases are symmetric: the evaluation on the "stable" side of the move
+ * (after for case 1, before for case 2) tells us whether the ±10 000 ceiling
+ * is distorting the delta.
+ *
+ * @param cpLoss           Raw centipawn loss (>= 0).
+ * @param playerEvalAfter  Eval after the move from the mover's perspective (positive = winning).
+ * @param playerEvalBefore Eval before the move from the mover's perspective (positive = winning).
  */
-export function normalizeCpLoss(cpLoss: number, playerEvalAfter: number): number {
-  if (playerEvalAfter >= 500) return Math.min(cpLoss, 50);   // still very winning → at most "good"
-  if (playerEvalAfter >= 300) return Math.min(cpLoss, 100);  // clearly winning   → at most "inaccuracy"
-  return cpLoss;
+export function normalizeCpLoss(
+  cpLoss: number,
+  playerEvalAfter: number,
+  playerEvalBefore: number,
+): number {
+  // Case 1 — position still winning after the move (played a slower win)
+  if (playerEvalAfter >= 500) return Math.min(cpLoss, 50);    // still very winning → at most "good"
+  if (playerEvalAfter >= 300) return Math.min(cpLoss, 100);   // clearly winning    → at most "inaccuracy"
+
+  // Case 2 — position already clearly lost before the move (natural losing continuation)
+  if (playerEvalBefore <= -500) return Math.min(cpLoss, 50);  // already very losing → at most "good"
+  if (playerEvalBefore <= -300) return Math.min(cpLoss, 100); // clearly losing      → at most "inaccuracy"
+
+  // Global ceiling: prevents the ±10 000 sentinel from inflating any move
+  // beyond firmly-blunder territory even in edge cases not covered above.
+  return Math.min(cpLoss, 600);
 }
 
 /**

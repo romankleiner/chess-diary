@@ -14,13 +14,17 @@ let redis: Redis | null = null;
 
 function getRedisClient(): Redis {
   if (!redis && process.env.REDIS_URL) {
-    redis = new Redis(process.env.REDIS_URL);
+    redis = new Redis(process.env.REDIS_URL, {
+      connectTimeout: 5000,       // 5 s to establish a TCP connection
+      commandTimeout: 10000,      // 10 s per individual command; prevents indefinite hangs
+      maxRetriesPerRequest: 2,    // fail fast instead of retrying 20 times (default)
+    });
   }
-  
+
   if (!redis) {
     throw new Error('Redis not configured');
   }
-  
+
   return redis;
 }
 

@@ -181,10 +181,11 @@ async function analyzeGameChessApiBatched(
       }
       cpLoss = Math.max(0, Math.round(cpLoss));
 
-      // Cap cp loss when the player is still clearly winning — prevents "played
-      // a slower mate" from being labelled a blunder due to eval ceiling artifacts.
-      const playerEvalAfter = isWhiteMove ? evalAfterWhite : -evalAfterWhite;
-      cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter);
+      // Normalise cp loss to remove forced-mate ceiling artifacts in both
+      // directions: "played a slower win" and "natural move in a lost position".
+      const playerEvalBefore = isWhiteMove ? evalBeforeWhite : -evalBeforeWhite;
+      const playerEvalAfter  = isWhiteMove ? evalAfterWhite  : -evalAfterWhite;
+      cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter, playerEvalBefore);
 
       // Store evaluation in pawn units for display
       const evalAfterPawns = Math.round(evalAfterWhite) / 100;
@@ -316,11 +317,12 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
 
         cpLoss = Math.max(0, cpLoss);
 
-        // Cap cp loss when the player is still clearly winning — prevents "played
-        // a slower mate" from being labelled a blunder due to eval ceiling artifacts.
-        // evalAfter is white-POV; flip sign for black to get the player's advantage.
-        const playerEvalAfter = isWhiteMove ? evalAfter : -evalAfter;
-        cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter);
+        // Normalise cp loss to remove forced-mate ceiling artifacts in both
+        // directions: "played a slower win" and "natural move in a lost position".
+        // Both evalBefore and evalAfter are white-POV after sign adjustments above.
+        const playerEvalBefore = isWhiteMove ? evalBefore : -evalBefore;
+        const playerEvalAfter  = isWhiteMove ? evalAfter  : -evalAfter;
+        cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter, playerEvalBefore);
 
         const moveNumber = Math.floor(i / 2) + 1;
 
