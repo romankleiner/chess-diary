@@ -6,6 +6,7 @@ Blog export:
 Minor:
 - Test backup and admin / non-admin role
 - Fix massive eval drop when a mate is calculated (fixed on the winning side, should be fixed on the losing side)
+- Eval on post-move comments does not appear
 
 Mid:
 - Review prompt to AI: it often shows incorrect eval post-move. It also shows deviation on top moves.
