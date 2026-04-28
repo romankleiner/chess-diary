@@ -7,6 +7,7 @@ Minor:
 - Test backup and admin / non-admin role
 - Fix massive eval drop when a mate is calculated (fixed on the winning side, should be fixed on the losing side)
 - Eval on post-move comments does not appear
+- Summary blog includes blunder and error count for my opponent, not me (if I play white)
 - Swap the order of AI and manual comments
 
 Mid:
