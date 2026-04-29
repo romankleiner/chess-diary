@@ -26,8 +26,17 @@ Position (FEN): ${fen || 'Not available'}`;
 
   if (moveAnalysis) {
     prompt += `\n\nEngine analysis:`;
-    if (moveAnalysis.evaluation !== undefined) {
-      prompt += `\n- Position evaluation: ${moveAnalysis.evaluation > 0 ? '+' : ''}${moveAnalysis.evaluation.toFixed(2)} pawns`;
+
+    // evaluation_before = eval of the position the player is thinking about (before their move)
+    // evaluation_after  = eval after the move is played
+    // Fall back to the raw .evaluation field if the route hasn't enriched the object yet.
+    const evalBefore: number | undefined =
+      moveAnalysis.evaluation_before ?? moveAnalysis.evaluation;
+    const evalAfter: number | undefined =
+      moveAnalysis.evaluation_after ?? moveAnalysis.evaluation;
+
+    if (evalBefore !== undefined) {
+      prompt += `\n- Position evaluation: ${evalBefore > 0 ? '+' : ''}${evalBefore.toFixed(2)} pawns`;
     }
     if (moveAnalysis.bestMove) {
       prompt += `\n- Engine's best move: ${moveAnalysis.bestMove}`;
@@ -43,11 +52,13 @@ Position (FEN): ${fen || 'Not available'}`;
         }
       }
     }
-    if (moveAnalysis.evaluation_after !== undefined && movePlayed) {
-      prompt += `\n- Evaluation after ${movePlayed}: ${moveAnalysis.evaluation_after > 0 ? '+' : ''}${moveAnalysis.evaluation_after.toFixed(2)} pawns`;
-      const evalDiff = moveAnalysis.evaluation_after - moveAnalysis.evaluation;
-      if (Math.abs(evalDiff) > 0.03) {
-        prompt += ` (${evalDiff > 0 ? '+' : ''}${evalDiff.toFixed(2)} change)`;
+    if (evalAfter !== undefined && movePlayed) {
+      prompt += `\n- Evaluation after ${movePlayed}: ${evalAfter > 0 ? '+' : ''}${evalAfter.toFixed(2)} pawns`;
+      if (evalBefore !== undefined) {
+        const evalDiff = evalAfter - evalBefore;
+        if (Math.abs(evalDiff) > 0.03) {
+          prompt += ` (${evalDiff > 0 ? '+' : ''}${evalDiff.toFixed(2)} change)`;
+        }
       }
     }
     if (moveAnalysis.centipawnLoss !== undefined && moveAnalysis.centipawnLoss > 0) {

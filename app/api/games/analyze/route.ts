@@ -190,6 +190,14 @@ async function analyzeGameChessApiBatched(
       }
       cpLoss = Math.max(0, Math.round(cpLoss));
 
+      // If the player played the engine's top move, CP loss is exactly zero by
+      // definition — the two independent API calls inevitably disagree slightly
+      // on the eval, so don't penalise the best move with noise.
+      const uciMovePlayed = move.from + move.to + (move.promotion || '');
+      if (evalBefore.bestMove && uciMovePlayed === evalBefore.bestMove) {
+        cpLoss = 0;
+      }
+
       // Normalise cp loss to remove forced-mate ceiling artifacts in both
       // directions: "played a slower win" and "natural move in a lost position".
       const playerEvalBefore = isWhiteMove ? evalBeforeWhite : -evalBeforeWhite;
@@ -325,6 +333,14 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
         }
 
         cpLoss = Math.max(0, cpLoss);
+
+        // If the player played the engine's top move, CP loss is exactly zero by
+        // definition — the two independent Stockfish calls inevitably disagree
+        // slightly on the eval, so don't penalise the best move with noise.
+        const uciMovePlayed = move.from + move.to + (move.promotion || '');
+        if (bestMove && uciMovePlayed === bestMove) {
+          cpLoss = 0;
+        }
 
         // Normalise cp loss to remove forced-mate ceiling artifacts in both
         // directions: "played a slower win" and "natural move in a lost position".

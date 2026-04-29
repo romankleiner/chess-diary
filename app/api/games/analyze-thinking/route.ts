@@ -1,6 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGame, getJournal, getAnalysis, getSetting, saveJournalEntry } from '@/lib/db';
 import { buildAnalysisPrompt } from '@/lib/analysis-prompt';
+import { Chess } from 'chess.js';
+import fs from 'fs';
+import path from 'path';
+
+/**
+ * Convert a SAN move to its UCI form (e.g. "g4" → "g2g4") using the position
+ * FEN that precedes the move. Returns null if the move is illegal or the FEN
+ * is missing/invalid.
+ */
+function sanToUci(fen: string | null | undefined, san: string | null | undefined): string | null {
+  if (!fen || !san) return null;
+  try {
+    const chess = new Chess(fen);
+    const move = chess.move(san);
+    return move ? move.from + move.to + (move.promotion ?? '') : null;
+  } catch {
+    return null;
+  }
+}
+
+function logPromptToFile(entryId: string, prompt: string) {
+  try {
+    const logPath = path.join(process.cwd(), 'ai-prompt-debug.log');
+    const separator = '='.repeat(60);
+    const header = `\n${separator}\n[${new Date().toISOString()}] Entry: ${entryId}\n${separator}\n`;
+    fs.appendFileSync(logPath, header + prompt + '\n', 'utf8');
+    console.log(`[AI-ANALYSIS] Prompt logged to ai-prompt-debug.log`);
+  } catch (err) {
+    console.error('[AI-ANALYSIS] Failed to write prompt log:', err);
+  }
+}
 
 // GET endpoint to check AI thinking analysis progress
 // Note: thinking_progress is not persisted in Redis; this is a placeholder
@@ -109,13 +140,36 @@ export async function POST(request: NextRequest) {
         // No blind color-agnostic fallback — better to have no engine data than the opponent's
       }
       if (moveAnalysis) {
+        // evaluation (from DB) = eval AFTER the move, pawn units, White POV
+        // centipawnLoss (from DB) = CP loss for the side that moved, in centipawns
+        //
+        // If the player played the engine's top move, override cpLoss to 0 —
+        // small stored values are just floating-point noise from two independent
+        // engine calls and should not mislead the AI.
+        const uciPlayed = sanToUci(entry.fen, entry.myMove);
+        const playedBestMove =
+          !!uciPlayed && !!moveAnalysis.bestMove && uciPlayed === moveAnalysis.bestMove;
+
+        const evalAfterPawns = moveAnalysis.evaluation;
+        const effectiveCpLoss = playedBestMove ? 0 : (moveAnalysis.centipawnLoss ?? 0);
+
+        // Reconstruct eval BEFORE the move (White POV, pawn units):
+        //   White moved → evalBefore = evalAfter + cpLoss/100
+        //   Black moved → evalBefore = evalAfter - cpLoss/100
+        const evalBeforePawns =
+          moveAnalysis.color === 'white'
+            ? evalAfterPawns + effectiveCpLoss / 100
+            : evalAfterPawns - effectiveCpLoss / 100;
+
+        if (playedBestMove) {
+          console.log(`[AI-ANALYSIS] Player played engine's top move (${entry.myMove} = ${uciPlayed}), zeroing CP loss`);
+        }
+
         moveAnalysis = {
           ...moveAnalysis,
-          evaluation: moveAnalysis.evaluation,
-          evaluation_after:
-            moveAnalysis.centipawnLoss !== undefined
-              ? (moveAnalysis.evaluation - moveAnalysis.centipawnLoss) / 100
-              : undefined,
+          centipawnLoss: effectiveCpLoss,
+          evaluation_before: evalBeforePawns, // eval of position player is THINKING about
+          evaluation_after: evalAfterPawns,   // eval after move is played (= stored .evaluation)
         };
       }
     }
@@ -164,6 +218,10 @@ export async function POST(request: NextRequest) {
     console.log(`\n========== AI ANALYSIS PROMPT - Entry ${entry.id} ==========`);
     console.log(prompt);
     console.log(`========== END PROMPT ==========\n`);
+
+    if (process.env.LOG_AI_PROMPTS === '1') {
+      logPromptToFile(entry.id, prompt);
+    }
 
     const maxTokens =
       verbosityVal === 'brief'

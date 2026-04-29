@@ -44,6 +44,9 @@ chess-diary.db-journal
 /tmp
 tmp/
 
+# AI prompt debug log (generated when LOG_AI_PROMPTS=1)
+ai-prompt-debug.log
+
 # IDE
 .vscode/
 .idea/
