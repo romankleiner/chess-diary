@@ -99,10 +99,14 @@ export async function POST(request: NextRequest) {
         moveAnalysis = analysis.moves.find(
           (m: any) => m.moveNumber === targetMoveNumber && m.color === userColor
         );
-        if (!moveAnalysis) {
-          console.log(`[AI-ANALYSIS] Could not find move ${targetMoveNumber} for ${userColor}, trying fallback`);
-          moveAnalysis = analysis.moves.find((m: any) => m.moveNumber === targetMoveNumber);
+        if (!moveAnalysis && entry.myMove) {
+          // Fallback: match by notation instead of color to avoid returning the opponent's move
+          console.log(`[AI-ANALYSIS] Could not find move ${targetMoveNumber} for ${userColor}, trying notation fallback with move "${entry.myMove}"`);
+          moveAnalysis = analysis.moves.find(
+            (m: any) => m.moveNumber === targetMoveNumber && m.move === entry.myMove
+          );
         }
+        // No blind color-agnostic fallback — better to have no engine data than the opponent's
       }
       if (moveAnalysis) {
         moveAnalysis = {
