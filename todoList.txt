@@ -6,6 +6,7 @@ Blog export:
 Minor:
 - Test backup and admin / non-admin role
 - Post-game comment eval header: has two evals, and shows CP diff even on top move
+- Post-game comment eval header isn't added if an AI comment is present
 - Post-game summary shows incorrect count of blunders and mistakes
 
 Mid:
