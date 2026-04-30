@@ -5,6 +5,7 @@ Blog export:
 
 Minor:
 - Test backup and admin / non-admin role
+- Post-game comment eval header: has two evals, and shows CP diff even on top move
 
 Mid:
 
