@@ -47,6 +47,9 @@ tmp/
 # AI prompt debug log (generated when LOG_AI_PROMPTS=1)
 ai-prompt-debug.log
 
+# Claude Code worktrees (local scratch branches, never commit)
+.claude/worktrees/
+
 # IDE
 .vscode/
 .idea/

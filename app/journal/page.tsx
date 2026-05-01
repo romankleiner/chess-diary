@@ -1807,11 +1807,9 @@ export default function JournalPage() {
                                            daysDiff === 1 ? '1 day after game' :
                                            `${daysDiff} days after game`;
                                   })()}
-                                  {entry.postReview.evalBefore !== undefined && entry.postReview.evalAfter !== undefined && (
+                                  {entry.postReview.evalAfter !== undefined && (
                                     <span className="ml-2">
-                                      · {entry.postReview.evalBefore > 0 ? '+' : ''}{entry.postReview.evalBefore.toFixed(2)}
-                                      {' → '}
-                                      {entry.postReview.evalAfter > 0 ? '+' : ''}{entry.postReview.evalAfter.toFixed(2)}
+                                      · {entry.postReview.evalAfter > 0 ? '+' : ''}{entry.postReview.evalAfter.toFixed(2)}
                                       {entry.postReview.moveQuality && ` · ${entry.postReview.moveQuality}`}
                                       {entry.postReview.centipawnLoss !== undefined && ` · ${entry.postReview.centipawnLoss} cp`}
                                     </span>

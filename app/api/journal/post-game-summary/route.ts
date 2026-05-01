@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       getJournal(),  // needed for duplicate check
       getGame(gameId),
       getAnalysis(gameId),
-      getSetting('chesscomUsername'),
+      getSetting('chesscom_username'),
     ]);
 
     // Prevent duplicates
