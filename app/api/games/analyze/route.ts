@@ -3,6 +3,7 @@ import { Chess } from 'chess.js';
 import { getGame, getAnalysis, getSetting, setGameProgress, getGameProgress, clearGameProgress, saveAnalysis, saveGame } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
 import { calculateAccuracy, getMoveQuality, normalizeCpLoss } from '@/lib/analysis-utils';
+import { isBookMove } from '@/lib/opening-book';
 import {
   setProgress as setInMemProgress,
   clearProgress as clearInMemProgress,
@@ -148,34 +149,51 @@ async function analyzeGameChessApiBatched(
   }
   
   const endMoveIndex = Math.min(startMoveIndex + batchSize, history.length);
-  
+
+  // We're still in book if all previously-analysed moves were book moves.
+  // This lets sequential detection carry across batch boundaries.
+  let inOpeningBook = existingMoves.length === 0 || existingMoves.every((m: any) => m.moveQuality === 'book');
+
   await setProgress(gameId, startMoveIndex, history.length);
-  
+
   for (let i = startMoveIndex; i < endMoveIndex; i++) {
     const move = history[i];
     const isWhiteMove = chess.turn() === 'w';
-    
+
     await setProgress(gameId, i + 1, history.length);
-    
+
     try {
       const fenBefore = chess.fen();
+
+      // ── Opening book detection ─────────────────────────────────────────────
+      // Sequential: once a move is absent from the book, stop checking.
+      // The Polyglot book naturally ends when positions leave theory —
+      // no artificial move-number cap needed.
+      let isBook = false;
+      if (inOpeningBook) {
+        const uciPlayed = move.from + move.to + (move.promotion ?? '');
+        isBook = await isBookMove(fenBefore, uciPlayed);
+        if (!isBook) inOpeningBook = false;
+      }
+      // ── End book detection ────────────────────────────────────────────────
+
       const evalBefore = await getChessApiEval(fenBefore, depth);
-      
+
       if (!evalBefore) {
         console.log(`[CHESS-API] Skipping move ${i + 1}: API failed`);
         chess.move(move.san);
         continue;
       }
-      
+
       chess.move(move.san);
       const fenAfter = chess.fen();
       const evalAfter = await getChessApiEval(fenAfter, depth);
-      
+
       if (!evalAfter) {
         console.log(`[CHESS-API] Skipping move ${i + 1}: API failed on after position`);
         continue;
       }
-      
+
       // chess-api.com always returns eval from white's perspective.
       // evalBefore and evalAfter are both in centipawns, white-POV.
       const evalBeforeWhite = evalBefore.score;
@@ -204,14 +222,23 @@ async function analyzeGameChessApiBatched(
       const playerEvalAfter  = isWhiteMove ? evalAfterWhite  : -evalAfterWhite;
       cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter, playerEvalBefore);
 
+      // Book moves: force cpLoss = 0 and exclude from accuracy calculation.
+      // Evaluation is still stored normally so the eval chart has no gaps.
+      if (isBook) {
+        cpLoss = 0;
+        console.log(`[CHESS-API] Move ${i + 1} (${move.san}) is a book move — eval stored, excluded from accuracy`);
+      }
+
       // Store evaluation in pawn units for display
       const evalAfterPawns = Math.round(evalAfterWhite) / 100;
 
-      // Add all moves to accuracy calculation
-      if (isWhiteMove) {
-        whiteLosses.push(cpLoss);
-      } else {
-        blackLosses.push(cpLoss);
+      // Accuracy: only count non-book moves
+      if (!isBook) {
+        if (isWhiteMove) {
+          whiteLosses.push(cpLoss);
+        } else {
+          blackLosses.push(cpLoss);
+        }
       }
 
       const moveNumber = Math.floor(i / 2) + 1;
@@ -224,10 +251,10 @@ async function analyzeGameChessApiBatched(
         bestMove: evalBefore.bestMove,
         principalVariation: evalBefore.pv && evalBefore.pv.length > 0 ? evalBefore.pv.slice(0, 5) : undefined,
         centipawnLoss: cpLoss,
-        moveQuality: getMoveQuality(cpLoss),
+        moveQuality: isBook ? 'book' : getMoveQuality(cpLoss),
       });
-      
-      console.log(`[CHESS-API] Move ${i + 1}/${history.length} analyzed: ${move.san}, CP loss = ${cpLoss}`);
+
+      console.log(`[CHESS-API] Move ${i + 1}/${history.length} analyzed: ${move.san}, CP loss = ${cpLoss}${isBook ? ' (book)' : ''}`);
     } catch (error) {
       console.error(`[CHESS-API] Error analyzing move ${i + 1}:`, error);
     }
@@ -263,19 +290,32 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
   const blackLosses: number[] = [];
   
   await setProgress(gameId, 0, history.length);
-  
+
   console.log(`[STOCKFISH] Starting analysis of ${history.length} moves at depth ${depth}...`);
-  
+
+  let inOpeningBook = true; // Sequential flag — cleared on first non-book move
+
   try {
     for (let i = 0; i < history.length; i++) {
       const move = history[i];
       const isWhiteMove = chess.turn() === 'w';
-      
+
       await setProgress(gameId, i + 1, history.length);
-      
+
       try {
         const fenBefore = chess.fen();
-        
+
+        // ── Opening book detection ───────────────────────────────────────────
+        // Sequential: once a move is absent from the book, stop checking.
+        let isBook = false;
+        if (inOpeningBook) {
+          const uciPlayed = move.from + move.to + (move.promotion ?? '');
+          isBook = await isBookMove(fenBefore, uciPlayed);
+          if (!isBook) inOpeningBook = false;
+        }
+        // ── End book detection ─────────────────────────────────────────────
+        console.log(`[STOCKFISH] Move ${i + 1} (${move.san}): starting engine analysis...`);
+
         const analysisBefore = await engine.analyze(fenBefore, depth);
         const scoreBefore = analysisBefore.lines[0]?.score;
         const bestMove = analysisBefore.bestmove || '';
@@ -349,13 +389,22 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
         const playerEvalAfter  = isWhiteMove ? evalAfter  : -evalAfter;
         cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter, playerEvalBefore);
 
+        // Book moves: force cpLoss = 0 and exclude from accuracy calculation.
+        // Evaluation is still stored normally so the eval chart has no gaps.
+        if (isBook) {
+          cpLoss = 0;
+          console.log(`[STOCKFISH] Move ${i + 1} (${move.san}) is a book move — eval stored, excluded from accuracy`);
+        }
+
         const moveNumber = Math.floor(i / 2) + 1;
 
-        // Add all moves to accuracy calculation
-        if (isWhiteMove) {
-          whiteLosses.push(cpLoss);
-        } else {
-          blackLosses.push(cpLoss);
+        // Accuracy: only count non-book moves
+        if (!isBook) {
+          if (isWhiteMove) {
+            whiteLosses.push(cpLoss);
+          } else {
+            blackLosses.push(cpLoss);
+          }
         }
 
         analyses.push({
@@ -366,7 +415,7 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           bestMove: bestMove,
           principalVariation: principalVariation.length > 0 ? principalVariation : undefined,
           centipawnLoss: cpLoss,
-          moveQuality: getMoveQuality(cpLoss),
+          moveQuality: isBook ? 'book' : getMoveQuality(cpLoss),
         });
       } catch (error) {
         console.error(`[STOCKFISH] Error analyzing move ${i + 1}:`, error);

@@ -84,12 +84,13 @@ export default function GameAnalysisPage() {
 
   const getMoveQualityColor = (quality: string) => {
     switch (quality) {
+      case 'book':      return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200';
       case 'excellent': return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-      case 'good': return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
+      case 'good':      return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
       case 'inaccuracy': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
-      case 'mistake': return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200';
-      case 'blunder': return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'mistake':   return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200';
+      case 'blunder':   return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+      default:          return 'bg-gray-100 text-gray-800';
     }
   };
 
@@ -308,7 +309,8 @@ export default function GameAnalysisPage() {
 
       <div className="bg-blue-50 dark:bg-blue-900 rounded-lg p-4 text-sm">
         <p className="font-semibold mb-2">Move Quality Legend:</p>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+          <div><span className="px-2 py-1 rounded bg-purple-100 text-purple-800 text-xs">Book</span> Opening theory</div>
           <div><span className="px-2 py-1 rounded bg-green-100 text-green-800 text-xs">Excellent</span> ≤25 CP loss</div>
           <div><span className="px-2 py-1 rounded bg-blue-100 text-blue-800 text-xs">Good</span> ≤50 CP loss</div>
           <div><span className="px-2 py-1 rounded bg-yellow-100 text-yellow-800 text-xs">Inaccuracy</span> ≤100 CP loss</div>

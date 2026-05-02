@@ -112,12 +112,18 @@ export default function GamesPage() {
     fetch('/api/journal?startDate=2000-01-01&endDate=2099-12-31')
       .then(r => r.json())
       .then(data => {
+        // Normalise to strings — gameId may be stored as a number in the DB
         const gameIds = new Set<string>(
-          (data.entries || []).map((e: any) => e.gameId).filter(Boolean)
+          (data.entries || [])
+            .map((e: any) => e.gameId)
+            .filter(Boolean)
+            .map((id: any) => String(id))
         );
         setGamesWithEntries(gameIds);
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error('[FRONTEND] Failed to load journal entries for games page:', err);
+      });
   }, []);
 
   // Clear the progress-poll interval when the component unmounts (e.g. the user
