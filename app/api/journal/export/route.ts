@@ -319,6 +319,18 @@ export async function GET(request: NextRequest) {
 
           } else {
             // ── Regular entry ──────────────────────────────────────────────────
+            if (entry.opponentLastMove) {
+              docSections.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: `Opponent's last move: `, bold: true }),
+                    new TextRun({ text: entry.opponentLastMove }),
+                  ],
+                  spacing: { before: 100, after: 60 }
+                })
+              );
+            }
+
             docSections.push(
               new Paragraph({
                 children: [

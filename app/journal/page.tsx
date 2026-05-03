@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { Chess } from 'chess.js';
 import { GrammarCheck } from './grammar-check';
 import PostGameSummaryCard from '@/components/PostGameSummaryCard';
 
@@ -51,6 +52,7 @@ interface Game {
   result: string | null;
   turn?: string;
   fen?: string;
+  pgn?: string;
   move_by?: number; // Unix timestamp of when the next move is due
 }
 
@@ -87,6 +89,7 @@ export default function JournalPage() {
   const [showAiReviews, setShowAiReviews] = useState(true);
   const [editingAiReview, setEditingAiReview] = useState<number | null>(null);
   const [aiReviewContent, setAiReviewContent] = useState('');
+  const [lastOpponentMove, setLastOpponentMove] = useState<{ from: string; to: string; san: string } | null>(null);
   const lastSavedContentRef = useRef<{
     thought: string;
     myMove: string;
@@ -320,6 +323,22 @@ export default function JournalPage() {
     if (game && game.fen) {
       setCurrentFen(game.fen);
     }
+
+    // Extract the opponent's last move from PGN so we can highlight it on the board
+    setLastOpponentMove(null);
+    if (game?.pgn) {
+      try {
+        const chess = new Chess();
+        chess.loadPgn(game.pgn);
+        const history = chess.history({ verbose: true });
+        if (history.length > 0) {
+          const last = history[history.length - 1];
+          setLastOpponentMove({ from: last.from, to: last.to, san: last.san });
+        }
+      } catch (err) {
+        console.warn('[BOARD] Failed to parse PGN for last-move highlight:', err);
+      }
+    }
   };
 
   const addEntry = async (e: React.FormEvent) => {
@@ -402,6 +421,7 @@ export default function JournalPage() {
             moveNotation: null,
             fen: currentFen,
             myMove: myMove.trim() || null,
+            opponentLastMove: entryMode === 'game' && lastOpponentMove ? lastOpponentMove.san : null,
             images: images.length > 0 ? images : null,
           }),
         });
@@ -924,6 +944,7 @@ export default function JournalPage() {
               setEntryMode('general');
               setCurrentGameId(null);
               setCurrentFen(null);
+              setLastOpponentMove(null);
               applyGameFilter(null);
             }}
             className={`flex-1 py-3 px-4 rounded-lg border-2 transition ${
@@ -1143,23 +1164,33 @@ export default function JournalPage() {
         {entryMode === 'game' && currentGameId && currentFen && (() => {
           const game = allGames.find(g => g.id === currentGameId);
           if (!game) return null;
-          
+
           // Determine orientation based on player color
           const usernameLower = username?.toLowerCase() || '';
           const whiteLower = game.white?.toLowerCase() || '';
           const isWhite = usernameLower === whiteLower;
-          
+
           return (
             <div className="mb-4">
               <div className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                 Current Position ({isWhite ? 'You are White' : 'You are Black'})
               </div>
-              <div className="flex justify-center bg-gray-100 dark:bg-gray-700 rounded-lg p-4">
-                <img 
-                  src={`/api/board-image?fen=${encodeURIComponent(currentFen)}${isWhite ? '' : '&pov=black'}`}
-                  alt="Chess position"
-                  className="w-80 h-80 rounded border border-gray-300 dark:border-gray-600"
-                />
+              <div className="flex flex-col items-center bg-gray-100 dark:bg-gray-700 rounded-lg p-4 gap-2">
+                <div className="w-80 h-80">
+                  <img
+                    src={`/api/board-image?fen=${encodeURIComponent(currentFen)}${isWhite ? '' : '&pov=black'}`}
+                    alt="Chess position"
+                    className="w-full h-full rounded border border-gray-300 dark:border-gray-600"
+                  />
+                </div>
+                {lastOpponentMove && (
+                  <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                    🟡 Opponent&apos;s last move: <span className="font-mono">{lastOpponentMove.san}</span>
+                    <span className="text-gray-500 dark:text-gray-400 ml-1">
+                      ({lastOpponentMove.from}→{lastOpponentMove.to})
+                    </span>
+                  </p>
+                )}
               </div>
             </div>
           );

@@ -25,6 +25,7 @@ export interface JournalEntry {
   timestamp: string;
   fen?: string;
   myMove?: string;
+  opponentLastMove?: string; // SAN of the opponent's last move at time of entry (e.g. "Na4")
   image?: string; // base64 encoded image
 
   // Only present when entryType === 'post_game_summary'
