@@ -11,6 +11,7 @@ Minor:
 - Add last move to journal entries (not just during editing)
 
 Mid:
+- Game view does not show game's thoughts
 
 Major:
 - Show opponent's last move on the game diagram
