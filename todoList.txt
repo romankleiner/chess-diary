@@ -8,7 +8,7 @@ Minor:
 - Post-game comment eval header isn't added if an AI comment is present
 - Change AI prompt for opening book moves
 - Get a more advanced opening book - stops too early
-- Add last move to journal entries (not just during editing)
+- Post-game review comments show the wrong eval for black
 
 Mid:
 - Game view does not show game's thoughts
