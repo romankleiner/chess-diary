@@ -598,14 +598,11 @@ export default function JournalPage() {
       );
       if (idx === -1) return;
 
-      // Convert white-POV evaluations to player-POV so the arrow direction is
-      // intuitive: a positive delta always means the player improved their position.
-      const isBlack = moves[idx].color === 'black';
       const rawAfter  = moves[idx].evaluation;
       const rawBefore = idx > 0 ? moves[idx - 1].evaluation : 0;
       setPendingReviewEval({
-        evalBefore:    isBlack ? -rawBefore : rawBefore,
-        evalAfter:     isBlack ? -rawAfter  : rawAfter,
+        evalBefore:    rawBefore,
+        evalAfter:     rawAfter,
         moveQuality:   moves[idx].moveQuality,
         centipawnLoss: moves[idx].centipawnLoss,
       });
