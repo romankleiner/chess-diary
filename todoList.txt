@@ -8,13 +8,13 @@ Minor:
 - Post-game comment eval header isn't added if an AI comment is present
 - Change AI prompt for opening book moves
 - Get a more advanced opening book - stops too early
-- Post-game review comments show the wrong eval for black
+- Show last move in full notation in comments
 
 Mid:
 - Game view does not show game's thoughts
+- Progress bar for export
 
 Major:
-- Show opponent's last move on the game diagram
 - Switch to an interactive board in diagrams?
 
 SDLC:
