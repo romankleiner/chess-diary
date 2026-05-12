@@ -422,7 +422,7 @@ export default function JournalPage() {
             moveNotation: null,
             fen: currentFen,
             myMove: myMove.trim() || null,
-            opponentLastMove: entryMode === 'game' && lastOpponentMove ? lastOpponentMove.san : null,
+            opponentLastMove: entryMode === 'game' && lastOpponentMove ? `${lastOpponentMove.san}|${lastOpponentMove.from}|${lastOpponentMove.to}` : null,
             images: images.length > 0 ? images : null,
           }),
         });
@@ -1689,11 +1689,18 @@ export default function JournalPage() {
                             
                             {(entry.opponentLastMove || entry.myMove) && (
                               <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-600 flex flex-wrap gap-4">
-                                {entry.opponentLastMove && (
-                                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                                    🟡 Opponent&apos;s move: <span className="font-mono">{entry.opponentLastMove}</span>
-                                  </p>
-                                )}
+                                {entry.opponentLastMove && (() => {
+                                  const parts = entry.opponentLastMove.split('|');
+                                  const san = parts[0];
+                                  const label = parts.length === 3
+                                    ? `${san} (${parts[1]}-${parts[2]})`
+                                    : san;
+                                  return (
+                                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                                      🟡 Opponent&apos;s move: <span className="font-mono">{label}</span>
+                                    </p>
+                                  );
+                                })()}
                                 {entry.myMove && (
                                   <p className="text-sm font-bold text-green-700 dark:text-green-400">
                                     ✓ My Move: {entry.myMove}
