@@ -24,49 +24,65 @@ Position (FEN): ${fen || 'Not available'}`;
     prompt += `\nMove played: ${movePlayed}`;
   }
 
+  const isBookMove = moveAnalysis?.moveQuality === 'book';
+
   if (moveAnalysis) {
-    prompt += `\n\nEngine analysis:`;
+    if (isBookMove) {
+      prompt += `\n\nNote: This move is an opening book move (established theory). Engine accuracy metrics are not applicable here.`;
+    } else {
+      prompt += `\n\nEngine analysis:`;
 
-    // evaluation_before = eval of the position the player is thinking about (before their move)
-    // evaluation_after  = eval after the move is played
-    // Fall back to the raw .evaluation field if the route hasn't enriched the object yet.
-    const evalBefore: number | undefined =
-      moveAnalysis.evaluation_before ?? moveAnalysis.evaluation;
-    const evalAfter: number | undefined =
-      moveAnalysis.evaluation_after ?? moveAnalysis.evaluation;
+      // evaluation_before = eval of the position the player is thinking about (before their move)
+      // evaluation_after  = eval after the move is played
+      // Fall back to the raw .evaluation field if the route hasn't enriched the object yet.
+      const evalBefore: number | undefined =
+        moveAnalysis.evaluation_before ?? moveAnalysis.evaluation;
+      const evalAfter: number | undefined =
+        moveAnalysis.evaluation_after ?? moveAnalysis.evaluation;
 
-    if (evalBefore !== undefined) {
-      prompt += `\n- Position evaluation: ${evalBefore > 0 ? '+' : ''}${evalBefore.toFixed(2)} pawns`;
-    }
-    if (moveAnalysis.bestMove) {
-      prompt += `\n- Engine's best move: ${moveAnalysis.bestMove}`;
-      if (moveAnalysis.principalVariation) {
-        let pvMoves = '';
-        if (Array.isArray(moveAnalysis.principalVariation)) {
-          pvMoves = moveAnalysis.principalVariation.join(' ');
-        } else if (typeof moveAnalysis.principalVariation === 'string') {
-          pvMoves = moveAnalysis.principalVariation;
-        }
-        if (pvMoves && pvMoves.length > 0) {
-          prompt += `\n- Engine's main line: ${pvMoves}`;
-        }
-      }
-    }
-    if (evalAfter !== undefined && movePlayed) {
-      prompt += `\n- Evaluation after ${movePlayed}: ${evalAfter > 0 ? '+' : ''}${evalAfter.toFixed(2)} pawns`;
       if (evalBefore !== undefined) {
-        const evalDiff = evalAfter - evalBefore;
-        if (Math.abs(evalDiff) > 0.03) {
-          prompt += ` (${evalDiff > 0 ? '+' : ''}${evalDiff.toFixed(2)} change)`;
+        prompt += `\n- Position evaluation: ${evalBefore > 0 ? '+' : ''}${evalBefore.toFixed(2)} pawns`;
+      }
+      if (moveAnalysis.bestMove) {
+        prompt += `\n- Engine's best move: ${moveAnalysis.bestMove}`;
+        if (moveAnalysis.principalVariation) {
+          let pvMoves = '';
+          if (Array.isArray(moveAnalysis.principalVariation)) {
+            pvMoves = moveAnalysis.principalVariation.join(' ');
+          } else if (typeof moveAnalysis.principalVariation === 'string') {
+            pvMoves = moveAnalysis.principalVariation;
+          }
+          if (pvMoves && pvMoves.length > 0) {
+            prompt += `\n- Engine's main line: ${pvMoves}`;
+          }
         }
       }
-    }
-    if (moveAnalysis.centipawnLoss !== undefined && moveAnalysis.centipawnLoss > 0) {
-      prompt += `\n- Centipawn loss from best move: ${(moveAnalysis.centipawnLoss / 100).toFixed(2)} pawns (${moveAnalysis.moveQuality})`;
+      if (evalAfter !== undefined && movePlayed) {
+        prompt += `\n- Evaluation after ${movePlayed}: ${evalAfter > 0 ? '+' : ''}${evalAfter.toFixed(2)} pawns`;
+        if (evalBefore !== undefined) {
+          const evalDiff = evalAfter - evalBefore;
+          if (Math.abs(evalDiff) > 0.03) {
+            prompt += ` (${evalDiff > 0 ? '+' : ''}${evalDiff.toFixed(2)} change)`;
+          }
+        }
+      }
+      if (moveAnalysis.centipawnLoss !== undefined && moveAnalysis.centipawnLoss > 0) {
+        prompt += `\n- Centipawn loss from best move: ${(moveAnalysis.centipawnLoss / 100).toFixed(2)} pawns (${moveAnalysis.moveQuality})`;
+      }
     }
   }
 
-  if (verbosity === 'brief') {
+  if (isBookMove) {
+    if (verbosity === 'brief') {
+      prompt += `\n\nThis is an opening book move, so focus on opening understanding rather than engine accuracy. Briefly comment on whether the player's stated thinking reflects good opening principles (development, center control, king safety). Be encouraging.`;
+    } else if (verbosity === 'detailed') {
+      prompt += `\n\nThis is an opening book move, so do not evaluate it as a tactical or strategic error — it is established theory. Provide a detailed analysis (2-3 paragraphs): Paragraph 1: Comment on whether the player's stated thinking aligns with the purpose of this opening move (e.g. development, center control, king safety, piece coordination). Paragraph 2: Explain what this move achieves in the opening and what plans or ideas typically follow from this position. If the game moves are shown above, identify the opening or variation by name if possible. Paragraph 3: Suggest what the player should be thinking about as they leave the opening and enter the middlegame. Be educational and encouraging.`;
+    } else if (verbosity === 'extensive') {
+      prompt += `\n\nThis is an opening book move, so do not evaluate it as a tactical or strategic error — it is established theory. Provide an extensive analysis (3-4 paragraphs): Paragraph 1: Evaluate the player's stated thinking — does it reflect an understanding of why this opening move is played? Comment on what they got right about their reasoning. Paragraph 2: Explain the opening theory behind this move in depth. If the game moves are shown above, identify the opening or variation by name and describe the key ideas White and Black are fighting for. Paragraph 3: Describe the typical plans and middlegame structures that arise from this position. What are the thematic piece manoeuvres, pawn breaks, or imbalances? Paragraph 4: Give learning suggestions — what should the player study to deepen their understanding of this opening? How can they improve their opening thinking process? Be thorough and educational.`;
+    } else {
+      prompt += `\n\nThis is an opening book move. Briefly note whether the player's thinking reflects good opening principles and what this move aims to achieve. Be encouraging.`;
+    }
+  } else if (verbosity === 'brief') {
     prompt += `\n\nProvide a brief analysis (1-2 sentences): Evaluate their reasoning and mention the most important thing they should learn from this position. Be educational and encouraging, not critical.`;
   } else if (verbosity === 'detailed') {
     prompt += `\n\nProvide a detailed analysis (2-3 paragraphs): Paragraph 1: Evaluate whether their reasoning was sound based on the actual position. If game moves are shown above, consider whether they're following through on the opening/middlegame plan. Comment on what they got right. Paragraph 2: Point out what they overlooked - tactical motifs, piece activity, pawn structure, or strategic themes. Reference specific pieces and squares. If relevant, note how this position evolved from earlier moves. Paragraph 3: Suggest key patterns or principles they should recognize. If the engine suggests a different move, explain the concrete chess reasons why it's superior. Be educational and encouraging, not critical. Use chess terminology appropriately but explain advanced concepts.`;
