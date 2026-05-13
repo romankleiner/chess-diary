@@ -8,6 +8,7 @@ Minor:
 - Post-game comment eval header isn't added if an AI comment is present
 - Change AI prompt for opening book moves
 - Get a more advanced opening book - stops too early
+- Fix diagram size on Office export
 
 Mid:
 - Game view does not show game's thoughts
