@@ -183,8 +183,8 @@ export async function GET(request: NextRequest) {
                         new ImageRun({
                           data: imageBuffer,
                           transformation: {
-                            width: 300,
-                            height: 300,
+                            width: 240,
+                            height: 240,
                           },
                           type: 'png',
                         }),
