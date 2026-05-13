@@ -5,6 +5,58 @@ import { Chess } from 'chess.js';
 import { GrammarCheck } from './grammar-check';
 import PostGameSummaryCard from '@/components/PostGameSummaryCard';
 
+/**
+ * Given a stored opponentLastMove value and context, return a display label
+ * like "Re4 (e1-e4)".
+ *
+ * New entries store "Re4|e1|e4" (pipe-encoded). Old entries store just "Re4".
+ * For old entries we replay the game PGN up to the matching FEN position to
+ * recover the from/to squares retroactively.
+ */
+function getOpponentMoveLabel(
+  raw: string,
+  entryFen: string | undefined,
+  gamePgn: string | undefined
+): string {
+  // New format: "Re4|e1|e4"
+  const parts = raw.split('|');
+  if (parts.length === 3) {
+    return `${parts[0]} (${parts[1]}-${parts[2]})`;
+  }
+
+  // Old format: just SAN. Try to derive from-to via PGN replay.
+  const san = raw;
+  if (!entryFen || !gamePgn) return san;
+
+  try {
+    // Compare only the board+side+castling+en-passant parts of the FEN
+    // (ignore half-move clock and full-move number, which may differ).
+    const entryFenPos = entryFen.split(' ').slice(0, 4).join(' ');
+
+    const chess = new Chess();
+    chess.loadPgn(gamePgn);
+    const fullHistory = chess.history({ verbose: true });
+
+    // Replay move by move until the position matches the entry FEN.
+    const replay = new Chess();
+    for (const move of fullHistory) {
+      replay.move(move);
+      const pos = replay.fen().split(' ').slice(0, 4).join(' ');
+      if (pos === entryFenPos) {
+        // `move` is the one that produced this position — that's the opponent's move.
+        if (move.san === san) {
+          return `${san} (${move.from}-${move.to})`;
+        }
+        break;
+      }
+    }
+  } catch {
+    // Silently fall back if PGN parse fails
+  }
+
+  return san;
+}
+
 // Helper function to get current time in local timezone as ISO string
 function getLocalTimestamp(): string {
   const now = new Date();
@@ -1689,18 +1741,11 @@ export default function JournalPage() {
                             
                             {(entry.opponentLastMove || entry.myMove) && (
                               <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-600 flex flex-wrap gap-4">
-                                {entry.opponentLastMove && (() => {
-                                  const parts = entry.opponentLastMove.split('|');
-                                  const san = parts[0];
-                                  const label = parts.length === 3
-                                    ? `${san} (${parts[1]}-${parts[2]})`
-                                    : san;
-                                  return (
-                                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                                      🟡 Opponent&apos;s move: <span className="font-mono">{label}</span>
-                                    </p>
-                                  );
-                                })()}
+                                {entry.opponentLastMove && (
+                                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                                    🟡 Opponent&apos;s move: <span className="font-mono">{getOpponentMoveLabel(entry.opponentLastMove, entry.fen, game?.pgn)}</span>
+                                  </p>
+                                )}
                                 {entry.myMove && (
                                   <p className="text-sm font-bold text-green-700 dark:text-green-400">
                                     ✓ My Move: {entry.myMove}
