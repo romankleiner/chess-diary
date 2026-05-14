@@ -25,6 +25,8 @@ interface JournalEntry {
   moveNumber?: number;
   moveNotation?: string;
   timestamp: string;
+  myMove?: string;
+  opponentLastMove?: string;
 }
 
 export default function GamePage() {
@@ -47,11 +49,16 @@ export default function GamePage() {
       
       if (foundGame) {
         setGame(foundGame);
-        
-        // Load journal entries for this game
-        // We need to search through all dates
-        // For now, just show a placeholder
-        setEntries([]);
+
+        // Load all journal entries and filter by this game's ID
+        const journalResponse = await fetch('/api/journal');
+        const journalData = await journalResponse.json();
+        const gameEntries = (journalData.entries || [])
+          .filter((e: JournalEntry) => e.gameId === gameId)
+          .sort((a: JournalEntry, b: JournalEntry) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+        setEntries(gameEntries);
       }
     } catch (error) {
       console.error('Error loading game:', error);
@@ -167,6 +174,25 @@ export default function GamePage() {
                   </p>
                 )}
                 <p className="text-sm whitespace-pre-wrap">{entry.content}</p>
+                {(entry.opponentLastMove || entry.myMove) && (
+                  <div className="mt-2 flex flex-wrap gap-4">
+                    {entry.opponentLastMove && (
+                      <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                        🟡 Opponent&apos;s move: <span className="font-mono">
+                          {(() => {
+                            const parts = entry.opponentLastMove!.split('|');
+                            return parts.length === 3 ? `${parts[0]} (${parts[1]}-${parts[2]})` : parts[0];
+                          })()}
+                        </span>
+                      </p>
+                    )}
+                    {entry.myMove && (
+                      <p className="text-sm font-bold text-green-700 dark:text-green-400">
+                        ✓ My Move: {entry.myMove}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-gray-500 mt-2">
                   {new Date(entry.timestamp).toLocaleString()}
                 </p>
