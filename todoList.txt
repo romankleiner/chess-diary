@@ -10,6 +10,7 @@ Minor:
 Mid:
 - Game view does not show game's thoughts
 - Progress bar for export
+- Slowdown when fetching games
 
 Major:
 - Switch to an interactive board in diagrams?
