@@ -265,9 +265,6 @@ export default function JournalPage() {
       if (gameEntries.length > 0 && !currentGameId) {
         setCurrentGameId(gameEntries[0].gameId);
       }
-      
-      // Also load all games so we can display opponent names in entries
-      await loadActiveGames();
     } catch (error) {
       console.error('Error loading entries:', error);
     } finally {

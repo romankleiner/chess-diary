@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchPlayerGames, fetchActiveGames, parseChessComGame } from '@/lib/chesscom';
-import { getSetting, getGame, saveGame } from '@/lib/db';
+import { getSetting, getGames, saveGame } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,45 +16,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Chess.com username not configured' }, { status: 400 });
     }
     
-    let allGames: any[] = [];
-    
-    // If includeRecent is true, fetch games from last 3 months
+    // Build list of fetch promises (archived months + active games) and run in parallel
+    const fetchPromises: Promise<any>[] = [];
+
     if (includeRecent) {
       const today = new Date();
       for (let i = 0; i < 3; i++) {
         const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
-        const fetchYear = date.getFullYear();
-        const fetchMonth = date.getMonth() + 1;
-        
-        try {
-          const archivedData = await fetchPlayerGames(username, fetchYear, fetchMonth);
-          if (archivedData.games) {
-            allGames = allGames.concat(archivedData.games);
-          }
-        } catch (error) {
-          // Continue to next month
-        }
+        fetchPromises.push(
+          fetchPlayerGames(username, date.getFullYear(), date.getMonth() + 1).catch(() => null)
+        );
       }
     } else {
-      // Fetch archived games for the specified month
-      try {
-        const archivedData = await fetchPlayerGames(username, year, month);
-        if (archivedData.games) {
-          allGames = allGames.concat(archivedData.games);
-        }
-      } catch (error) {
-        // No archived games for this period
-      }
+      fetchPromises.push(
+        fetchPlayerGames(username, year, month).catch(() => null)
+      );
     }
-    
-    // Also fetch active/ongoing games
-    try {
-      const activeData = await fetchActiveGames(username);
-      if (activeData.games) {
-        allGames = allGames.concat(activeData.games);
-      }
-    } catch (error) {
-      // No active games found
+
+    // Active games fetched in parallel with the archived months
+    fetchPromises.push(fetchActiveGames(username).catch(() => null));
+
+    const fetchResults = await Promise.all(fetchPromises);
+    const allGames: any[] = [];
+    for (const data of fetchResults) {
+      if (data?.games) allGames.push(...data.games);
     }
     
     // Parse and store games
@@ -67,12 +52,16 @@ export async function POST(request: NextRequest) {
       new Map(games.map(game => [game.id, game])).values()
     );
     
-    // Store in database - preserve existing analysis flags
-    await Promise.all(uniqueGames.map(async (game) => {
-      const existing = await getGame(game.id);
+    // Store in database - preserve existing analysis flags.
+    // Load all existing games in one Redis call instead of N individual hget calls.
+    const existingGames = await getGames();
+    await Promise.all(uniqueGames.map((game) => {
+      const existing = existingGames[game.id];
       const merged = {
         ...game,
-        analysisCompleted: existing?.analysisCompleted || game.analysisCompleted || false
+        analysisCompleted: existing?.analysisCompleted || game.analysisCompleted || false,
+        analysisDepth:     existing?.analysisDepth,
+        analysisEngine:    existing?.analysisEngine,
       };
       return saveGame(game.id, merged);
     }));
