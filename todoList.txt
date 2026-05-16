@@ -6,9 +6,9 @@ Blog export:
 Minor:
 - Test backup and admin / non-admin role
 - In the game view, add diagrams for game comments
+- Move timestamp in export before the diagram
 
 Mid:
-- Game view does not show game's thoughts
 - Progress bar for export
 - Slowdown when fetching games
 
