@@ -70,32 +70,44 @@ export default function GamesPage() {
   const loadGames = async () => {
     setLoadError(null);
     try {
-      const response = await fetch('/api/games', { signal: AbortSignal.timeout(15000) });
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
+      // Fetch games and journal entries in parallel — one Redis call each.
+      // Deriving existingSummaries and gamesWithEntries from a single journal
+      // fetch avoids N per-game summary checks that could time out and silently
+      // drop "View Summary" state after a Chess.com fetch.
+      const [gamesResponse, journalResponse] = await Promise.all([
+        fetch('/api/games', { signal: AbortSignal.timeout(15000) }),
+        fetch('/api/journal?startDate=2000-01-01&endDate=2099-12-31', { signal: AbortSignal.timeout(15000) }),
+      ]);
+
+      if (!gamesResponse.ok) {
+        throw new Error(`Server returned ${gamesResponse.status}`);
       }
-      const data = await response.json();
-      const loadedGames: Game[] = data.games || [];
+
+      const [gamesData, journalData] = await Promise.all([
+        gamesResponse.json(),
+        journalResponse.ok ? journalResponse.json() : Promise.resolve({ entries: [] }),
+      ]);
+
+      const loadedGames: Game[] = gamesData.games || [];
       setGames(loadedGames);
       console.log('[FRONTEND] Games reloaded');
 
-      // Check which games already have post-game summaries
-      if (loadedGames.length) {
-        const summaryChecks = await Promise.allSettled(
-          loadedGames.map((g: Game) =>
-            fetch(`/api/journal/post-game-summary?gameId=${g.id}`, {
-              signal: AbortSignal.timeout(10000),
-            }).then(r => r.json())
-          )
-        );
-        const withSummaries = new Set<string>();
-        summaryChecks.forEach((result, i) => {
-          if (result.status === 'fulfilled' && result.value.summary) {
-            withSummaries.add(loadedGames[i].id);
-          }
-        });
-        setExistingSummaries(withSummaries);
-      }
+      // Derive both sets from the single journal payload
+      const entries: any[] = journalData.entries || [];
+      const withSummaries = new Set<string>(
+        entries
+          .filter(e => e.entryType === 'post_game_summary')
+          .map(e => String(e.gameId))
+          .filter(Boolean)
+      );
+      const withEntries = new Set<string>(
+        entries
+          .map(e => e.gameId)
+          .filter(Boolean)
+          .map((id: any) => String(id))
+      );
+      setExistingSummaries(withSummaries);
+      setGamesWithEntries(withEntries);
     } catch (error) {
       console.error('[FRONTEND] Error loading games:', error);
       const msg = error instanceof Error ? error.message : String(error);
@@ -109,21 +121,6 @@ export default function GamesPage() {
 
   useEffect(() => {
     loadGames();
-    fetch('/api/journal?startDate=2000-01-01&endDate=2099-12-31')
-      .then(r => r.json())
-      .then(data => {
-        // Normalise to strings — gameId may be stored as a number in the DB
-        const gameIds = new Set<string>(
-          (data.entries || [])
-            .map((e: any) => e.gameId)
-            .filter(Boolean)
-            .map((id: any) => String(id))
-        );
-        setGamesWithEntries(gameIds);
-      })
-      .catch((err) => {
-        console.error('[FRONTEND] Failed to load journal entries for games page:', err);
-      });
   }, []);
 
   // Clear the progress-poll interval when the component unmounts (e.g. the user
