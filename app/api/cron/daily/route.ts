@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { put, list, del } from '@vercel/blob';
+import { put } from '@vercel/blob';
 import Redis from 'ioredis';
 import { cleanupOldBoardImages } from '@/lib/board-image-storage';
+import { pruneBackups } from '@/lib/backup-prune';
 
 // Allow up to 60 seconds — backup + cleanup can be slow on large datasets
 export const maxDuration = 60;
@@ -78,71 +79,6 @@ async function backupDatabase() {
   return { fileName, sizeMB: (backupJson.length / 1024 / 1024).toFixed(2), stats: backupData.stats };
 }
 
-/**
- * Tiered backup retention:
- *   - Last 7 days  → keep every daily backup
- *   - Days 8–35    → keep the newest backup per calendar week
- *   - Older        → keep the newest backup per calendar month
- *
- * Blobs are already sorted newest-first so the first one seen for a
- * given week/month bucket is automatically the one to keep.
- */
-async function pruneBackups() {
-  const { blobs } = await list({ prefix: 'backups/' });
-  if (blobs.length === 0) return { kept: 0, deleted: 0 };
-
-  // Newest first
-  const sorted = [...blobs].sort(
-    (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
-  );
-
-  const now        = Date.now();
-  const MS_PER_DAY = 86_400_000;
-  const keepUrls   = new Set<string>();
-  const seenWeeks  = new Set<string>();
-  const seenMonths = new Set<string>();
-
-  for (const blob of sorted) {
-    const uploadedAt = new Date(blob.uploadedAt);
-    const ageDays    = (now - uploadedAt.getTime()) / MS_PER_DAY;
-
-    if (ageDays <= 7) {
-      // Daily window — keep everything
-      keepUrls.add(blob.url);
-    } else if (ageDays <= 35) {
-      // Weekly window — keep first (newest) seen for this week
-      const weekKey = `${uploadedAt.getFullYear()}-W${weekOfYear(uploadedAt)}`;
-      if (!seenWeeks.has(weekKey)) {
-        seenWeeks.add(weekKey);
-        keepUrls.add(blob.url);
-      }
-    } else {
-      // Monthly window — keep first (newest) seen for this month
-      const monthKey = `${uploadedAt.getFullYear()}-${uploadedAt.getMonth()}`;
-      if (!seenMonths.has(monthKey)) {
-        seenMonths.add(monthKey);
-        keepUrls.add(blob.url);
-      }
-    }
-  }
-
-  const toDelete = sorted.filter(b => !keepUrls.has(b.url));
-  if (toDelete.length > 0) {
-    await Promise.all(toDelete.map(b => {
-      console.log('[CRON] Pruning backup:', b.pathname);
-      return del(b.url);
-    }));
-  }
-
-  console.log(`[CRON] Backup prune: kept ${keepUrls.size}, deleted ${toDelete.length}`);
-  return { kept: keepUrls.size, deleted: toDelete.length };
-}
-
-/** Simple week-of-year (1-based) — good enough for bucketing purposes. */
-function weekOfYear(d: Date): number {
-  const start = new Date(d.getFullYear(), 0, 1);
-  return Math.ceil(((d.getTime() - start.getTime()) / 86_400_000 + start.getDay() + 1) / 7);
-}
 
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 

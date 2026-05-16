@@ -14,6 +14,8 @@ export default function BackupsPage() {
   const [backups, setBackups] = useState<Backup[]>([]);
   const [loading, setLoading] = useState(true);
   const [restoring, setRestoring] = useState(false);
+  const [pruning, setPruning] = useState(false);
+  const [pruneResult, setPruneResult] = useState<{ kept: number; deleted: number } | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -33,6 +35,26 @@ export default function BackupsPage() {
       console.error('Error loading backups:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePrune = async () => {
+    if (!confirm('Apply the tiered retention policy now? This will permanently delete old backups that fall outside the keep window.')) return;
+    setPruning(true);
+    setPruneResult(null);
+    try {
+      const response = await fetch('/api/backups/prune', { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        setPruneResult({ kept: data.kept, deleted: data.deleted });
+        await loadBackups();
+      } else {
+        alert(`Prune failed: ${data.error}`);
+      }
+    } catch (error) {
+      alert('Prune failed. Check console for details.');
+    } finally {
+      setPruning(false);
     }
   };
 
@@ -91,13 +113,28 @@ export default function BackupsPage() {
       <div className="container mx-auto max-w-4xl">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold dark:text-white">Backup History</h1>
-          <Link 
-            href="/"
-            className="text-blue-600 hover:underline dark:text-blue-400"
-          >
-            ← Back to Home
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handlePrune}
+              disabled={pruning}
+              className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              {pruning ? '⏳ Pruning…' : '🗑️ Prune Old Backups'}
+            </button>
+            <Link
+              href="/"
+              className="text-blue-600 hover:underline dark:text-blue-400"
+            >
+              ← Back to Home
+            </Link>
+          </div>
         </div>
+
+        {pruneResult && (
+          <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded-lg text-sm text-green-800 dark:text-green-200">
+            ✅ Prune complete — kept <strong>{pruneResult.kept}</strong> backup{pruneResult.kept !== 1 ? 's' : ''}, deleted <strong>{pruneResult.deleted}</strong>.
+          </div>
+        )}
 
         {backups.length === 0 ? (
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
@@ -155,7 +192,7 @@ export default function BackupsPage() {
           </h3>
           <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
             <li>• Automated backups run daily at 2 AM UTC</li>
-            <li>• Backups are retained for 30 days</li>
+            <li>• Retention: daily for 7 days, weekly for 5 weeks, monthly thereafter</li>
             <li>• You can download any backup to your computer</li>
             <li>• Restoring replaces all current data with the backup</li>
           </ul>
