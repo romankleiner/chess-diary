@@ -271,6 +271,7 @@ export async function GET(request: NextRequest) {
                     size: 22,
                     color: '1D4ED8',
                   }),
+                  new TextRun({ text: `  ·  ${timestamp}`, size: 22, color: '3B82F6', italics: true }),
                 ],
                 shading: { fill: 'DBEAFE' },
                 border: borderSpec('1D4ED8', { bottom: !chessUrl }),
