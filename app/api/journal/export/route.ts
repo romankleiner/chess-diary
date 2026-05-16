@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
 
     if (format === 'docx') {
       // Generate Word document in-memory using docx library
-      const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink } = await import('docx');
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink, BorderStyle } = await import('docx');
 
       // Track processed entries to prevent duplicates
       const processedEntryIds = new Set<number>();
@@ -230,26 +230,54 @@ export async function GET(request: NextRequest) {
 
           // Entry content (AFTER chess diagram)
           if (entry.entryType === 'post_game_summary') {
-            // ── Post-game summary ──────────────────────────────────────────────
+            // ── Post-game summary card ─────────────────────────────────────────
+            // Mirrors the blue card UI with a shaded header, stats box, and
+            // colour-coded reflection sections.
             const pg = entry.postGameSummary;
             const snap = entry.gameSnapshot;
+            const chessUrl = snap?.url || (game ? game.url : null);
 
-            // Header
             const opponent = snap?.opponent || (game ? game.opponent : '');
-            const result = snap?.result || '';
+            const result   = snap?.result   || '';
             const resultLabel = result ? ` · ${result.charAt(0).toUpperCase() + result.slice(1)}` : '';
+            const s = pg?.statistics;
+            const accuracyText = s?.accuracy != null ? `  ·  ${s.accuracy}% accuracy` : '';
+
+            // Helper: border spec (left thick stripe + optional top/bottom hairline)
+            const borderSpec = (color: string, opts: { top?: boolean; bottom?: boolean } = {}) => ({
+              left: { style: BorderStyle.SINGLE, size: 18, color, space: 4 },
+              right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+              ...(opts.top    ? { top:    { style: BorderStyle.SINGLE, size: 4, color, space: 1 } } : {}),
+              ...(opts.bottom ? { bottom: { style: BorderStyle.SINGLE, size: 4, color, space: 1 } } : {}),
+            });
+
+            // ── Blue header ──────────────────────────────────────────────────
             docSections.push(
               new Paragraph({
                 children: [
-                  new TextRun({ text: '🏁 Post-Game Summary', bold: true, size: 26, color: '1D4ED8' }),
-                  new TextRun({ text: opponent ? ` vs. ${opponent}${resultLabel}` : '', size: 24, color: '1D4ED8' }),
+                  new TextRun({ text: '🏁  POST-GAME SUMMARY', bold: true, size: 28, color: '1E40AF' }),
                 ],
-                spacing: { before: 200, after: 100 }
+                shading: { fill: 'DBEAFE' },
+                border: borderSpec('1D4ED8', { top: true }),
+                indent: { left: 240, right: 240 },
+                spacing: { before: 360, after: 0 },
               })
             );
-
-            // Chess.com link
-            const chessUrl = snap?.url || (game ? game.url : null);
+            docSections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: opponent ? `vs. ${opponent}${resultLabel}${accuracyText}` : resultLabel.replace(/^ · /, ''),
+                    size: 22,
+                    color: '1D4ED8',
+                  }),
+                ],
+                shading: { fill: 'DBEAFE' },
+                border: borderSpec('1D4ED8', { bottom: !chessUrl }),
+                indent: { left: 240, right: 240 },
+                spacing: { before: 40, after: 0 },
+              })
+            );
             if (chessUrl) {
               docSections.push(
                 new Paragraph({
@@ -257,68 +285,107 @@ export async function GET(request: NextRequest) {
                     new ExternalHyperlink({
                       link: chessUrl,
                       children: [
-                        new TextRun({
-                          text: '♟ View on Chess.com',
-                          color: '2563EB',
-                          underline: {},
-                          size: 20,
-                        }),
+                        new TextRun({ text: '♟  View on Chess.com', color: '2563EB', underline: {}, size: 19 }),
                       ],
                     }),
                   ],
-                  spacing: { after: 120 },
+                  shading: { fill: 'DBEAFE' },
+                  border: borderSpec('1D4ED8', { bottom: true }),
+                  indent: { left: 240, right: 240 },
+                  spacing: { before: 60, after: 0 },
                 })
               );
             }
 
-            // Statistics
-            if (pg?.statistics) {
-              const s = pg.statistics;
-              const parts: string[] = [];
-              if (s.accuracy != null) parts.push(`Accuracy: ${s.accuracy}%`);
-              if (s.totalMoves) parts.push(`Moves: ${s.totalMoves}`);
-              if (s.blunders != null) parts.push(`Blunders: ${s.blunders}`);
-              if (s.mistakes != null) parts.push(`Mistakes: ${s.mistakes}`);
-              if (s.inaccuracies != null) parts.push(`Inaccuracies: ${s.inaccuracies}`);
-              if (s.averageCentipawnLoss != null) parts.push(`Avg CP Loss: ${s.averageCentipawnLoss}`);
-              if (parts.length) {
-                docSections.push(
-                  new Paragraph({
-                    children: [new TextRun({ text: parts.join(' · '), size: 20, color: '555555' })],
-                    spacing: { after: 120 }
-                  })
-                );
-              }
-            }
-
-            // Four reflection sections
-            const reflections = pg?.reflections || {};
-            const reflectionFields = [
-              { key: 'whatWentWell', label: 'What Went Well' },
-              { key: 'mistakes',     label: 'Key Mistakes' },
-              { key: 'lessonsLearned', label: 'Lessons Learned' },
-              { key: 'nextSteps',    label: 'Next Steps' },
-            ] as const;
-
-            for (const { key, label } of reflectionFields) {
-              const text: string = (reflections as any)[key]?.trim();
-              if (!text) continue;
+            // ── Stats box ────────────────────────────────────────────────────
+            if (s) {
               docSections.push(
                 new Paragraph({
-                  children: [new TextRun({ text: label, bold: true, size: 22 })],
-                  spacing: { before: 120, after: 40 }
+                  children: [new TextRun({ text: 'GAME PERFORMANCE', bold: true, size: 18, color: '6B7280', allCaps: true })],
+                  shading: { fill: 'EFF6FF' },
+                  border: borderSpec('3B82F6', { top: true }),
+                  indent: { left: 240, right: 240 },
+                  spacing: { before: 200, after: 0 },
                 })
               );
-              const textLines = text.split('\n').filter((l: string) => l.trim());
-              textLines.forEach((line: string, li: number) => {
-                docSections.push(
-                  new Paragraph({
-                    children: [new TextRun({ text: line, size: 22 })],
-                    spacing: { after: li === textLines.length - 1 ? 120 : 40 }
-                  })
-                );
+
+              // Row 1 – neutral stats
+              const row1: any[] = [];
+              if (s.accuracy != null) {
+                row1.push(new TextRun({ text: 'Accuracy ', color: '6B7280', size: 20 }));
+                row1.push(new TextRun({ text: `${s.accuracy}%`, bold: true, size: 20, color: '111827' }));
+              }
+              if (s.totalMoves) {
+                if (row1.length) row1.push(new TextRun({ text: '      ', size: 20 }));
+                row1.push(new TextRun({ text: 'Moves ', color: '6B7280', size: 20 }));
+                row1.push(new TextRun({ text: `${s.totalMoves}`, bold: true, size: 20, color: '111827' }));
+              }
+              if (s.averageCentipawnLoss != null) {
+                if (row1.length) row1.push(new TextRun({ text: '      ', size: 20 }));
+                row1.push(new TextRun({ text: 'Avg CP Loss ', color: '6B7280', size: 20 }));
+                row1.push(new TextRun({ text: `${s.averageCentipawnLoss}`, bold: true, size: 20, color: '111827' }));
+              }
+              if (row1.length) {
+                docSections.push(new Paragraph({
+                  children: row1,
+                  shading: { fill: 'EFF6FF' },
+                  border: borderSpec('3B82F6'),
+                  indent: { left: 240, right: 240 },
+                  spacing: { before: 40, after: 0 },
+                }));
+              }
+
+              // Row 2 – coloured error stats
+              docSections.push(new Paragraph({
+                children: [
+                  new TextRun({ text: 'Blunders ', color: '6B7280', size: 20 }),
+                  new TextRun({ text: `${s.blunders ?? 0}`, bold: true, size: 20, color: 'DC2626' }),
+                  new TextRun({ text: '      Mistakes ', color: '6B7280', size: 20 }),
+                  new TextRun({ text: `${s.mistakes ?? 0}`, bold: true, size: 20, color: 'EA580C' }),
+                  new TextRun({ text: '      Inaccuracies ', color: '6B7280', size: 20 }),
+                  new TextRun({ text: `${s.inaccuracies ?? 0}`, bold: true, size: 20, color: 'CA8A04' }),
+                ],
+                shading: { fill: 'EFF6FF' },
+                border: borderSpec('3B82F6', { bottom: true }),
+                indent: { left: 240, right: 240 },
+                spacing: { before: 40, after: 0 },
+              }));
+            }
+
+            // ── Reflection sections ──────────────────────────────────────────
+            const reflections = pg?.reflections || {};
+            const reflectionFields = [
+              { key: 'whatWentWell',   icon: '✅', label: 'What Went Well',  fill: 'F0FDF4', color: '16A34A' },
+              { key: 'mistakes',       icon: '❌', label: 'Key Mistakes',    fill: 'FEF2F2', color: 'DC2626' },
+              { key: 'lessonsLearned', icon: '📚', label: 'Lessons Learned', fill: 'EFF6FF', color: '2563EB' },
+              { key: 'nextSteps',      icon: '🎯', label: 'Next Steps',      fill: 'F5F3FF', color: '7C3AED' },
+            ] as const;
+
+            for (const { key, icon, label, fill, color } of reflectionFields) {
+              const text: string = (reflections as any)[key]?.trim();
+              if (!text) continue;
+
+              docSections.push(new Paragraph({
+                children: [new TextRun({ text: `${icon}  ${label.toUpperCase()}`, bold: true, size: 20, color, allCaps: false })],
+                shading: { fill },
+                border: borderSpec(color, { top: true }),
+                indent: { left: 240, right: 240 },
+                spacing: { before: 200, after: 0 },
+              }));
+
+              const lines = text.split('\n').filter((l: string) => l.trim());
+              lines.forEach((line: string, li: number) => {
+                docSections.push(new Paragraph({
+                  children: [new TextRun({ text: line, size: 21, color: '1F2937' })],
+                  shading: { fill },
+                  border: borderSpec(color, { bottom: li === lines.length - 1 }),
+                  indent: { left: 240, right: 240 },
+                  spacing: { before: 30, after: 0 },
+                }));
               });
             }
+
+            docSections.push(new Paragraph({ spacing: { after: 240 } }));
 
           } else {
             // ── Regular entry ──────────────────────────────────────────────────
