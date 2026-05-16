@@ -102,13 +102,21 @@ export async function GET(request: NextRequest) {
 
           const game = entry.game;
 
+          // Compute timestamp once here so both the header and content sections can use it
+          const timestamp = new Date(entry.timestamp).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+
           if (game && entry.entryType !== 'post_game_summary') {
-            // Game info
+            // Game info + timestamp on the same line (timestamp before the diagram)
             docSections.push(
               new Paragraph({
                 children: [
                   new TextRun({ text: `Game: `, bold: true }),
                   new TextRun({ text: `${game.white} vs ${game.black}` }),
+                  new TextRun({ text: `  ·  `, color: '999999' }),
+                  new TextRun({ text: timestamp, italics: true, color: '666666' }),
                 ],
                 spacing: { before: 200, after: 100 }
               })
@@ -221,11 +229,6 @@ export async function GET(request: NextRequest) {
           }
 
           // Entry content (AFTER chess diagram)
-          const timestamp = new Date(entry.timestamp).toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit'
-          });
-
           if (entry.entryType === 'post_game_summary') {
             // ── Post-game summary ──────────────────────────────────────────────
             const pg = entry.postGameSummary;
@@ -331,12 +334,14 @@ export async function GET(request: NextRequest) {
               );
             }
 
+            // For game entries the timestamp is already on the "Game:" header line
+            // above the diagram; only prepend it here for general (non-game) entries.
+            const contentChildren = entry.gameId
+              ? [new TextRun({ text: entry.content })]
+              : [new TextRun({ text: `[${timestamp}] `, italics: true }), new TextRun({ text: entry.content })];
             docSections.push(
               new Paragraph({
-                children: [
-                  new TextRun({ text: `[${timestamp}] `, italics: true }),
-                  new TextRun({ text: entry.content }),
-                ],
+                children: contentChildren,
                 spacing: { after: 100 }
               })
             );
