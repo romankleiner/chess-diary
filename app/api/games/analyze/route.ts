@@ -457,10 +457,10 @@ export async function POST(request: NextRequest) {
     let result;
     
     if (IS_VERCEL) {
-      // Batch size inversely proportional to depth to fit within 10s Vercel limit.
+      // Batch size inversely proportional to depth to fit within the 60 s limit.
       // Each move needs 2 chess-api.com calls; deeper analysis = slower calls.
-      // depth ≤10 → 5 moves/batch, depth ≤14 → 3, depth ≤18 → 2, higher → 1
-      const batchSize = depth <= 10 ? 5 : depth <= 14 ? 3 : depth <= 18 ? 2 : 1;
+      // depth ≤10 → 30 moves/batch, depth ≤14 → 20, depth ≤18 → 10, higher → 5
+      const batchSize = depth <= 10 ? 30 : depth <= 14 ? 20 : depth <= 18 ? 10 : 5;
       const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, batchSize);
       
       // Save analysis result
@@ -544,4 +544,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export const maxDuration = 10; // Vercel free tier limit
+export const maxDuration = 60; // Vercel Pro allows up to 60 s
