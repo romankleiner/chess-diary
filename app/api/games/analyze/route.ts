@@ -150,10 +150,6 @@ async function analyzeGameChessApiBatched(
   
   const endMoveIndex = Math.min(startMoveIndex + batchSize, history.length);
 
-  // We're still in book if all previously-analysed moves were book moves.
-  // This lets sequential detection carry across batch boundaries.
-  let inOpeningBook = existingMoves.length === 0 || existingMoves.every((m: any) => m.moveQuality === 'book');
-
   await setProgress(gameId, startMoveIndex, history.length);
 
   for (let i = startMoveIndex; i < endMoveIndex; i++) {
@@ -166,15 +162,12 @@ async function analyzeGameChessApiBatched(
       const fenBefore = chess.fen();
 
       // ── Opening book detection ─────────────────────────────────────────────
-      // Sequential: once a move is absent from the book, stop checking.
-      // The Polyglot book naturally ends when positions leave theory —
-      // no artificial move-number cap needed.
-      let isBook = false;
-      if (inOpeningBook) {
-        const uciPlayed = move.from + move.to + (move.promotion ?? '');
-        isBook = await isBookMove(fenBefore, uciPlayed);
-        if (!isBook) inOpeningBook = false;
-      }
+      // Each move is checked independently against the Polyglot book.
+      // A sequential "stop on first miss" flag was tried but proved too
+      // pessimistic: books don't list every valid sideline, so one unlisted
+      // move would suppress all subsequent book detections.
+      const uciPlayed = move.from + move.to + (move.promotion ?? '');
+      const isBook = await isBookMove(fenBefore, uciPlayed);
       // ── End book detection ────────────────────────────────────────────────
 
       const evalBefore = await getChessApiEval(fenBefore, depth);
@@ -293,8 +286,6 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
 
   console.log(`[STOCKFISH] Starting analysis of ${history.length} moves at depth ${depth}...`);
 
-  let inOpeningBook = true; // Sequential flag — cleared on first non-book move
-
   try {
     for (let i = 0; i < history.length; i++) {
       const move = history[i];
@@ -306,13 +297,9 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
         const fenBefore = chess.fen();
 
         // ── Opening book detection ───────────────────────────────────────────
-        // Sequential: once a move is absent from the book, stop checking.
-        let isBook = false;
-        if (inOpeningBook) {
-          const uciPlayed = move.from + move.to + (move.promotion ?? '');
-          isBook = await isBookMove(fenBefore, uciPlayed);
-          if (!isBook) inOpeningBook = false;
-        }
+        // Each move is checked independently against the Polyglot book.
+        const uciPlayed = move.from + move.to + (move.promotion ?? '');
+        const isBook = await isBookMove(fenBefore, uciPlayed);
         // ── End book detection ─────────────────────────────────────────────
         console.log(`[STOCKFISH] Move ${i + 1} (${move.san}): starting engine analysis...`);
 
