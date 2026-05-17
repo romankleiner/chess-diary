@@ -194,7 +194,7 @@ export default function GamesPage() {
         } catch {
           // Non-JSON body — most likely a gateway timeout from Vercel
           const msg = response.status === 504
-            ? 'Analysis timed out (Vercel 10 s limit). Try a shallower depth in Settings, then retry.'
+            ? 'Analysis timed out. Try a shallower depth in Settings, then retry.'
             : `Server returned ${response.status}: ${rawText.slice(0, 120)}`;
           alert(msg);
           return;

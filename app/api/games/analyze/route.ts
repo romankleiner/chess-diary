@@ -54,31 +54,33 @@ export async function GET(request: NextRequest) {
 async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score: number; bestMove: string; pv?: string[] } | null> {
   try {
     const url = `https://chess-api.com/v1`;
-    
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fen: fen,
         depth: depth,
       }),
+      signal: AbortSignal.timeout(10000), // 10 s per call — don't let one hung request stall the batch
     });
-    
+
     if (!response.ok) {
       console.log('[CHESS-API] Response not OK:', response.status, response.statusText);
       return null;
     }
-    
+
     const data = await response.json();
-    
-    if (data.eval !== undefined) {
-      // chess-api.com returns eval in pawn units, always from white's perspective
-      // (positive = white winning). Convert to centipawns.
-      const cpScore = data.eval * 100;
+
+    // chess-api.com returns eval in pawn units from white's perspective.
+    // Accept both `eval` (documented) and `score` (seen in some responses).
+    const rawEval = data.eval ?? data.score;
+    if (rawEval !== undefined) {
+      const cpScore = rawEval * 100;
       const bestMove = data.move || '';
-      
+
       // Normalize PV to array
       let pv: string[] = [];
       const pvRaw = data.continuationArr;
@@ -89,11 +91,13 @@ async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score
           pv = pvRaw;
         }
       }
-      
+
       console.log(`[CHESS-API] Got eval=${cpScore}, move=${bestMove}, PV:`, pv);
       return { score: cpScore, bestMove, pv };
     }
-    
+
+    // Log unexpected shapes so we can diagnose API changes or rate-limit responses
+    console.warn('[CHESS-API] Unexpected response shape:', JSON.stringify(data).slice(0, 200));
     return null;
   } catch (error) {
     console.error('[CHESS-API] API error:', error);
@@ -458,9 +462,10 @@ export async function POST(request: NextRequest) {
     
     if (IS_VERCEL) {
       // Batch size inversely proportional to depth to fit within the 60 s limit.
-      // Each move needs 2 chess-api.com calls; deeper analysis = slower calls.
-      // depth ≤10 → 30 moves/batch, depth ≤14 → 20, depth ≤18 → 10, higher → 5
-      const batchSize = depth <= 10 ? 30 : depth <= 14 ? 20 : depth <= 18 ? 10 : 5;
+      // Each move needs 2 chess-api.com calls at ~1-2 s each → ~3-4 s/move worst-case.
+      // Targeting ≤45 s/batch to leave headroom for Redis saves and cold starts.
+      // depth ≤10 → 12 moves/batch, depth ≤14 → 8, depth ≤18 → 5, higher → 3
+      const batchSize = depth <= 10 ? 12 : depth <= 14 ? 8 : depth <= 18 ? 5 : 3;
       const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, batchSize);
       
       // Save analysis result
