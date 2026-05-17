@@ -183,7 +183,23 @@ export default function GamesPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ gameId, startMoveIndex }),
         });
-        const data = await response.json();
+
+        // Vercel (and other proxies) can return a plain-text 504 when the
+        // function times out — calling .json() on that throws a parse error.
+        // Always read as text first, then try to parse as JSON.
+        const rawText = await response.text();
+        let data: any;
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          // Non-JSON body — most likely a gateway timeout from Vercel
+          const msg = response.status === 504
+            ? 'Analysis timed out (Vercel 10 s limit). Try a shallower depth in Settings, then retry.'
+            : `Server returned ${response.status}: ${rawText.slice(0, 120)}`;
+          alert(msg);
+          return;
+        }
+
         if (!data.success) {
           alert(data.error || 'Analysis failed');
           return;
