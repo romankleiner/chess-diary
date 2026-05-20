@@ -6,6 +6,7 @@ Blog export:
 Minor:
 - Test backup and admin / non-admin role
 - Backups not working
+- Fix AI prompt not to say Paragraph 1, 2 and 3
 
 Mid:
 - Progress bar for export
