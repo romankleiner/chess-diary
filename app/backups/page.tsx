@@ -15,7 +15,9 @@ export default function BackupsPage() {
   const [loading, setLoading] = useState(true);
   const [restoring, setRestoring] = useState(false);
   const [pruning, setPruning] = useState(false);
+  const [runningBackup, setRunningBackup] = useState(false);
   const [pruneResult, setPruneResult] = useState<{ kept: number; deleted: number } | null>(null);
+  const [backupResult, setBackupResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -35,6 +37,25 @@ export default function BackupsPage() {
       console.error('Error loading backups:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRunBackup = async () => {
+    setRunningBackup(true);
+    setBackupResult(null);
+    try {
+      const response = await fetch('/api/backups/run', { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        setBackupResult({ success: true, message: `✅ Backup created: ${data.fileName} (${data.sizeMB} MB) — ${data.stats.totalGames} games, ${data.stats.totalJournalEntries} journal entries` });
+        await loadBackups();
+      } else {
+        setBackupResult({ success: false, message: `❌ Backup failed: ${data.error}` });
+      }
+    } catch (error) {
+      setBackupResult({ success: false, message: '❌ Backup failed: network error' });
+    } finally {
+      setRunningBackup(false);
     }
   };
 
@@ -115,6 +136,13 @@ export default function BackupsPage() {
           <h1 className="text-3xl font-bold dark:text-white">Backup History</h1>
           <div className="flex items-center gap-3">
             <button
+              onClick={handleRunBackup}
+              disabled={runningBackup}
+              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              {runningBackup ? '⏳ Backing up…' : '💾 Run Backup Now'}
+            </button>
+            <button
               onClick={handlePrune}
               disabled={pruning}
               className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed text-sm"
@@ -129,6 +157,12 @@ export default function BackupsPage() {
             </Link>
           </div>
         </div>
+
+        {backupResult && (
+          <div className={`mb-4 p-3 border rounded-lg text-sm ${backupResult.success ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700 text-green-800 dark:text-green-200' : 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-800 dark:text-red-200'}`}>
+            {backupResult.message}
+          </div>
+        )}
 
         {pruneResult && (
           <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded-lg text-sm text-green-800 dark:text-green-200">
