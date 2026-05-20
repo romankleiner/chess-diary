@@ -3,8 +3,9 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
-  '/api/board-image(.*)', 
+  '/api/board-image(.*)',
   '/api/backup/automated(.*)',
+  '/api/cron/(.*)',  // Cron endpoints are authenticated via CRON_SECRET, not Clerk
 ])
 
 export default clerkMiddleware(async (auth, request) => {
