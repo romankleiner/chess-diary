@@ -5,6 +5,7 @@ Blog export:
 
 Minor:
 - Test backup and admin / non-admin role
+- The accuracy percentage in the final game entry is too high
 
 Mid:
 - Progress bar for export
