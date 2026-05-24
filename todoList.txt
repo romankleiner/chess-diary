@@ -8,7 +8,7 @@ Minor:
 
 Mid:
 - Progress bar for export
-- Slowdown when fetching games
 
 Major:
 - Switch to an interactive board in diagrams?
+- Support post-game analysis by simulating wintrchess.com while displaying game's comments
