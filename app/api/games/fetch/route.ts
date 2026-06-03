@@ -28,9 +28,15 @@ export async function POST(request: NextRequest) {
         );
       }
     } else {
-      fetchPromises.push(
-        fetchPlayerGames(username, year, month).catch(() => null)
-      );
+      // Always fetch current + previous month so a game completed in the last
+      // days of the prior month isn't missed by a single-month fetch.
+      const today = new Date();
+      for (let i = 0; i < 2; i++) {
+        const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+        fetchPromises.push(
+          fetchPlayerGames(username, date.getFullYear(), date.getMonth() + 1).catch(() => null)
+        );
+      }
     }
 
     // Active games fetched in parallel with the archived months
@@ -41,16 +47,25 @@ export async function POST(request: NextRequest) {
     for (const data of fetchResults) {
       if (data?.games) allGames.push(...data.games);
     }
-    
+
     // Parse and store games
     const games = allGames
       .map((game: any) => parseChessComGame(game, username))
       .filter((game: any): game is NonNullable<typeof game> => game !== null);
-    
-    // Remove duplicates by game ID
-    const uniqueGames = Array.from(
-      new Map(games.map(game => [game.id, game])).values()
-    );
+
+    // Deduplicate by game ID, preferring completed games (result !== null) over
+    // active ones (result === null). Chess.com sometimes still lists a recently
+    // finished game in the active-games endpoint while it also appears in the
+    // monthly archive with the final result — without this the active version
+    // (added last) would silently overwrite the completed one.
+    const gameMap = new Map<string, any>();
+    for (const game of games) {
+      const existing = gameMap.get(game.id);
+      if (!existing || (existing.result === null && game.result !== null)) {
+        gameMap.set(game.id, game);
+      }
+    }
+    const uniqueGames = Array.from(gameMap.values());
     
     // Store in database - preserve existing analysis flags.
     // Load all existing games in one Redis call instead of N individual hget calls.
