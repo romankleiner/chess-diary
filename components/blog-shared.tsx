@@ -184,14 +184,21 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
   const hasBoard    = !!section.fen;
   const canInteract = hasPuzzle && hasBoard; // interactive board requires both
 
-  const [phase, setPhase]         = useState<SectionPhase>(hasPuzzle ? 'puzzle' : 'complete');
-  const [boardFen, setBoardFen]   = useState<string>(section.fen ?? 'start');
-  const [feedback, setFeedback]   = useState<'correct' | 'wrong' | null>(null);
+  const [phase, setPhase]           = useState<SectionPhase>(hasPuzzle ? 'puzzle' : 'complete');
+  const [boardFen, setBoardFen]     = useState<string>(section.fen ?? 'start');
+  const [feedback, setFeedback]     = useState<'correct' | 'wrong' | null>(null);
   const [boardWidth, setBoardWidth] = useState(280);
 
   // Text-input fallback (when there's a move notation but no FEN)
-  const [guess, setGuess]         = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [guess, setGuess] = useState('');
+  const inputRef          = useRef<HTMLInputElement>(null);
+
+  // Click-to-move selection state
+  const [selectedSquare, setSelectedSquare]         = useState<string | null>(null);
+  const [highlightSquares, setHighlightSquares]     = useState<Record<string, React.CSSProperties>>({});
+  // Persistent move highlight shown after a move is played (green = correct, red = wrong)
+  const [moveHighlight, setMoveHighlight]           = useState<Record<string, React.CSSProperties>>({});
+  const wrongMoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Measure container to size the board responsively
   const boardContainerRef = useRef<HTMLDivElement>(null);
@@ -205,15 +212,16 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
     return () => obs.disconnect();
   }, []);
 
+  // Clear the wrong-move revert timer on unmount
+  useEffect(() => () => {
+    if (wrongMoveTimerRef.current) clearTimeout(wrongMoveTimerRef.current);
+  }, []);
+
   const quality = section.engineEval
     ? (QUALITY_STYLE[section.engineEval.moveQuality] ?? null)
     : null;
 
   const isPuzzleActive = phase === 'puzzle' || phase === 'thinking_shown';
-
-  // ── Click-to-move state ──────────────────────────────────────────────────
-  const [selectedSquare, setSelectedSquare]     = useState<string | null>(null);
-  const [highlightSquares, setHighlightSquares] = useState<Record<string, React.CSSProperties>>({});
 
   // ── Square-click handler (click-to-select → click-to-move) ──────────────
   const handleSquareClick = ({
@@ -226,11 +234,13 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
     if (!section.moveNotation || !section.fen || !isPuzzleActive) return;
 
     const isOwnPiece = (p: { pieceType: string } | null) =>
-      !!p && (section.userColor === 'white' ? p.pieceType.startsWith('w') : p.pieceType.startsWith('b'));
+      !!p && (section.userColor === 'white'
+        ? p.pieceType.startsWith('w')
+        : p.pieceType.startsWith('b'));
 
-    // Build highlight map for a square's legal moves
-    const buildHighlights = (sq: string): Record<string, React.CSSProperties> => {
-      const c = new Chess(section.fen!);
+    // Highlight the selected square + its legal destinations
+    const buildSelectionHighlights = (sq: string): Record<string, React.CSSProperties> => {
+      const c     = new Chess(section.fen!);
       const moves = c.moves({ square: sq as Parameters<typeof c.moves>[0]['square'], verbose: true });
       const h: Record<string, React.CSSProperties> = {
         [sq]: { backgroundColor: 'rgba(255, 215, 0, 0.55)' },
@@ -240,6 +250,14 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
       });
       return h;
     };
+
+    // Cancel any pending wrong-move revert when the user makes a new selection
+    if (wrongMoveTimerRef.current) {
+      clearTimeout(wrongMoveTimerRef.current);
+      wrongMoveTimerRef.current = null;
+      setBoardFen(section.fen);
+      setMoveHighlight({});
+    }
 
     // Tap the already-selected square → deselect
     if (square === selectedSquare) {
@@ -257,21 +275,40 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
         if (move) {
           setSelectedSquare(null);
           setHighlightSquares({});
+
+          const fromSq = selectedSquare; // capture before state update
           if (normSan(move.san) === normSan(section.moveNotation)) {
+            // ── Correct ─────────────────────────────────────────────
             setBoardFen(chess.fen());
+            setMoveHighlight({
+              [fromSq]: { backgroundColor: 'rgba(80, 200, 100, 0.55)' },
+              [square]: { backgroundColor: 'rgba(80, 200, 100, 0.55)' },
+            });
             setFeedback('correct');
             setPhase(phase === 'puzzle' ? 'solved_blind' : 'complete');
           } else {
+            // ── Wrong — show result briefly then revert ─────────────
+            setBoardFen(chess.fen());
+            setMoveHighlight({
+              [fromSq]: { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
+              [square]: { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
+            });
             setFeedback('wrong');
+            wrongMoveTimerRef.current = setTimeout(() => {
+              setBoardFen(section.fen!);
+              setMoveHighlight({});
+              wrongMoveTimerRef.current = null;
+            }, 900);
           }
           return;
         }
       } catch { /* fall through to re-select logic */ }
 
-      // Not a valid move — re-select if it's another own piece, otherwise deselect
+      // Not a valid chess move — re-select if another own piece, otherwise deselect
       if (isOwnPiece(piece)) {
         setSelectedSquare(square);
-        setHighlightSquares(buildHighlights(square));
+        setHighlightSquares(buildSelectionHighlights(square));
+        setFeedback(null);
       } else {
         setSelectedSquare(null);
         setHighlightSquares({});
@@ -279,10 +316,11 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
       return;
     }
 
-    // Nothing selected yet — select own piece
+    // Nothing selected yet — select own piece (also clears previous wrong-move feedback)
     if (isOwnPiece(piece)) {
       setSelectedSquare(square);
-      setHighlightSquares(buildHighlights(square));
+      setHighlightSquares(buildSelectionHighlights(square));
+      setFeedback(null);
     }
   };
 
@@ -330,28 +368,30 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
           </p>
         )}
 
-        {/* ── Interactive board (puzzle phases) ───────────────────── */}
-        {canInteract && isPuzzleActive && (
+        {/* ── Interactive/display board (all puzzle sections) ─────── */}
+        {/* Stays mounted after solving so position + highlights are preserved. */}
+        {canInteract && (
           <div ref={boardContainerRef} className="flex justify-center">
-            {/* Width-capped container; board fills it via CSS grid */}
-            <div style={{ width: boardWidth, cursor: 'pointer' }}>
+            <div style={{ width: boardWidth, cursor: isPuzzleActive ? 'pointer' : 'default' }}>
               <Chessboard
                 options={{
-                  position:          boardFen,
-                  boardOrientation:  section.userColor,
-                  allowDragging:     false,
+                  position:           boardFen,
+                  boardOrientation:   section.userColor,
+                  allowDragging:      false,
                   allowDrawingArrows: false,
-                  onSquareClick:     handleSquareClick,
-                  squareStyles:      highlightSquares,
-                  boardStyle:        { borderRadius: '4px', border: '1px solid #d1d5db' },
+                  // Active: respond to clicks; solved: board is display-only
+                  ...(isPuzzleActive && { onSquareClick: handleSquareClick }),
+                  // Selection dots take visual priority over move highlight
+                  squareStyles: { ...moveHighlight, ...highlightSquares },
+                  boardStyle:   { borderRadius: '4px', border: '1px solid #d1d5db' },
                 }}
               />
             </div>
           </div>
         )}
 
-        {/* ── Static board (non-puzzle or after solving) ──────────── */}
-        {section.fen && (!canInteract || !isPuzzleActive) && (
+        {/* ── Static board (sections without a puzzle) ────────────── */}
+        {section.fen && !canInteract && (
           <div className="flex justify-center">
             <Image
               src={`/api/board-image?fen=${encodeURIComponent(section.fen)}&pov=${section.userColor}`}
