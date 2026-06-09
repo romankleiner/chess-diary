@@ -1,6 +1,6 @@
 Blog export:
 - Add eval after every move
-- Make the board interactive and allow guessing the move correctly. Show the diff in eval in guesses from my chosen move and the best move.
+- Show the diff in eval in guesses from my chosen move and the best move.
 - Add text before the diagram
 - Add a simpler chess.com export
 
