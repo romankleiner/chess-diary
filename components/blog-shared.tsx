@@ -5,9 +5,16 @@
  * BlogPostModal (in-app modal) and /blog/[gameId] (public page).
  */
 
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { Chess } from 'chess.js';
+
+// react-chessboard uses browser drag APIs — must be client-only.
+const Chessboard = dynamic(
+  () => import('react-chessboard').then(m => m.Chessboard),
+  { ssr: false }
+);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,10 +38,9 @@ export interface MoveSection {
   postReview: string | null;
 }
 
-// 'puzzle'          — board + timestamp shown; guess input active
-// 'thinking_shown'  — thinking revealed manually; can still guess or give up
-// 'solved_blind'    — guessed correctly without peeking; thinking shown,
-//                     AI/post-game still hidden
+// 'puzzle'          — board shown; guess by dragging pieces
+// 'thinking_shown'  — thinking revealed; board still interactive
+// 'solved_blind'    — guessed correctly without peeking; post-game still hidden
 // 'complete'        — full reveal
 export type SectionPhase = 'puzzle' | 'thinking_shown' | 'solved_blind' | 'complete';
 
@@ -173,39 +179,83 @@ export function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' 
 
 // ─── Interactive move section card ────────────────────────────────────────────
 
-export function MoveSectionCard({
-  section,
-}: {
-  section: MoveSection;
-}) {
-  const hasPuzzle = !!section.moveNotation;
+export function MoveSectionCard({ section }: { section: MoveSection }) {
+  const hasPuzzle   = !!section.moveNotation;
+  const hasBoard    = !!section.fen;
+  const canInteract = hasPuzzle && hasBoard; // interactive board requires both
 
-  const [phase, setPhase]       = useState<SectionPhase>(hasPuzzle ? 'puzzle' : 'complete');
-  const [guess, setGuess]       = useState('');
-  const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null);
+  const [phase, setPhase]         = useState<SectionPhase>(hasPuzzle ? 'puzzle' : 'complete');
+  const [boardFen, setBoardFen]   = useState<string>(section.fen ?? 'start');
+  const [feedback, setFeedback]   = useState<'correct' | 'wrong' | null>(null);
+  const [boardWidth, setBoardWidth] = useState(280);
+
+  // Text-input fallback (when there's a move notation but no FEN)
+  const [guess, setGuess]         = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Measure container to size the board responsively
+  const boardContainerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!boardContainerRef.current) return;
+    const obs = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setBoardWidth(Math.min(Math.floor(w), 360));
+    });
+    obs.observe(boardContainerRef.current);
+    return () => obs.disconnect();
+  }, []);
 
   const quality = section.engineEval
     ? (QUALITY_STYLE[section.engineEval.moveQuality] ?? null)
     : null;
 
-  const checkGuess = () => {
+  const isPuzzleActive = phase === 'puzzle' || phase === 'thinking_shown';
+
+  // ── Piece-drop handler (interactive board) ──────────────────────────────
+  // react-chessboard v5 passes { piece, sourceSquare, targetSquare }
+  const onPieceDrop = ({
+    piece,
+    sourceSquare,
+    targetSquare,
+  }: {
+    piece: { pieceType: string };
+    sourceSquare: string;
+    targetSquare: string | null;
+  }): boolean => {
+    if (!targetSquare || !section.moveNotation || !section.fen || !isPuzzleActive) return false;
+
+    try {
+      const chess = new Chess(section.fen);
+      const move  = chess.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
+      if (!move) return false;
+
+      if (normSan(move.san) === normSan(section.moveNotation)) {
+        // Show resulting position briefly before transitioning phase
+        setBoardFen(chess.fen());
+        setFeedback('correct');
+        setPhase(phase === 'puzzle' ? 'solved_blind' : 'complete');
+        return true;
+      } else {
+        setFeedback('wrong');
+        return false; // piece snaps back
+      }
+    } catch {
+      return false;
+    }
+  };
+
+  // ── Text-input fallback handler ─────────────────────────────────────────
+  const checkTextGuess = () => {
     if (!section.moveNotation || !guess.trim()) return;
     if (normSan(guess) === normSan(section.moveNotation)) {
       setFeedback('correct');
-      // Guessed without peeking → reveal thinking first, post-game behind a button.
-      // Already peeked (thinking_shown) → skip straight to complete.
       setPhase(phase === 'puzzle' ? 'solved_blind' : 'complete');
     } else {
       setFeedback('wrong');
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') checkGuess();
-  };
-
-  // Hide notation until the move has been identified (solved_blind or complete).
+  // Hide move notation in the header until the move has been identified
   const displayHeader = (() => {
     if (!hasPuzzle || phase === 'complete' || phase === 'solved_blind') return section.header;
     const match = section.header.match(/^(Move \d+)/);
@@ -230,59 +280,92 @@ export function MoveSectionCard({
 
       <div className="p-4 space-y-3">
 
-        {/* ── Board diagram ────────────────────────────────────────── */}
-        {section.fen && (
-          <div className="space-y-1">
-            {section.opponentLastMove && (
-              <p className="text-xs text-center text-gray-500 dark:text-gray-400">
-                Opponent played <span className="font-mono font-medium">{section.opponentLastMove}</span>
-              </p>
-            )}
-            <div className="flex justify-center">
-              <Image
-                src={`/api/board-image?fen=${encodeURIComponent(section.fen)}&pov=${section.userColor}`}
-                alt={`Board position: ${section.fen}`}
-                width={240}
-                height={240}
-                className="rounded border border-gray-200 dark:border-gray-600"
-                unoptimized
+        {/* ── Opponent's last move label ───────────────────────────── */}
+        {section.opponentLastMove && (
+          <p className="text-xs text-center text-gray-500 dark:text-gray-400">
+            Opponent played{' '}
+            <span className="font-mono font-medium">{section.opponentLastMove}</span>
+          </p>
+        )}
+
+        {/* ── Interactive board (puzzle phases) ───────────────────── */}
+        {canInteract && isPuzzleActive && (
+          <div ref={boardContainerRef} className="flex justify-center">
+            {/* Width-capped container; board fills it via CSS grid */}
+            <div style={{ width: boardWidth }}>
+              <Chessboard
+                options={{
+                  position: boardFen,
+                  onPieceDrop,
+                  boardOrientation: section.userColor,
+                  allowDragging: true,
+                  allowDrawingArrows: false,
+                  // Prevent dragging opponent's pieces
+                  canDragPiece: ({ piece }) => {
+                    const isWhite = piece.pieceType.startsWith('w');
+                    return section.userColor === 'white' ? isWhite : !isWhite;
+                  },
+                  boardStyle: { borderRadius: '4px', border: '1px solid #d1d5db' },
+                }}
               />
             </div>
           </div>
         )}
 
-        {/* ── Puzzle: guess input ──────────────────────────────────── */}
-        {hasPuzzle && (phase === 'puzzle' || phase === 'thinking_shown') && (
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <input
-                ref={inputRef}
-                type="text"
-                value={guess}
-                onChange={e => { setGuess(e.target.value); setFeedback(null); }}
-                onKeyDown={handleKeyDown}
-                placeholder="Your move (e.g. Nf3)"
-                className="flex-1 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-400"
-              />
-              <button
-                onClick={checkGuess}
-                disabled={!guess.trim()}
-                className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white rounded-lg transition-colors"
-              >
-                Check
-              </button>
-            </div>
+        {/* ── Static board (non-puzzle or after solving) ──────────── */}
+        {section.fen && (!canInteract || !isPuzzleActive) && (
+          <div className="flex justify-center">
+            <Image
+              src={`/api/board-image?fen=${encodeURIComponent(section.fen)}&pov=${section.userColor}`}
+              alt={`Board position: ${section.fen}`}
+              width={240}
+              height={240}
+              className="rounded border border-gray-200 dark:border-gray-600"
+              unoptimized
+            />
+          </div>
+        )}
 
-            {feedback === 'wrong' && (
-              <p className="text-xs text-red-600 dark:text-red-400">
-                ✗ Not quite — try again, or reveal thinking below.
-              </p>
+        {/* ── Feedback banner ──────────────────────────────────────── */}
+        {feedback === 'correct' && (
+          <p className="text-xs text-green-600 dark:text-green-400 font-medium">✓ Correct!</p>
+        )}
+        {feedback === 'wrong' && isPuzzleActive && (
+          <p className="text-xs text-red-600 dark:text-red-400">
+            ✗ Not quite — try a different move.
+          </p>
+        )}
+
+        {/* ── Puzzle controls ───────────────────────────────────────── */}
+        {isPuzzleActive && (
+          <div className="space-y-2">
+            {/* Text-input fallback when no FEN is stored */}
+            {hasPuzzle && !hasBoard && (
+              <div className="flex gap-2">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={guess}
+                  onChange={e => { setGuess(e.target.value); setFeedback(null); }}
+                  onKeyDown={e => e.key === 'Enter' && checkTextGuess()}
+                  placeholder="Your move (e.g. Nf3)"
+                  className="flex-1 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                />
+                <button
+                  onClick={checkTextGuess}
+                  disabled={!guess.trim()}
+                  className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white rounded-lg transition-colors"
+                >
+                  Check
+                </button>
+              </div>
             )}
 
+            {/* Reveal / give-up buttons */}
             <div className="flex gap-2 flex-wrap">
               {phase === 'puzzle' && (
                 <button
-                  onClick={() => setPhase('thinking_shown')}
+                  onClick={() => { setPhase('thinking_shown'); setFeedback(null); }}
                   className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
                 >
                   💭 Reveal thinking
@@ -298,13 +381,6 @@ export function MoveSectionCard({
               )}
             </div>
           </div>
-        )}
-
-        {/* ── Correct guess banner ─────────────────────────────────── */}
-        {feedback === 'correct' && (
-          <p className="text-xs text-green-600 dark:text-green-400 font-medium">
-            ✓ Correct!
-          </p>
         )}
 
         {/* ── Thinking ─────────────────────────────────────────────── */}
@@ -327,7 +403,7 @@ export function MoveSectionCard({
           </div>
         )}
 
-        {/* ── solved_blind: reveal post-game on demand ─────────────── */}
+        {/* ── solved_blind: show post-game analysis on demand ──────── */}
         {phase === 'solved_blind' && (
           <button
             onClick={() => setPhase('complete')}
