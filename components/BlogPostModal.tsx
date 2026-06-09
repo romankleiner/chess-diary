@@ -31,10 +31,12 @@ interface MoveSection {
   postReview: string | null;
 }
 
-// 'puzzle'         — board + timestamp shown; guess input active
-// 'thinking_shown' — also showing player's thinking + actual move
-// 'complete'       — full reveal: eval, AI review, post-game review
-type SectionPhase = 'puzzle' | 'thinking_shown' | 'complete';
+// 'puzzle'          — board + timestamp shown; guess input active
+// 'thinking_shown'  — thinking revealed manually; can still guess or give up
+// 'solved_blind'    — guessed correctly without peeking at thinking;
+//                     thinking shown but AI/post-game still hidden
+// 'complete'        — full reveal: eval, AI review, post-game review
+type SectionPhase = 'puzzle' | 'thinking_shown' | 'solved_blind' | 'complete';
 
 type Status = 'generating' | 'done' | 'error';
 
@@ -159,7 +161,7 @@ function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' | 'blac
   );
 }
 
-// ─── Clipboard text assembly ─────────────────────────────────────────────────
+// ─── Clipboard assembly ───────────────────────────────────────────────────────
 
 function buildClipboardText(sections: MoveSection[], summary: string, pgn: string): string {
   const lines: string[] = [];
@@ -168,7 +170,9 @@ function buildClipboardText(sections: MoveSection[], summary: string, pgn: strin
     lines.push(`== ${s.header} ==`);
     lines.push(new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     lines.push('');
+    if (s.opponentLastMove) lines.push(`Opponent played: ${s.opponentLastMove}`);
     lines.push(s.thinking);
+    if (s.moveNotation) lines.push(`Move played: ${s.moveNotation}`);
     if (s.engineEval) {
       lines.push(
         `Engine: ${s.engineEval.moveQuality} · ${s.engineEval.centipawnLoss} cp loss · eval ${formatEval(s.engineEval.evaluation)}`
@@ -205,6 +209,85 @@ function buildClipboardText(sections: MoveSection[], summary: string, pgn: strin
   return lines.join('\n');
 }
 
+function buildClipboardHtml(
+  sections: MoveSection[],
+  summary: string,
+  pgn: string,
+  origin: string,
+): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const parts: string[] = ['<div>'];
+
+  for (const s of sections) {
+    const time = new Date(s.timestamp).toLocaleString([], {
+      month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+
+    parts.push(`<h3>${esc(s.header)}</h3>`);
+    parts.push(`<p><em>${esc(time)}</em></p>`);
+
+    if (s.opponentLastMove) {
+      parts.push(`<p>Opponent played <strong>${esc(s.opponentLastMove)}</strong></p>`);
+    }
+
+    if (s.fen) {
+      const imgSrc = `${origin}/api/board-image?fen=${encodeURIComponent(s.fen)}&pov=${s.userColor}`;
+      parts.push(`<p><img src="${esc(imgSrc)}" width="240" height="240" alt="Board position" /></p>`);
+    }
+
+    parts.push(`<p><strong>💭 My thinking</strong></p>`);
+    for (const para of s.thinking.split('\n')) {
+      if (para.trim()) parts.push(`<p>${esc(para)}</p>`);
+    }
+
+    if (s.moveNotation) {
+      parts.push(`<p>Move played: <strong><code>${esc(s.moveNotation)}</code></strong></p>`);
+    }
+
+    if (s.engineEval) {
+      const q = QUALITY_STYLE[s.engineEval.moveQuality];
+      const label = q ? q.label : s.engineEval.moveQuality;
+      parts.push(
+        `<p>Engine: <strong>${esc(label)}</strong> · ${s.engineEval.centipawnLoss} cp loss · eval ${esc(formatEval(s.engineEval.evaluation))}</p>`
+      );
+    }
+
+    if (s.aiReview) {
+      parts.push(`<p><strong>🤖 AI analysis</strong></p>`);
+      for (const para of s.aiReview.split('\n')) {
+        if (para.trim()) parts.push(`<p><em>${esc(para)}</em></p>`);
+      }
+    }
+
+    if (s.postReview) {
+      parts.push(`<p><strong>📝 My post-game analysis</strong></p>`);
+      for (const para of s.postReview.split('\n')) {
+        if (para.trim()) parts.push(`<p>${esc(para)}</p>`);
+      }
+    }
+
+    parts.push('<hr />');
+  }
+
+  if (summary) {
+    parts.push('<h3>✨ Overall Summary</h3>');
+    for (const para of summary.split('\n\n')) {
+      if (para.trim()) parts.push(`<p>${esc(para)}</p>`);
+    }
+    parts.push('<hr />');
+  }
+
+  if (pgn) {
+    parts.push(`<p>[pgn]<br />${esc(pgn)}<br />[/pgn]</p>`);
+  }
+
+  parts.push('</div>');
+  return parts.join('\n');
+}
+
 // ─── Interactive move section ─────────────────────────────────────────────────
 
 function MoveSectionCard({
@@ -229,7 +312,9 @@ function MoveSectionCard({
     if (!section.moveNotation || !guess.trim()) return;
     if (normSan(guess) === normSan(section.moveNotation)) {
       setFeedback('correct');
-      setPhase('complete');
+      // Guessed without peeking → reveal thinking first, post-game behind a button.
+      // If they already peeked (thinking_shown), skip straight to complete.
+      setPhase(phase === 'puzzle' ? 'solved_blind' : 'complete');
     } else {
       setFeedback('wrong');
     }
@@ -239,10 +324,10 @@ function MoveSectionCard({
     if (e.key === 'Enter') checkGuess();
   };
 
-  // Derived header: hide notation during puzzle phase
+  // Derived header: hide notation while the move hasn't been identified yet.
+  // Once solved (solved_blind or complete) the full header is shown.
   const displayHeader = (() => {
-    if (!hasPuzzle || phase === 'complete') return section.header;
-    // Extract "Move N" prefix without the notation part
+    if (!hasPuzzle || phase === 'complete' || phase === 'solved_blind') return section.header;
     const match = section.header.match(/^(Move \d+)/);
     return match ? match[1] : section.header;
   })();
@@ -287,7 +372,7 @@ function MoveSectionCard({
         )}
 
         {/* ── Puzzle: guess input ────────────────────────────────────── */}
-        {hasPuzzle && phase !== 'complete' && (
+        {hasPuzzle && (phase === 'puzzle' || phase === 'thinking_shown') && (
           <div className="space-y-2">
             <div className="flex gap-2">
               <input
@@ -344,8 +429,8 @@ function MoveSectionCard({
           </p>
         )}
 
-        {/* ── Thinking (shown from thinking_shown phase onwards) ──────── */}
-        {(phase === 'thinking_shown' || phase === 'complete') && (
+        {/* ── Thinking (shown from thinking_shown / solved_blind / complete) ── */}
+        {(phase === 'thinking_shown' || phase === 'solved_blind' || phase === 'complete') && (
           <div>
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
               💭 My thinking
@@ -353,7 +438,7 @@ function MoveSectionCard({
             <p className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
               {section.thinking}
             </p>
-            {section.moveNotation && phase === 'thinking_shown' && (
+            {section.moveNotation && (phase === 'thinking_shown' || phase === 'solved_blind') && (
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Move played:{' '}
                 <span className="font-mono font-medium text-gray-700 dark:text-gray-300">
@@ -362,6 +447,16 @@ function MoveSectionCard({
               </p>
             )}
           </div>
+        )}
+
+        {/* ── solved_blind: reveal post-game analysis on demand ─────── */}
+        {phase === 'solved_blind' && (
+          <button
+            onClick={() => setPhase('complete')}
+            className="text-xs px-3 py-1.5 border border-amber-300 dark:border-amber-600 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/30 text-amber-700 dark:text-amber-300 transition-colors"
+          >
+            📊 Show post-game analysis
+          </button>
         )}
 
         {/* ── Full analysis (complete phase only) ───────────────────── */}
@@ -466,11 +561,25 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
   }, []);
 
   const handleCopy = async () => {
+    const text = buildClipboardText(sections, summary, pgn);
+    const html = buildClipboardHtml(sections, summary, pgn, window.location.origin);
     try {
-      await navigator.clipboard.writeText(buildClipboardText(sections, summary, pgn));
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html':  new Blob([html],  { type: 'text/html'  }),
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+        }),
+      ]);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch { /* clipboard API unavailable */ }
+    } catch {
+      // Fallback: plain text only (e.g. Firefox without ClipboardItem support)
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch { /* clipboard API unavailable */ }
+    }
   };
 
   const resultLabel = result ? result.charAt(0).toUpperCase() + result.slice(1) : null;
