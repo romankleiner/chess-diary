@@ -211,36 +211,78 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
 
   const isPuzzleActive = phase === 'puzzle' || phase === 'thinking_shown';
 
-  // ── Piece-drop handler (interactive board) ──────────────────────────────
-  // react-chessboard v5 passes { piece, sourceSquare, targetSquare }
-  const onPieceDrop = ({
+  // ── Click-to-move state ──────────────────────────────────────────────────
+  const [selectedSquare, setSelectedSquare]     = useState<string | null>(null);
+  const [highlightSquares, setHighlightSquares] = useState<Record<string, React.CSSProperties>>({});
+
+  // ── Square-click handler (click-to-select → click-to-move) ──────────────
+  const handleSquareClick = ({
     piece,
-    sourceSquare,
-    targetSquare,
+    square,
   }: {
-    piece: { pieceType: string };
-    sourceSquare: string;
-    targetSquare: string | null;
-  }): boolean => {
-    if (!targetSquare || !section.moveNotation || !section.fen || !isPuzzleActive) return false;
+    piece: { pieceType: string } | null;
+    square: string;
+  }) => {
+    if (!section.moveNotation || !section.fen || !isPuzzleActive) return;
 
-    try {
-      const chess = new Chess(section.fen);
-      const move  = chess.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
-      if (!move) return false;
+    const isOwnPiece = (p: { pieceType: string } | null) =>
+      !!p && (section.userColor === 'white' ? p.pieceType.startsWith('w') : p.pieceType.startsWith('b'));
 
-      if (normSan(move.san) === normSan(section.moveNotation)) {
-        // Show resulting position briefly before transitioning phase
-        setBoardFen(chess.fen());
-        setFeedback('correct');
-        setPhase(phase === 'puzzle' ? 'solved_blind' : 'complete');
-        return true;
+    // Build highlight map for a square's legal moves
+    const buildHighlights = (sq: string): Record<string, React.CSSProperties> => {
+      const c = new Chess(section.fen!);
+      const moves = c.moves({ square: sq as Parameters<typeof c.moves>[0]['square'], verbose: true });
+      const h: Record<string, React.CSSProperties> = {
+        [sq]: { backgroundColor: 'rgba(255, 215, 0, 0.55)' },
+      };
+      (moves as { to: string }[]).forEach(m => {
+        h[m.to] = { background: 'radial-gradient(circle, rgba(0,0,0,0.18) 29%, transparent 30%)' };
+      });
+      return h;
+    };
+
+    // Tap the already-selected square → deselect
+    if (square === selectedSquare) {
+      setSelectedSquare(null);
+      setHighlightSquares({});
+      return;
+    }
+
+    if (selectedSquare !== null) {
+      // Attempt the move
+      try {
+        const chess = new Chess(section.fen);
+        const move  = chess.move({ from: selectedSquare, to: square, promotion: 'q' });
+
+        if (move) {
+          setSelectedSquare(null);
+          setHighlightSquares({});
+          if (normSan(move.san) === normSan(section.moveNotation)) {
+            setBoardFen(chess.fen());
+            setFeedback('correct');
+            setPhase(phase === 'puzzle' ? 'solved_blind' : 'complete');
+          } else {
+            setFeedback('wrong');
+          }
+          return;
+        }
+      } catch { /* fall through to re-select logic */ }
+
+      // Not a valid move — re-select if it's another own piece, otherwise deselect
+      if (isOwnPiece(piece)) {
+        setSelectedSquare(square);
+        setHighlightSquares(buildHighlights(square));
       } else {
-        setFeedback('wrong');
-        return false; // piece snaps back
+        setSelectedSquare(null);
+        setHighlightSquares({});
       }
-    } catch {
-      return false;
+      return;
+    }
+
+    // Nothing selected yet — select own piece
+    if (isOwnPiece(piece)) {
+      setSelectedSquare(square);
+      setHighlightSquares(buildHighlights(square));
     }
   };
 
@@ -292,20 +334,16 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
         {canInteract && isPuzzleActive && (
           <div ref={boardContainerRef} className="flex justify-center">
             {/* Width-capped container; board fills it via CSS grid */}
-            <div style={{ width: boardWidth }}>
+            <div style={{ width: boardWidth, cursor: 'pointer' }}>
               <Chessboard
                 options={{
-                  position: boardFen,
-                  onPieceDrop,
-                  boardOrientation: section.userColor,
-                  allowDragging: true,
+                  position:          boardFen,
+                  boardOrientation:  section.userColor,
+                  allowDragging:     false,
                   allowDrawingArrows: false,
-                  // Prevent dragging opponent's pieces
-                  canDragPiece: ({ piece }) => {
-                    const isWhite = piece.pieceType.startsWith('w');
-                    return section.userColor === 'white' ? isWhite : !isWhite;
-                  },
-                  boardStyle: { borderRadius: '4px', border: '1px solid #d1d5db' },
+                  onSquareClick:     handleSquareClick,
+                  squareStyles:      highlightSquares,
+                  boardStyle:        { borderRadius: '4px', border: '1px solid #d1d5db' },
                 }}
               />
             </div>
@@ -365,7 +403,12 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
             <div className="flex gap-2 flex-wrap">
               {phase === 'puzzle' && (
                 <button
-                  onClick={() => { setPhase('thinking_shown'); setFeedback(null); }}
+                  onClick={() => {
+                    setPhase('thinking_shown');
+                    setFeedback(null);
+                    setSelectedSquare(null);
+                    setHighlightSquares({});
+                  }}
                   className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
                 >
                   💭 Reveal thinking
