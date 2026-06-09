@@ -5,7 +5,7 @@
  * BlogPostModal (in-app modal) and /blog/[gameId] (public page).
  */
 
-import { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import Image from 'next/image';
 import { Chess } from 'chess.js';
 
@@ -55,6 +55,18 @@ export function formatEval(v: number): string {
 // Normalise SAN for comparison: strip check/mate symbols, trim, lower-case.
 export function normSan(s: string): string {
   return s.replace(/[+#?!]/g, '').trim().toLowerCase();
+}
+
+// ─── Inline bold renderer ─────────────────────────────────────────────────────
+// Converts **text** markers to <strong> elements within a paragraph.
+
+export function renderWithBold(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : part
+  );
 }
 
 // ─── Inline PGN navigator ─────────────────────────────────────────────────────

@@ -32,19 +32,17 @@ export async function POST(
   try {
     const { id: gameId } = await params;
 
-    const [game, journalEntries, analysis, username, model] = await Promise.all([
+    const [game, journalEntries, analysis, username] = await Promise.all([
       getGame(gameId),
       getJournal(),
       getAnalysis(gameId),
       getSetting('chesscom_username'),
-      getSetting('ai_model'),
     ]);
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    const modelVal = model || 'claude-sonnet-4-6';
     const usernameLC = (username || '').toLowerCase();
     const userColor: 'white' | 'black' =
       usernameLC && game.white?.toLowerCase() === usernameLC ? 'white' : 'black';
@@ -58,14 +56,12 @@ export async function POST(
     const summaryEntry = gameEntries.find((e: any) => e.entryType === 'post_game_summary');
     const moveEntries  = gameEntries.filter((e: any) => e.entryType !== 'post_game_summary');
 
-    // ── Build per-entry sections (no Claude) ──────────────────────────────
+    // ── Build per-entry sections ──────────────────────────────────────────
 
     const sections: MoveSection[] = moveEntries
       .filter((e: any) => e.content?.trim())
       .map((entry: any) => {
-        // Pass the raw timestamp; the client converts to local time.
-        const time = entry.timestamp as string;
-
+        const time     = entry.timestamp as string;
         const notation = entry.moveNotation || entry.myMove || '';
 
         // Format date as "March 10, 2026" from entry.date (YYYY-MM-DD), avoiding
@@ -123,80 +119,35 @@ export async function POST(
         };
       });
 
-    // ── Build Claude prompt for the overall summary only ──────────────────
+    // ── Build summary from the user's own post-game summary entry ─────────
+    // No Claude call — use what the user actually wrote.
 
-    let prompt =
-      `Write a 150-250 word overall summary for a chess blog post about the following game.\n` +
-      `Plain paragraphs only - no headers, no bullet points.\n\n` +
-      `Game: ${game.white} (White) vs ${game.black} (Black)\n` +
-      `Date: ${game.date}\n` +
-      `Result: ${game.result} (you played as ${userColor})\n` +
-      `Time control: ${game.timeControl || 'unknown'}`;
+    let summary = '';
+    if (summaryEntry) {
+      const parts: string[] = [];
 
-    if (analysis) {
-      const acc: string[] = [];
-      if (analysis.whiteAccuracy != null) acc.push(`White accuracy: ${analysis.whiteAccuracy}%`);
-      if (analysis.blackAccuracy != null) acc.push(`Black accuracy: ${analysis.blackAccuracy}%`);
-      if (acc.length) prompt += `\nAccuracy: ${acc.join(', ')}`;
-    }
-
-    // Include notable moments as context for Claude
-    const notableMoves = sections.filter(
-      s => s.engineEval && ['mistake', 'blunder', 'excellent'].includes(s.engineEval.moveQuality)
-    );
-    if (notableMoves.length) {
-      prompt += `\n\nNotable moments:`;
-      for (const s of notableMoves) {
-        const snippet = s.thinking.slice(0, 120);
-        prompt += `\n- ${s.header}: "${snippet}" (${s.engineEval!.moveQuality})`;
+      // Free-text content (if any)
+      if (summaryEntry.content?.trim()) {
+        parts.push(summaryEntry.content.trim());
       }
+
+      // Structured reflections
+      const r = summaryEntry.postGameSummary?.reflections;
+      if (r) {
+        if (r.whatWentWell)   parts.push(`**What went well:** ${r.whatWentWell}`);
+        if (r.mistakes)       parts.push(`**Key mistakes:** ${r.mistakes}`);
+        if (r.lessonsLearned) parts.push(`**Lessons learned:** ${r.lessonsLearned}`);
+        if (r.nextSteps)      parts.push(`**Next steps:** ${r.nextSteps}`);
+      }
+
+      summary = parts.join('\n\n');
     }
 
-    if (summaryEntry?.postGameSummary?.reflections) {
-      const r = summaryEntry.postGameSummary.reflections;
-      prompt += `\n\nPost-game reflections:`;
-      if (r.whatWentWell)   prompt += `\n- What went well: ${r.whatWentWell}`;
-      if (r.mistakes)       prompt += `\n- Key mistakes: ${r.mistakes}`;
-      if (r.lessonsLearned) prompt += `\n- Lessons learned: ${r.lessonsLearned}`;
-      if (r.nextSteps)      prompt += `\n- Next steps: ${r.nextSteps}`;
-    }
-
-    console.log(`[BLOG-POST] Game ${gameId}: ${sections.length} sections, calling ${modelVal} for summary`);
-
-    // ── Call Claude for the summary ───────────────────────────────────────
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         process.env.ANTHROPIC_API_KEY || '',
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      modelVal,
-        max_tokens: 600,
-        messages:   [{ role: 'user', content: prompt }],
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[BLOG-POST] Claude API error: ${response.status}`, errorText);
-      return NextResponse.json(
-        { error: `Claude API error: ${response.status}` },
-        { status: 500 }
-      );
-    }
-
-    const data = await response.json();
-    const summary = data.content[0]?.text || '';
-
-    console.log(`[BLOG-POST] Summary generated (${summary.length} chars) for game ${gameId}`);
+    console.log(`[BLOG-POST] Game ${gameId}: ${sections.length} sections, summary from user entry (${summary.length} chars)`);
 
     return NextResponse.json({
       sections,
       summary,
-      prompt,
       pgn: game.pgn || '',
       userColor,
       gameMeta: {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { MoveSection, MoveSectionCard, PgnViewer } from '@/components/blog-shared';
+import { MoveSection, MoveSectionCard, PgnViewer, renderWithBold } from '@/components/blog-shared';
 
 interface GameMeta {
   white: string;
@@ -150,7 +150,7 @@ export default function BlogPage() {
                 </div>
                 <div className="p-4 space-y-3 text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
                   {data.summary.split('\n\n').map((para, i) => (
-                    <p key={i}>{para}</p>
+                    <p key={i}>{renderWithBold(para)}</p>
                   ))}
                 </div>
               </div>

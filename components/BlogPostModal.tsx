@@ -7,6 +7,7 @@ import {
   PgnViewer,
   QUALITY_STYLE,
   formatEval,
+  renderWithBold,
 } from '@/components/blog-shared';
 
 interface BlogPostModalProps {
@@ -151,13 +152,11 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
   const [status, setStatus]       = useState<Status>('generating');
   const [sections, setSections]   = useState<MoveSection[]>([]);
   const [summary, setSummary]     = useState('');
-  const [prompt, setPrompt]       = useState('');
   const [pgn, setPgn]             = useState('');
   const [userColor, setUserColor] = useState<'white' | 'black'>('white');
   const [error, setError]         = useState('');
-  const [copied, setCopied]       = useState(false);
+  const [copied, setCopied]         = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [showPrompt, setShowPrompt] = useState(false);
 
   const generate = async () => {
     setStatus('generating');
@@ -171,7 +170,6 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
       if (!res.ok) throw new Error(data.error || 'Failed to generate blog post');
       setSections(data.sections || []);
       setSummary(data.summary || '');
-      setPrompt(data.prompt || '');
       setPgn(data.pgn || '');
       setUserColor(data.userColor || 'white');
       setStatus('done');
@@ -246,7 +244,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
           {status === 'generating' && (
             <div className="flex flex-col items-center justify-center h-48 gap-3">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600" />
-              <p className="text-sm text-gray-600 dark:text-gray-400">Assembling your blog post...</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400">Loading blog post...</p>
             </div>
           )}
 
@@ -277,7 +275,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
                   </div>
                   <div className="p-4 space-y-3 text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
                     {summary.split('\n\n').map((para, i) => (
-                      <p key={i}>{para}</p>
+                      <p key={i}>{renderWithBold(para)}</p>
                     ))}
                   </div>
                 </div>
@@ -299,22 +297,6 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
                 </div>
               )}
 
-              <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
-                <button
-                  onClick={() => setShowPrompt(v => !v)}
-                  className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex items-center gap-1"
-                >
-                  <span>{showPrompt ? '▾' : '▸'}</span>
-                  {showPrompt ? 'Hide summary prompt' : 'Show summary prompt'}
-                </button>
-                {showPrompt && (
-                  <textarea
-                    readOnly
-                    value={prompt}
-                    className="mt-2 w-full h-48 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300 resize-y font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-400 dark:focus:ring-purple-500"
-                  />
-                )}
-              </div>
             </>
           )}
         </div>
