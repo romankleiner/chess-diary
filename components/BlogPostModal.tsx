@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { Chess } from 'chess.js';
 
@@ -19,15 +19,22 @@ interface EngineEval {
 
 interface MoveSection {
   type: 'move';
-  header: string;
+  header: string;               // e.g. "Move 2: Nf3"
   timestamp: string;
   fen: string | null;
   userColor: 'white' | 'black';
   thinking: string;
+  moveNotation: string | null;       // SAN of the played move, e.g. "Nf3"
+  opponentLastMove: string | null;   // decoded, e.g. "Nc4 (c3-c4)"
   engineEval: EngineEval | null;
   aiReview: string | null;
   postReview: string | null;
 }
+
+// 'puzzle'         — board + timestamp shown; guess input active
+// 'thinking_shown' — also showing player's thinking + actual move
+// 'complete'       — full reveal: eval, AI review, post-game review
+type SectionPhase = 'puzzle' | 'thinking_shown' | 'complete';
 
 type Status = 'generating' | 'done' | 'error';
 
@@ -45,15 +52,18 @@ function formatEval(v: number): string {
   return (v > 0 ? '+' : '') + v.toFixed(1);
 }
 
+// Normalise SAN for comparison: strip check/mate symbols, trim, lower-case.
+function normSan(s: string): string {
+  return s.replace(/[+#?!]/g, '').trim().toLowerCase();
+}
+
 // ─── Inline PGN navigator ────────────────────────────────────────────────────
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKB1R w KQkq - 0 1';
 
 function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' | 'black' }) {
-  const [moveIdx, setMoveIdx] = useState(-1); // -1 = starting position
+  const [moveIdx, setMoveIdx] = useState(-1);
 
-  // Parse PGN once; build parallel arrays of FENs and SANs.
-  // chess.js v1 verbose history includes .before/.after FENs on each move.
   const { fens, sans } = useMemo(() => {
     try {
       const chess = new Chess();
@@ -66,10 +76,9 @@ function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' | 'blac
     }
   }, [pgn]);
 
-  const total     = sans.length;
+  const total      = sans.length;
   const currentFen = fens[moveIdx + 1] ?? fens[0];
 
-  // Group SANs into pairs for the move list display
   const movePairs: Array<{ white: string; black?: string; pairIdx: number }> = [];
   for (let i = 0; i < sans.length; i += 2) {
     movePairs.push({ white: sans[i], black: sans[i + 1], pairIdx: i / 2 });
@@ -77,7 +86,6 @@ function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' | 'blac
 
   return (
     <div className="space-y-3">
-      {/* Board */}
       <div className="flex justify-center">
         <Image
           src={`/api/board-image?fen=${encodeURIComponent(currentFen)}&pov=${userColor}`}
@@ -89,13 +97,12 @@ function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' | 'blac
         />
       </div>
 
-      {/* Navigation bar */}
       <div className="flex items-center justify-center gap-2 text-gray-700 dark:text-gray-300">
         {[
-          { label: '⏮', action: () => setMoveIdx(-1),           disabled: moveIdx === -1     },
-          { label: '◀', action: () => setMoveIdx(i => Math.max(-1,       i - 1)), disabled: moveIdx === -1     },
-          { label: '▶', action: () => setMoveIdx(i => Math.min(total - 1, i + 1)), disabled: moveIdx === total - 1 },
-          { label: '⏭', action: () => setMoveIdx(total - 1),    disabled: moveIdx === total - 1 },
+          { label: '⏮', action: () => setMoveIdx(-1),                              disabled: moveIdx === -1        },
+          { label: '◀', action: () => setMoveIdx(i => Math.max(-1, i - 1)),         disabled: moveIdx === -1        },
+          { label: '▶', action: () => setMoveIdx(i => Math.min(total - 1, i + 1)),  disabled: moveIdx === total - 1 },
+          { label: '⏭', action: () => setMoveIdx(total - 1),                        disabled: moveIdx === total - 1 },
         ].map(({ label, action, disabled }) => (
           <button
             key={label}
@@ -111,7 +118,6 @@ function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' | 'blac
         </span>
       </div>
 
-      {/* Move list */}
       {movePairs.length > 0 && (
         <div className="max-h-28 overflow-y-auto border border-gray-200 dark:border-gray-600 rounded text-xs font-mono">
           {movePairs.map(({ white, black, pairIdx }) => {
@@ -160,7 +166,7 @@ function buildClipboardText(sections: MoveSection[], summary: string, pgn: strin
 
   for (const s of sections) {
     lines.push(`== ${s.header} ==`);
-    lines.push(s.timestamp);
+    lines.push(new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     lines.push('');
     lines.push(s.thinking);
     if (s.engineEval) {
@@ -199,7 +205,227 @@ function buildClipboardText(sections: MoveSection[], summary: string, pgn: strin
   return lines.join('\n');
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Interactive move section ─────────────────────────────────────────────────
+
+function MoveSectionCard({
+  section,
+  index,
+}: {
+  section: MoveSection;
+  index: number;
+}) {
+  const hasPuzzle = !!section.moveNotation;
+
+  const [phase, setPhase]       = useState<SectionPhase>(hasPuzzle ? 'puzzle' : 'complete');
+  const [guess, setGuess]       = useState('');
+  const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const quality = section.engineEval
+    ? (QUALITY_STYLE[section.engineEval.moveQuality] ?? null)
+    : null;
+
+  const checkGuess = () => {
+    if (!section.moveNotation || !guess.trim()) return;
+    if (normSan(guess) === normSan(section.moveNotation)) {
+      setFeedback('correct');
+      setPhase('complete');
+    } else {
+      setFeedback('wrong');
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') checkGuess();
+  };
+
+  // Derived header: hide notation during puzzle phase
+  const displayHeader = (() => {
+    if (!hasPuzzle || phase === 'complete') return section.header;
+    // Extract "Move N" prefix without the notation part
+    const match = section.header.match(/^(Move \d+)/);
+    return match ? match[1] : section.header;
+  })();
+
+  return (
+    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+
+      {/* ── Header row ─────────────────────────────────────────────────── */}
+      <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
+        <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
+          {displayHeader}
+        </span>
+        <span className="text-xs text-gray-400">
+          {new Date(section.timestamp).toLocaleString([], {
+            month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          })}
+        </span>
+      </div>
+
+      <div className="p-4 space-y-3">
+
+        {/* ── Board diagram ─────────────────────────────────────────── */}
+        {section.fen && (
+          <div className="space-y-1">
+            {section.opponentLastMove && (
+              <p className="text-xs text-center text-gray-500 dark:text-gray-400">
+                Opponent played <span className="font-mono font-medium">{section.opponentLastMove}</span>
+              </p>
+            )}
+            <div className="flex justify-center">
+              <Image
+                src={`/api/board-image?fen=${encodeURIComponent(section.fen)}&pov=${section.userColor}`}
+                alt={`Board position: ${section.fen}`}
+                width={240}
+                height={240}
+                className="rounded border border-gray-200 dark:border-gray-600"
+                unoptimized
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ── Puzzle: guess input ────────────────────────────────────── */}
+        {hasPuzzle && phase !== 'complete' && (
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                ref={inputRef}
+                type="text"
+                value={guess}
+                onChange={e => { setGuess(e.target.value); setFeedback(null); }}
+                onKeyDown={handleKeyDown}
+                placeholder="Your move (e.g. Nf3)"
+                className="flex-1 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-400"
+              />
+              <button
+                onClick={checkGuess}
+                disabled={!guess.trim()}
+                className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white rounded-lg transition-colors"
+              >
+                Check
+              </button>
+            </div>
+
+            {/* Feedback */}
+            {feedback === 'wrong' && (
+              <p className="text-xs text-red-600 dark:text-red-400">
+                ✗ Not quite — try again, or reveal thinking below.
+              </p>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2 flex-wrap">
+              {phase === 'puzzle' && (
+                <button
+                  onClick={() => setPhase('thinking_shown')}
+                  className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+                >
+                  💭 Reveal thinking
+                </button>
+              )}
+              {phase === 'thinking_shown' && (
+                <button
+                  onClick={() => setPhase('complete')}
+                  className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+                >
+                  🏳 Give up — see analysis
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Correct guess banner ───────────────────────────────────── */}
+        {feedback === 'correct' && (
+          <p className="text-xs text-green-600 dark:text-green-400 font-medium">
+            ✓ Correct!
+          </p>
+        )}
+
+        {/* ── Thinking (shown from thinking_shown phase onwards) ──────── */}
+        {(phase === 'thinking_shown' || phase === 'complete') && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+              💭 My thinking
+            </p>
+            <p className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
+              {section.thinking}
+            </p>
+            {section.moveNotation && phase === 'thinking_shown' && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Move played:{' '}
+                <span className="font-mono font-medium text-gray-700 dark:text-gray-300">
+                  {section.moveNotation}
+                </span>
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ── Full analysis (complete phase only) ───────────────────── */}
+        {phase === 'complete' && (
+          <>
+            {/* Move quality + cp loss */}
+            {section.engineEval && quality && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs bg-gray-50 dark:bg-gray-700 rounded px-3 py-2">
+                <span className={`font-semibold ${quality.color}`}>{quality.label}</span>
+                <span className="text-gray-300 dark:text-gray-500">·</span>
+                <span className="text-gray-600 dark:text-gray-400">
+                  {section.engineEval.centipawnLoss} cp loss
+                </span>
+              </div>
+            )}
+
+            {/* Position eval */}
+            {section.engineEval != null && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-gray-500 dark:text-gray-400">📊 Position eval:</span>
+                <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
+                  {formatEval(section.engineEval.evaluation)}
+                </span>
+                <span className="text-gray-400">
+                  {section.engineEval.evaluation > 0
+                    ? '(White ahead)'
+                    : section.engineEval.evaluation < 0
+                    ? '(Black ahead)'
+                    : '(Equal)'}
+                </span>
+              </div>
+            )}
+
+            {/* AI analysis */}
+            {section.aiReview && (
+              <div>
+                <p className="text-xs font-medium text-cyan-600 dark:text-cyan-400 mb-1">
+                  🤖 AI analysis
+                </p>
+                <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed italic">
+                  {section.aiReview}
+                </p>
+              </div>
+            )}
+
+            {/* Post-game analysis */}
+            {section.postReview && (
+              <div>
+                <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">
+                  📝 My post-game analysis
+                </p>
+                <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+                  {section.postReview}
+                </p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main modal ───────────────────────────────────────────────────────────────
 
 export default function BlogPostModal({ gameId, opponent, result, onClose }: BlogPostModalProps) {
   const [status, setStatus]       = useState<Status>('generating');
@@ -253,7 +479,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white dark:bg-gray-800 w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl shadow-xl">
 
-        {/* ── Header ───────────────────────────────────────────────────── */}
+        {/* ── Header ─────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <div>
             <h2 className="font-semibold text-lg text-gray-900 dark:text-gray-100">Blog Post Draft</h2>
@@ -270,7 +496,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
           </button>
         </div>
 
-        {/* ── Body ─────────────────────────────────────────────────────── */}
+        {/* ── Body ───────────────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
 
           {status === 'generating' && (
@@ -294,110 +520,12 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
 
           {status === 'done' && (
             <>
-              {/* ── Per-move sections ─────────────────────────────────── */}
-              {sections.map((section, i) => {
-                const quality = section.engineEval
-                  ? (QUALITY_STYLE[section.engineEval.moveQuality] ?? null)
-                  : null;
+              {/* ── Per-move sections (interactive) ──────────────────── */}
+              {sections.map((section, i) => (
+                <MoveSectionCard key={i} section={section} index={i} />
+              ))}
 
-                return (
-                  <div
-                    key={i}
-                    className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
-                  >
-                    {/* Header row */}
-                    <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
-                      <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
-                        {section.header}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        {new Date(section.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-
-                    <div className="p-4 space-y-3">
-
-                      {/* Board diagram */}
-                      {section.fen && (
-                        <div className="flex justify-center">
-                          <Image
-                            src={`/api/board-image?fen=${encodeURIComponent(section.fen)}&pov=${section.userColor}`}
-                            alt={`Board position: ${section.fen}`}
-                            width={240}
-                            height={240}
-                            className="rounded border border-gray-200 dark:border-gray-600"
-                            unoptimized
-                          />
-                        </div>
-                      )}
-
-                      {/* Original in-game thinking */}
-                      <div>
-                        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                          💭 My thinking
-                        </p>
-                        <p className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
-                          {section.thinking}
-                        </p>
-                      </div>
-
-                      {/* Move quality pill */}
-                      {section.engineEval && quality && (
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs bg-gray-50 dark:bg-gray-700 rounded px-3 py-2">
-                          <span className={`font-semibold ${quality.color}`}>{quality.label}</span>
-                          <span className="text-gray-300 dark:text-gray-500">·</span>
-                          <span className="text-gray-600 dark:text-gray-400">
-                            {section.engineEval.centipawnLoss} cp loss
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Position evaluation — before AI analysis */}
-                      {section.engineEval != null && (
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="text-gray-500 dark:text-gray-400">📊 Position eval:</span>
-                          <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
-                            {formatEval(section.engineEval.evaluation)}
-                          </span>
-                          <span className="text-gray-400">
-                            {section.engineEval.evaluation > 0
-                              ? '(White ahead)'
-                              : section.engineEval.evaluation < 0
-                              ? '(Black ahead)'
-                              : '(Equal)'}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* AI post-game analysis */}
-                      {section.aiReview && (
-                        <div>
-                          <p className="text-xs font-medium text-cyan-600 dark:text-cyan-400 mb-1">
-                            🤖 AI analysis
-                          </p>
-                          <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed italic">
-                            {section.aiReview}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* My own post-game analysis */}
-                      {section.postReview && (
-                        <div>
-                          <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">
-                            📝 My post-game analysis
-                          </p>
-                          <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-                            {section.postReview}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* ── Overall Claude summary ────────────────────────────── */}
+              {/* ── Overall summary ───────────────────────────────────── */}
               {summary && (
                 <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
                   <div className="bg-purple-50 dark:bg-purple-900/30 px-4 py-2 border-b border-purple-200 dark:border-purple-800">
@@ -451,7 +579,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
           )}
         </div>
 
-        {/* ── Footer ───────────────────────────────────────────────────── */}
+        {/* ── Footer ─────────────────────────────────────────────────── */}
         {status === 'done' && (
           <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
             <button

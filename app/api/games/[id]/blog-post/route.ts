@@ -11,11 +11,13 @@ interface EngineEval {
 
 interface MoveSection {
   type: 'move';
-  header: string;     // e.g. "Move 2: Nf3"
-  timestamp: string;  // formatted HH:MM AM/PM
+  header: string;              // e.g. "Move 2: Nf3"
+  timestamp: string;           // ISO timestamp; client formats to local time
   fen: string | null;
   userColor: 'white' | 'black';
   thinking: string;
+  moveNotation: string | null;      // SAN of the move played, e.g. "Nf3"
+  opponentLastMove: string | null;  // decoded display string, e.g. "Nc4 (c3-c4)"
   engineEval: EngineEval | null;
   aiReview: string | null;
   postReview: string | null;
@@ -97,16 +99,27 @@ export async function POST(
           }
         }
 
+        // Decode opponentLastMove from pipe format "san|from|to" → "Nc4 (c3-c4)"
+        const opponentLastMove = (() => {
+          const raw = entry.opponentLastMove as string | undefined;
+          if (!raw) return null;
+          const parts = raw.split('|');
+          if (parts.length === 3) return `${parts[0]} (${parts[1]}-${parts[2]})`;
+          return parts[0] || null;
+        })();
+
         return {
           type: 'move' as const,
           header,
           timestamp: time,
-          fen:        entry.fen        ?? null,
+          fen:              entry.fen        ?? null,
           userColor,
-          thinking:   entry.content.trim(),
+          thinking:         entry.content.trim(),
+          moveNotation:     notation || null,
+          opponentLastMove,
           engineEval,
-          aiReview:   entry.aiReview?.content  ?? null,
-          postReview: entry.postReview?.content ?? null,
+          aiReview:         entry.aiReview?.content  ?? null,
+          postReview:       entry.postReview?.content ?? null,
         };
       });
 
