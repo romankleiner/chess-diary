@@ -193,7 +193,20 @@ export async function POST(
 
     console.log(`[BLOG-POST] Summary generated (${summary.length} chars) for game ${gameId}`);
 
-    return NextResponse.json({ sections, summary, prompt, pgn: game.pgn || '', userColor });
+    return NextResponse.json({
+      sections,
+      summary,
+      prompt,
+      pgn: game.pgn || '',
+      userColor,
+      gameMeta: {
+        white:       game.white       || '',
+        black:       game.black       || '',
+        result:      game.result      ?? null,
+        date:        game.date        || '',
+        timeControl: game.timeControl || '',
+      },
+    });
   } catch (error) {
     console.error('[BLOG-POST] Error:', error);
     return NextResponse.json(
