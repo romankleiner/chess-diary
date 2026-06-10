@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import {
+  GameWalkthrough,
   MoveSection,
-  MoveSectionCard,
-  PgnViewer,
   QUALITY_STYLE,
   formatEval,
   renderWithBold,
@@ -262,9 +261,9 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
 
           {status === 'done' && (
             <>
-              {sections.map((section, i) => (
-                <MoveSectionCard key={i} section={section} />
-              ))}
+              {/* Same walkthrough the public /blog page renders, so the
+                  preview matches what readers will see. */}
+              <GameWalkthrough pgn={pgn} sections={sections} userColor={userColor} />
 
               {summary && (
                 <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
@@ -277,22 +276,6 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
                     {summary.split('\n\n').map((para, i) => (
                       <p key={i}>{renderWithBold(para)}</p>
                     ))}
-                  </div>
-                </div>
-              )}
-
-              {pgn && (
-                <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                  <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2 border-b border-gray-200 dark:border-gray-600 flex items-center justify-between">
-                    <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
-                      ♟ Full Game
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      Copies as <code className="font-mono">[pgn]…[/pgn]</code>
-                    </span>
-                  </div>
-                  <div className="p-4">
-                    <PgnViewer pgn={pgn} userColor={userColor} />
                   </div>
                 </div>
               )}
