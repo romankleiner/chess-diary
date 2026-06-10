@@ -2,6 +2,7 @@ Blog export:
 - Add eval after every move
 - Show the diff in eval in guesses from my chosen move and the best move.
 - Add text before the diagram
+- Move the game playthrough inline with the blog
 - Add a simpler chess.com export
 
 Minor:
