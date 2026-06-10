@@ -499,32 +499,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
         {/* ── Full analysis ─────────────────────────────────────────── */}
         {phase === 'complete' && (
           <>
-            {section.engineEval && quality && (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs bg-gray-50 dark:bg-gray-700 rounded px-3 py-2">
-                <span className={`font-semibold ${quality.color}`}>{quality.label}</span>
-                <span className="text-gray-300 dark:text-gray-500">·</span>
-                <span className="text-gray-600 dark:text-gray-400">
-                  {section.engineEval.centipawnLoss} cp loss
-                </span>
-              </div>
-            )}
-
-            {section.engineEval != null && (
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-gray-500 dark:text-gray-400">📊 Position eval:</span>
-                <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
-                  {formatEval(section.engineEval.evaluation)}
-                </span>
-                <span className="text-gray-400">
-                  {section.engineEval.evaluation > 0
-                    ? '(White ahead)'
-                    : section.engineEval.evaluation < 0
-                    ? '(Black ahead)'
-                    : '(Equal)'}
-                </span>
-              </div>
-            )}
-
+            {/* AI analysis */}
             {section.aiReview && (
               <div>
                 <p className="text-xs font-medium text-cyan-600 dark:text-cyan-400 mb-1">
@@ -536,14 +511,30 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
               </div>
             )}
 
-            {section.postReview && (
+            {/* Post-game analysis — eval shown in header, same style as journal */}
+            {(section.postReview || section.engineEval) && (
               <div>
-                <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">
+                <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-0.5">
                   📝 My post-game analysis
                 </p>
-                <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-                  {section.postReview}
-                </p>
+                {section.engineEval && (
+                  <p className="text-xs text-amber-600/70 dark:text-amber-400/70 mb-1">
+                    {formatEval(section.engineEval.evaluation)}
+                    {quality && (
+                      <span className={`ml-1 ${quality.color}`}>· {section.engineEval.moveQuality}</span>
+                    )}
+                    {section.engineEval.centipawnLoss > 0 && (
+                      <span className="text-amber-600/70 dark:text-amber-400/70">
+                        {' '}· {section.engineEval.centipawnLoss} cp
+                      </span>
+                    )}
+                  </p>
+                )}
+                {section.postReview && (
+                  <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+                    {section.postReview}
+                  </p>
+                )}
               </div>
             )}
           </>
