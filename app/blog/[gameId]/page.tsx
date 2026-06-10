@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { MoveSection, MoveSectionCard, PgnViewer, renderWithBold } from '@/components/blog-shared';
+import { MoveSection, GameWalkthrough, renderWithBold } from '@/components/blog-shared';
 
 interface GameMeta {
   white: string;
@@ -135,10 +135,14 @@ export default function BlogPage() {
               </p>
             </div>
 
-            {/* Per-move sections */}
-            {data.sections.map((section, i) => (
-              <MoveSectionCard key={i} section={section} />
-            ))}
+            {/* Game walkthrough: the game is the backbone — the reader plays
+                through it from move 1, and journal entries unlock as guess
+                points along the way. */}
+            <GameWalkthrough
+              pgn={data.pgn}
+              sections={data.sections}
+              userColor={data.userColor}
+            />
 
             {/* Overall summary */}
             {data.summary && (
@@ -156,19 +160,6 @@ export default function BlogPage() {
               </div>
             )}
 
-            {/* Full game PGN viewer */}
-            {data.pgn && (
-              <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                <div className="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b border-gray-200 dark:border-gray-600">
-                  <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
-                    ♟ Full Game
-                  </span>
-                </div>
-                <div className="p-4">
-                  <PgnViewer pgn={data.pgn} userColor={data.userColor} />
-                </div>
-              </div>
-            )}
           </>
         )}
       </main>

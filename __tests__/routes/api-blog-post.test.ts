@@ -9,11 +9,6 @@ vi.mock('@/lib/db', () => ({
   getSetting: vi.fn(),
 }));
 
-// Stub fetch once at module level with a persistent vi.fn() so we can
-// reset + reconfigure it per test without vi.stubGlobal ordering issues.
-const fetchMock = vi.fn();
-vi.stubGlobal('fetch', fetchMock);
-
 import { POST } from '@/app/api/games/[id]/blog-post/route';
 import { getGame, getJournal, getAnalysis, getSetting } from '@/lib/db';
 
@@ -32,28 +27,10 @@ function makeReq(gameId = gameA.id) {
   return new NextRequest(`http://localhost/api/games/${gameId}/blog-post`, { method: 'POST' });
 }
 
-function stubFetchSuccess(text = 'Overall this was a strong game.') {
-  fetchMock.mockResolvedValue({
-    ok: true,
-    json: async () => ({ content: [{ text }] }),
-    text: async () => '',
-  });
-}
-
-function stubFetchFailure(status = 500) {
-  fetchMock.mockResolvedValue({
-    ok: false,
-    status,
-    text: async () => 'Internal server error',
-  });
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
-  fetchMock.mockReset();
   mockGetSetting.mockImplementation(async (key: string) => {
     if (key === 'chesscom_username') return 'testuser';
-    if (key === 'ai_model') return 'claude-sonnet-4-6';
     return null;
   });
   mockGetJournal.mockResolvedValue([]);
@@ -65,7 +42,6 @@ beforeEach(() => {
 describe('POST /api/games/[id]/blog-post — 404', () => {
   it('returns 404 when the game does not exist', async () => {
     mockGetGame.mockResolvedValue(null);
-    stubFetchSuccess();
     const res = await POST(makeReq('ghost-id'), params('ghost-id'));
     expect(res.status).toBe(404);
     expect((await res.json()).error).toMatch(/not found/i);
@@ -77,7 +53,6 @@ describe('POST /api/games/[id]/blog-post — 404', () => {
 describe('POST /api/games/[id]/blog-post — sections', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);
-    stubFetchSuccess();
   });
 
   it('returns a sections array', async () => {
@@ -165,7 +140,6 @@ describe('POST /api/games/[id]/blog-post — sections', () => {
 describe('POST /api/games/[id]/blog-post — engineEval', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);
-    stubFetchSuccess();
   });
 
   it('engineEval is populated when analysis move matches by moveNumber + moveNotation', async () => {
@@ -215,7 +189,6 @@ describe('POST /api/games/[id]/blog-post — engineEval', () => {
 describe('POST /api/games/[id]/blog-post — aiReview / postReview', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);
-    stubFetchSuccess();
   });
 
   it('aiReview content is included when present on the entry', async () => {
@@ -251,48 +224,112 @@ describe('POST /api/games/[id]/blog-post — aiReview / postReview', () => {
   });
 });
 
-// ─── Claude summary prompt ────────────────────────────────────────────────────
+// ─── plyIndex anchoring ───────────────────────────────────────────────────────
+// gameA.pgn = '1. e4 e5 2. Nf3 Nc6' → plies: 0=e4, 1=e5, 2=Nf3, 3=Nc6
 
-describe('POST /api/games/[id]/blog-post — Claude summary prompt', () => {
+describe('POST /api/games/[id]/blog-post — plyIndex', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);
+  });
+
+  it('anchors a white move entry to its ply in the PGN', async () => {
+    // moveEntry: moveNumber=2, moveNotation='Nf3', user is white → ply 2
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].plyIndex).toBe(2);
+  });
+
+  it('anchors a black move entry to its ply in the PGN', async () => {
+    // gameB.pgn = '1. d4 d5 2. c4 e6', user is black → move 1 d5 is ply 1
+    const { gameB } = await import('../helpers/fixtures');
+    mockGetGame.mockResolvedValue(gameB);
+    mockGetJournal.mockResolvedValue([
+      { ...moveEntry, gameId: gameB.id, moveNumber: 1, moveNotation: 'd5' },
+    ]);
+    const res = await POST(
+      new NextRequest(`http://localhost/api/games/${gameB.id}/blog-post`, { method: 'POST' }),
+      params(gameB.id)
+    );
+    const { sections } = await res.json();
+    expect(sections[0].plyIndex).toBe(1);
+  });
+
+  it('anchors by FEN when moveNumber is absent (real-data shape)', async () => {
+    // Position before ply 2 (after 1. e4 e5), white to move — the user's move is Nf3
+    const fenEntry = {
+      ...thoughtEntry,
+      myMove: 'Nf3',
+      fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2',
+    };
+    mockGetJournal.mockResolvedValue([fenEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].plyIndex).toBe(2);
+    // move number is derived from the anchored ply for the header
+    expect(sections[0].header).toBe('Move 2: Nf3');
+  });
+
+  it('FEN anchoring ignores move counters and en-passant differences', async () => {
+    const fenEntry = {
+      ...thoughtEntry,
+      myMove: 'Nf3',
+      fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 5 9',
+    };
+    mockGetJournal.mockResolvedValue([fenEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].plyIndex).toBe(2);
+  });
+
+  it('anchors by FEN alone when the recorded SAN is a typo, taking the move from the PGN', async () => {
+    const fenEntry = {
+      ...thoughtEntry,
+      myMove: 'Nh3', // user recorded the wrong move; the PGN says Nf3
+      fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2',
+    };
+    mockGetJournal.mockResolvedValue([fenEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].plyIndex).toBe(2);
+    expect(sections[0].moveNotation).toBe('Nf3');
+  });
+
+  it('plyIndex is null when the notation does not match the PGN at that ply', async () => {
+    mockGetJournal.mockResolvedValue([{ ...moveEntry, moveNotation: 'Nc3' }]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].plyIndex).toBeNull();
+  });
+
+  it('plyIndex is null for entries without a move number', async () => {
     mockGetJournal.mockResolvedValue([thoughtEntry]);
-    stubFetchSuccess();
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].plyIndex).toBeNull();
   });
 
-  it('prompt includes game metadata (white, black, result)', async () => {
-    const { prompt } = await (await POST(makeReq(), params(gameA.id))).json();
-    expect(prompt).toContain(gameA.white);
-    expect(prompt).toContain(gameA.black);
-    expect(prompt).toContain(gameA.result);
+  it('plyIndex is null when the game has no PGN', async () => {
+    mockGetGame.mockResolvedValue({ ...gameA, pgn: '' });
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].plyIndex).toBeNull();
+  });
+});
+
+// ─── Summary from the user's post-game entry ──────────────────────────────────
+
+describe('POST /api/games/[id]/blog-post — summary', () => {
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue(gameA);
   });
 
-  it('prompt includes accuracy statistics when analysis is present', async () => {
-    mockGetAnalysis.mockResolvedValue(analysisA);
-    const { prompt } = await (await POST(makeReq(), params(gameA.id))).json();
-    expect(prompt).toContain('accuracy');
-  });
-
-  it('prompt includes post-game reflections when a summary entry is present', async () => {
+  it('summary combines free-text content and structured reflections', async () => {
     mockGetJournal.mockResolvedValue([thoughtEntry, summaryEntry]);
-    const { prompt } = await (await POST(makeReq(), params(gameA.id))).json();
-    expect(prompt).toContain(summaryEntry.postGameSummary!.reflections.lessonsLearned!);
+    const { summary } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(summary).toContain(summaryEntry.content);
+    expect(summary).toContain(summaryEntry.postGameSummary!.reflections.whatWentWell!);
+    expect(summary).toContain(summaryEntry.postGameSummary!.reflections.lessonsLearned!);
   });
 
-  it('uses default model when ai_model setting is null', async () => {
-    mockGetSetting.mockImplementation(async (key: string) => {
-      if (key === 'chesscom_username') return 'testuser';
-      return null;
-    });
-    await POST(makeReq(), params(gameA.id));
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.model).toBe('claude-sonnet-4-6');
-  });
-
-  it('max_tokens for summary is 600', async () => {
-    await POST(makeReq(), params(gameA.id));
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.max_tokens).toBe(600);
+  it('summary is empty when there is no post_game_summary entry', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry]);
+    const { summary } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(summary).toBe('');
   });
 });
 
@@ -304,61 +341,25 @@ describe('POST /api/games/[id]/blog-post — response shape', () => {
     mockGetJournal.mockResolvedValue([thoughtEntry]);
   });
 
-  it('returns { sections, summary, prompt } on success', async () => {
-    stubFetchSuccess('A great game.');
+  it('returns { sections, summary, pgn, userColor, gameMeta } on success', async () => {
     const res = await POST(makeReq(), params(gameA.id));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body.sections)).toBe(true);
     expect(typeof body.summary).toBe('string');
-    expect(typeof body.prompt).toBe('string');
-  });
-
-  it('summary contains the Claude-generated text', async () => {
-    stubFetchSuccess('An excellent game from start to finish.');
-    const { summary } = await (await POST(makeReq(), params(gameA.id))).json();
-    expect(summary).toBe('An excellent game from start to finish.');
-  });
-
-  it('prompt matches what was sent to Claude', async () => {
-    stubFetchSuccess();
-    const { prompt } = await (await POST(makeReq(), params(gameA.id))).json();
-    const fetchBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(fetchBody.messages[0].content).toBe(prompt);
+    expect(typeof body.pgn).toBe('string');
+    expect(body.userColor).toMatch(/^(white|black)$/);
+    expect(body.gameMeta).toMatchObject({ white: gameA.white, black: gameA.black });
   });
 
   it('returns pgn from the game record', async () => {
-    stubFetchSuccess();
     const { pgn } = await (await POST(makeReq(), params(gameA.id))).json();
     expect(pgn).toBe(gameA.pgn);
   });
 
   it('returns userColor derived from the chesscom_username setting', async () => {
     // gameA.white === 'testuser' → white
-    stubFetchSuccess();
     const { userColor } = await (await POST(makeReq(), params(gameA.id))).json();
     expect(userColor).toBe('white');
-  });
-});
-
-// ─── Anthropic failure → 500 ─────────────────────────────────────────────────
-
-describe('POST /api/games/[id]/blog-post — Anthropic errors', () => {
-  beforeEach(() => {
-    mockGetGame.mockResolvedValue(gameA);
-    mockGetJournal.mockResolvedValue([thoughtEntry]);
-  });
-
-  it('returns 500 when Anthropic responds with an error status', async () => {
-    stubFetchFailure(529);
-    const res = await POST(makeReq(), params(gameA.id));
-    expect(res.status).toBe(500);
-    expect((await res.json()).error).toMatch(/claude api error/i);
-  });
-
-  it('returns 500 when fetch itself throws (network error)', async () => {
-    fetchMock.mockRejectedValue(new Error('network timeout'));
-    const res = await POST(makeReq(), params(gameA.id));
-    expect(res.status).toBe(500);
   });
 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Chess } from 'chess.js';
 import { getGame, getJournal, getAnalysis, getSetting } from '@/lib/db';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -18,9 +19,21 @@ interface MoveSection {
   thinking: string;
   moveNotation: string | null;      // SAN of the move played, e.g. "Nf3"
   opponentLastMove: string | null;  // decoded display string, e.g. "Nc4 (c3-c4)"
+  plyIndex: number | null;          // 0-based ply of this move in the game PGN, null if unmatched
   engineEval: EngineEval | null;
   aiReview: string | null;
   postReview: string | null;
+}
+
+// Normalise SAN for comparison: strip check/mate/annotation symbols, lower-case.
+function normSan(s: string): string {
+  return s.replace(/[+#?!]/g, '').trim().toLowerCase();
+}
+
+// Normalise a FEN for position comparison: piece placement, side to move and
+// castling rights only (move counters and en-passant field vary by source).
+function fenKey(fen: string): string {
+  return fen.split(' ').slice(0, 3).join(' ');
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -56,6 +69,24 @@ export async function POST(
     const summaryEntry = gameEntries.find((e: any) => e.entryType === 'post_game_summary');
     const moveEntries  = gameEntries.filter((e: any) => e.entryType !== 'post_game_summary');
 
+    // Parse the game PGN once so each entry can be anchored to its ply
+    // (used by the client-side game walkthrough).
+    let pgnSans: string[] = [];
+    let pgnFenKeys: string[] = []; // pgnFenKeys[p] = position before ply p
+    try {
+      if (game.pgn) {
+        const chess = new Chess();
+        chess.loadPgn(game.pgn);
+        const verbose = chess.history({ verbose: true });
+        pgnSans    = verbose.map((m: any) => m.san as string);
+        pgnFenKeys = verbose.map((m: any) => fenKey(m.before as string));
+      }
+    } catch { /* unparseable PGN → sections stay unanchored */ }
+
+    // Forward cursor for FEN-based anchoring: entries are chronological, so
+    // each anchor must come after the previous one (handles repeated positions).
+    let anchorCursor = 0;
+
     // ── Build per-entry sections ──────────────────────────────────────────
 
     const sections: MoveSection[] = moveEntries
@@ -76,15 +107,52 @@ export async function POST(
           return `${months[d[1] - 1]} ${d[2]}, ${d[0]}`;
         })();
 
-        const header = entry.moveNumber
-          ? (notation ? `Move ${entry.moveNumber}: ${notation}` : `Move ${entry.moveNumber}`)
+        // Anchor the entry to its ply in the PGN. Prefer the explicit fullmove
+        // number when recorded; otherwise scan forward for the entry's FEN
+        // (the position the user was looking at before playing their move).
+        const plyIndex = (() => {
+          if (pgnSans.length === 0) return null;
+          if (entry.moveNumber && notation) {
+            const ply = (entry.moveNumber - 1) * 2 + (userColor === 'black' ? 1 : 0);
+            if (ply >= 0 && ply < pgnSans.length && normSan(pgnSans[ply]) === normSan(notation)) {
+              return ply;
+            }
+          }
+          if (entry.fen) {
+            const target = fenKey(entry.fen);
+            let fenOnly: number | null = null;
+            for (let p = anchorCursor; p < pgnFenKeys.length; p++) {
+              if (pgnFenKeys[p] !== target) continue;
+              if (!notation || normSan(pgnSans[p]) === normSan(notation)) return p;
+              if (fenOnly === null) fenOnly = p;
+            }
+            // Position found but the recorded SAN differs (e.g. a disambiguation
+            // typo like "R1c7" for "R3c7") → trust the PGN.
+            return fenOnly;
+          }
+          return null;
+        })();
+        if (plyIndex !== null) anchorCursor = plyIndex + 1;
+
+        // The PGN is authoritative about what was actually played
+        const playedSan = plyIndex !== null ? pgnSans[plyIndex] : (notation || null);
+
+        // Fullmove number: recorded on the entry, or derived from the anchor
+        const moveNumber = entry.moveNumber ?? (plyIndex !== null ? Math.floor(plyIndex / 2) + 1 : null);
+
+        const header = moveNumber
+          ? (playedSan ? `Move ${moveNumber}: ${playedSan}` : `Move ${moveNumber}`)
           : entryDateLabel;
 
-        // Match to engine analysis by fullmove number + SAN notation
+        // Match to engine analysis by fullmove number + SAN notation + color
         let engineEval: EngineEval | null = null;
-        if (entry.moveNumber && entry.moveNotation && Array.isArray(analysis?.moves)) {
+        if (moveNumber && playedSan && Array.isArray(analysis?.moves)) {
           const hit = analysis.moves.find(
-            (m: any) => m.moveNumber === entry.moveNumber && m.move === entry.moveNotation
+            (m: any) =>
+              m.moveNumber === moveNumber &&
+              (!m.color || m.color === userColor) &&
+              typeof m.move === 'string' &&
+              normSan(m.move) === normSan(playedSan)
           );
           if (hit) {
             engineEval = {
@@ -111,8 +179,9 @@ export async function POST(
           fen:              entry.fen        ?? null,
           userColor,
           thinking:         entry.content.trim(),
-          moveNotation:     notation || null,
+          moveNotation:     playedSan,
           opponentLastMove,
+          plyIndex,
           engineEval,
           aiReview:         entry.aiReview?.content  ?? null,
           postReview:       entry.postReview?.content ?? null,
