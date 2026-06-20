@@ -128,10 +128,7 @@ export default function BlogPage() {
                 <ResultBadge result={data.gameMeta.result} />
               </div>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                {[
-                  data.gameMeta.date,
-                  data.gameMeta.timeControl,
-                ].filter(Boolean).join(' · ')}
+                {data.gameMeta.date}
               </p>
             </div>
 

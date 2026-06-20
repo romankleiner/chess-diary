@@ -611,7 +611,7 @@ function StepControls({ viewIdx, minIdx, maxIdx, goTo }: {
   goTo: (idx: number) => void;
 }) {
   return (
-    <div className="flex items-center justify-center gap-2 text-gray-700 dark:text-gray-300">
+    <div className="flex items-center justify-center gap-2.5 text-gray-700 dark:text-gray-300">
       {[
         { label: '⏮', action: () => goTo(minIdx),      disabled: viewIdx === minIdx },
         { label: '◀', action: () => goTo(viewIdx - 1), disabled: viewIdx === minIdx },
@@ -622,12 +622,12 @@ function StepControls({ viewIdx, minIdx, maxIdx, goTo }: {
           key={label}
           onClick={action}
           disabled={disabled}
-          className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default text-lg transition-colors"
+          className="w-12 h-12 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default text-2xl transition-colors"
         >
           {label}
         </button>
       ))}
-      <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400 ml-1 w-14 text-center">
+      <span className="text-sm tabular-nums text-gray-500 dark:text-gray-400 ml-1 w-14 text-center">
         {viewIdx - minIdx} / {maxIdx - minIdx}
       </span>
     </div>
@@ -676,6 +676,44 @@ function MoveChips({ game, fromPly, toPly, viewIdx, goTo, guessPly, guessColor }
   );
 }
 
+// Engine check shown once the move is revealed: the evaluation of the resulting
+// position and, separately, how far the move fell short of the engine's best.
+function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
+  const quality = QUALITY_STYLE[engineEval.moveQuality] ?? null;
+  const lost    = engineEval.centipawnLoss;
+  return (
+    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-1.5">
+      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">⚙️ Engine check</p>
+
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="text-gray-600 dark:text-gray-400">Evaluation of the position</span>
+        <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
+          {formatEval(engineEval.evaluation)}
+        </span>
+      </div>
+      <p className="text-[11px] text-gray-400 dark:text-gray-500 -mt-0.5">
+        + favours White, − favours Black
+      </p>
+
+      <div className="flex items-baseline justify-between gap-3 text-sm border-t border-gray-200 dark:border-gray-700 pt-1.5">
+        <span className="text-gray-600 dark:text-gray-400">My move vs. the engine&apos;s best</span>
+        {lost > 0 ? (
+          <span className={`font-mono font-semibold ${quality?.color ?? 'text-gray-700 dark:text-gray-300'}`}>
+            −{(lost / 100).toFixed(2)} <span className="font-normal">({lost} cp)</span>
+          </span>
+        ) : (
+          <span className="font-mono font-semibold text-green-600 dark:text-green-400">
+            best move
+          </span>
+        )}
+      </div>
+      {quality && lost > 0 && (
+        <p className={`text-[11px] ${quality.color} text-right`}>{quality.label}</p>
+      )}
+    </div>
+  );
+}
+
 // Entry content blocks (thinking / analysis), gated by phase
 function SectionBody({ section, phase, onShowAnalysis }: {
   section: MoveSection;
@@ -683,9 +721,7 @@ function SectionBody({ section, phase, onShowAnalysis }: {
   onShowAnalysis: () => void;
 }) {
   if (phase === 'puzzle') return null;
-  const quality = section.engineEval
-    ? (QUALITY_STYLE[section.engineEval.moveQuality] ?? null)
-    : null;
+  const resolved = phase === 'solved_blind' || phase === 'complete';
   return (
     <>
       <div>
@@ -704,6 +740,9 @@ function SectionBody({ section, phase, onShowAnalysis }: {
           </p>
         )}
       </div>
+
+      {/* Engine eval + diff, shown as soon as the move is revealed */}
+      {resolved && section.engineEval && <EvalCallout engineEval={section.engineEval} />}
 
       {phase === 'solved_blind' && (
         <button
@@ -727,29 +766,14 @@ function SectionBody({ section, phase, onShowAnalysis }: {
             </div>
           )}
 
-          {(section.postReview || section.engineEval) && (
+          {section.postReview && (
             <div>
               <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-0.5">
                 📝 My post-game analysis
               </p>
-              {section.engineEval && (
-                <p className="text-xs text-amber-600/70 dark:text-amber-400/70 mb-1">
-                  {formatEval(section.engineEval.evaluation)}
-                  {quality && (
-                    <span className={`ml-1 ${quality.color}`}>· {section.engineEval.moveQuality}</span>
-                  )}
-                  {section.engineEval.centipawnLoss > 0 && (
-                    <span className="text-amber-600/70 dark:text-amber-400/70">
-                      {' '}· {section.engineEval.centipawnLoss} cp
-                    </span>
-                  )}
-                </p>
-              )}
-              {section.postReview && (
-                <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-                  {section.postReview}
-                </p>
-              )}
+              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+                {section.postReview}
+              </p>
             </div>
           )}
         </>
@@ -832,6 +856,64 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     onResolved();
   };
 
+  const isOwnColor = (pieceType: string) =>
+    section.userColor === 'white' ? pieceType.startsWith('w') : pieceType.startsWith('b');
+
+  // Cancel any pending wrong-move revert when the user interacts again
+  const cancelPendingRevert = () => {
+    if (wrongMoveTimerRef.current) {
+      clearTimeout(wrongMoveTimerRef.current);
+      wrongMoveTimerRef.current = null;
+      setTempFen(null);
+      setFlashHighlights({});
+    }
+  };
+
+  // Try from→to as the puzzle answer. Shared by click-to-move and drag-and-drop.
+  const attemptMove = (from: string, to: string): 'correct' | 'wrong' | 'illegal' => {
+    let move;
+    try {
+      const chess = new Chess(fenBefore);
+      move = chess.move({ from, to, promotion: 'q' });
+      if (!move) return 'illegal';
+
+      if (normSan(move.san) === normSan(expectedSan)) {
+        setFeedback('correct');
+        resolve('guessed', phase === 'puzzle' ? 'solved_blind' : 'complete');
+        return 'correct';
+      }
+      // Wrong — show the attempted move briefly in red, then revert
+      setTempFen(chess.fen());
+      setFlashHighlights({
+        [from]: { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
+        [to]:   { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
+      });
+      setFeedback('wrong');
+      if (wrongMoveTimerRef.current) clearTimeout(wrongMoveTimerRef.current);
+      wrongMoveTimerRef.current = setTimeout(() => {
+        setTempFen(null);
+        setFlashHighlights({});
+        wrongMoveTimerRef.current = null;
+      }, 900);
+      return 'wrong';
+    } catch {
+      return 'illegal';
+    }
+  };
+
+  // ── Drag-and-drop handler ───────────────────────────────────────────────
+  const handlePieceDrop = ({ sourceSquare, targetSquare }: {
+    piece: { pieceType: string };
+    sourceSquare: string;
+    targetSquare: string | null;
+  }): boolean => {
+    if (!atPuzzle || !targetSquare) return false;
+    cancelPendingRevert();
+    setSelectedSquare(null);
+    setSelHighlights({});
+    return attemptMove(sourceSquare, targetSquare) !== 'illegal';
+  };
+
   // ── Square-click handler (click-to-select → click-to-move) ──────────────
   const handleSquareClick = ({ piece, square }: {
     piece: { pieceType: string } | null;
@@ -839,10 +921,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   }) => {
     if (!atPuzzle) return;
 
-    const isOwnPiece = (p: { pieceType: string } | null) =>
-      !!p && (section.userColor === 'white'
-        ? p.pieceType.startsWith('w')
-        : p.pieceType.startsWith('b'));
+    const isOwnPiece = (p: { pieceType: string } | null) => !!p && isOwnColor(p.pieceType);
 
     const buildSelectionHighlights = (sq: string): Record<string, React.CSSProperties> => {
       const c     = new Chess(fenBefore);
@@ -856,13 +935,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       return h;
     };
 
-    // Cancel any pending wrong-move revert when the user interacts again
-    if (wrongMoveTimerRef.current) {
-      clearTimeout(wrongMoveTimerRef.current);
-      wrongMoveTimerRef.current = null;
-      setTempFen(null);
-      setFlashHighlights({});
-    }
+    cancelPendingRevert();
 
     // Tap the already-selected square → deselect
     if (square === selectedSquare) {
@@ -872,39 +945,13 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     }
 
     if (selectedSquare !== null) {
-      // Attempt the move
-      try {
-        const chess = new Chess(fenBefore);
-        const move  = chess.move({ from: selectedSquare, to: square, promotion: 'q' });
-
-        if (move) {
-          const fromSq = selectedSquare; // capture before state update
-          setSelectedSquare(null);
-          setSelHighlights({});
-
-          if (normSan(move.san) === normSan(expectedSan)) {
-            // ── Correct ─────────────────────────────────────────────
-            setFeedback('correct');
-            resolve('guessed', phase === 'puzzle' ? 'solved_blind' : 'complete');
-          } else {
-            // ── Wrong — show result briefly then revert ─────────────
-            setTempFen(chess.fen());
-            setFlashHighlights({
-              [fromSq]: { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
-              [square]: { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
-            });
-            setFeedback('wrong');
-            wrongMoveTimerRef.current = setTimeout(() => {
-              setTempFen(null);
-              setFlashHighlights({});
-              wrongMoveTimerRef.current = null;
-            }, 900);
-          }
-          return;
-        }
-      } catch { /* fall through to re-select logic */ }
-
-      // Not a valid chess move — re-select if another own piece, otherwise deselect
+      const outcome = attemptMove(selectedSquare, square);
+      if (outcome !== 'illegal') {
+        setSelectedSquare(null);
+        setSelHighlights({});
+        return;
+      }
+      // Not a legal move — re-select if another own piece, otherwise deselect
       if (isOwnPiece(piece)) {
         setSelectedSquare(square);
         setSelHighlights(buildSelectionHighlights(square));
@@ -972,9 +1019,13 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
               options={{
                 position:           boardFen,
                 boardOrientation:   section.userColor,
-                allowDragging:      false,
+                allowDragging:      atPuzzle,
                 allowDrawingArrows: false,
-                ...(atPuzzle && { onSquareClick: handleSquareClick }),
+                ...(atPuzzle && {
+                  onSquareClick: handleSquareClick,
+                  onPieceDrop:   handlePieceDrop,
+                  canDragPiece:  ({ piece }: { piece: { pieceType: string } }) => isOwnColor(piece.pieceType),
+                }),
                 squareStyles: { ...resolvedHl, ...flashHighlights, ...selHighlights },
                 boardStyle:   { borderRadius: '4px', border: '1px solid #d1d5db' },
               }}
@@ -1118,6 +1169,27 @@ export function GameWalkthrough({ pgn, sections, userColor }: {
   const totalPuzzles = items.filter(it => it.guessPly !== null).length;
   const [doneCount, setDoneCount] = useState(0);
 
+  // After a move is guessed/revealed, glide to the next board in the reading view.
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const tailRef  = useRef<HTMLDivElement | null>(null);
+  const isFirst  = useRef(true);
+  useEffect(() => {
+    if (isFirst.current) { isFirst.current = false; return; }
+    if (doneCount === 0) return;
+    // The card whose unlock order === doneCount is the one that just opened up.
+    let order = 0, targetIdx = -1;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].guessPly !== null) {
+        if (order === doneCount) { targetIdx = i; break; }
+        order++;
+      }
+    }
+    const el = targetIdx >= 0 ? cardRefs.current[targetIdx] : tailRef.current;
+    const t = setTimeout(() => el?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doneCount]);
+
   // Fallback: no parseable PGN or nothing anchored → original flat layout
   if (!game || totalPuzzles === 0) {
     return (
@@ -1168,12 +1240,12 @@ export function GameWalkthrough({ pgn, sections, userColor }: {
       </p>
 
       {items.map((it, i) => {
+        let inner: React.ReactNode;
         if (it.guessPly !== null) {
           const order = prefix[i];
           const state = order > doneCount ? 'locked' : order < doneCount ? 'done' : 'active';
-          return (
+          inner = (
             <WalkthroughMoveCard
-              key={i}
               section={it.section}
               game={game}
               startPly={it.startPly}
@@ -1182,14 +1254,22 @@ export function GameWalkthrough({ pgn, sections, userColor }: {
               onResolved={() => setDoneCount(c => c + 1)}
             />
           );
+        } else {
+          inner = prefix[i] <= doneCount
+            ? <MoveSectionCard section={it.section} />
+            : <LockedCard title={maskedHeader(it.section)} />;
         }
-        return prefix[i] <= doneCount
-          ? <MoveSectionCard key={i} section={it.section} />
-          : <LockedCard key={i} title={maskedHeader(it.section)} />;
+        return (
+          <div key={i} ref={el => { cardRefs.current[i] = el; }} className="scroll-mt-4">
+            {inner}
+          </div>
+        );
       })}
 
       {tailStart < game.sans.length && (
-        <TailCard game={game} startPly={tailStart} userColor={userColor} locked={!allDone} />
+        <div ref={tailRef} className="scroll-mt-4">
+          <TailCard game={game} startPly={tailStart} userColor={userColor} locked={!allDone} />
+        </div>
       )}
     </>
   );
