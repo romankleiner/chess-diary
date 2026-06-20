@@ -5,7 +5,7 @@
  * BlogPostModal (in-app modal) and /blog/[gameId] (public page).
  */
 
-import React, { useRef, useState, useMemo, useEffect } from 'react';
+import React, { useRef, useState, useMemo, useEffect, useCallback, useId } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { Chess } from 'chess.js';
@@ -573,18 +573,24 @@ function parseGame(pgn: string): ParsedGame | null {
   }
 }
 
-// Responsive board sizing shared by walkthrough cards
+// Responsive board sizing shared by walkthrough cards.
+// Uses a callback ref so the observer attaches whenever the measured node
+// mounts — a plain useEffect+useRef would miss cards that start locked and
+// only render their board (and ref target) once unlocked.
 function useBoardWidth(max = 360) {
-  const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(280);
-  useEffect(() => {
-    if (!ref.current) return;
-    const obs = new ResizeObserver(entries => {
-      const w = entries[0]?.contentRect.width;
-      if (w && w > 0) setWidth(Math.min(Math.floor(w), max));
-    });
-    obs.observe(ref.current);
-    return () => obs.disconnect();
+  const obsRef = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((node: HTMLDivElement | null) => {
+    obsRef.current?.disconnect();
+    obsRef.current = null;
+    if (node) {
+      const obs = new ResizeObserver(entries => {
+        const w = entries[0]?.contentRect.width;
+        if (w && w > 0) setWidth(Math.min(Math.floor(w), max));
+      });
+      obs.observe(node);
+      obsRef.current = obs;
+    }
   }, [max]);
   return { ref, width };
 }
@@ -691,9 +697,6 @@ function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
           {formatEval(engineEval.evaluation)}
         </span>
       </div>
-      <p className="text-[11px] text-gray-400 dark:text-gray-500 -mt-0.5">
-        + favours White, − favours Black
-      </p>
 
       <div className="flex items-baseline justify-between gap-3 text-sm border-t border-gray-200 dark:border-gray-700 pt-1.5">
         <span className="text-gray-600 dark:text-gray-400">My move vs. the engine&apos;s best</span>
@@ -808,6 +811,9 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   const wrongMoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { ref: boardRef, width: boardWidth } = useBoardWidth();
+  // Unique per card — keeps each board's drag/animation state isolated so
+  // multiple mounted boards don't interfere (jerky animation otherwise).
+  const boardId = `wt-${useId().replace(/:/g, '')}`;
 
   // Clear the wrong-move revert timer on unmount
   useEffect(() => () => {
@@ -1017,6 +1023,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
           <div style={{ width: boardWidth, cursor: atPuzzle ? 'pointer' : 'default' }}>
             <Chessboard
               options={{
+                id:                 boardId,
                 position:           boardFen,
                 boardOrientation:   section.userColor,
                 allowDragging:      atPuzzle,
@@ -1096,19 +1103,25 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
 
 // ─── Tail card: the rest of the game after the last journal entry ─────────────
 
-function TailCard({ game, startPly, userColor, locked }: {
+function TailCard({ game, startPly, userColor, locked, onReachedEnd }: {
   game: ParsedGame;
   startPly: number;
   userColor: 'white' | 'black';
   locked: boolean;
+  onReachedEnd?: () => void;
 }) {
   const [viewIdx, setViewIdx] = useState(startPly);
   const { ref, width } = useBoardWidth();
+  const boardId = `tail-${useId().replace(/:/g, '')}`;
   const maxIdx = game.sans.length;
 
   if (locked) return <LockedCard title="♟ The rest of the game" />;
 
-  const goTo = (idx: number) => setViewIdx(Math.max(startPly, Math.min(maxIdx, idx)));
+  const goTo = (idx: number) => {
+    const clamped = Math.max(startPly, Math.min(maxIdx, idx));
+    setViewIdx(clamped);
+    if (clamped === maxIdx) onReachedEnd?.(); // game fully played through
+  };
 
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
@@ -1122,6 +1135,7 @@ function TailCard({ game, startPly, userColor, locked }: {
           <div style={{ width }}>
             <Chessboard
               options={{
+                id:                 boardId,
                 position:           game.fens[viewIdx],
                 boardOrientation:   userColor,
                 allowDragging:      false,
@@ -1212,6 +1226,7 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
   const totalPuzzles = items.filter(it => it.guessPly !== null).length;
   const [doneCount, setDoneCount] = useState(0);
   const [revealEnd, setRevealEnd] = useState(false); // fast-forward past the puzzles
+  const [tailDone, setTailDone]   = useState(false); // tail stepped to the final move
 
   // After a move is guessed/revealed, glide to the next board in the reading view.
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -1271,7 +1286,11 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
 
   const lastGuessPly = Math.max(...items.filter(it => it.guessPly !== null).map(it => it.guessPly as number));
   const tailStart    = lastGuessPly + 1;
+  const hasTail      = tailStart < game.sans.length;
   const allDone      = doneCount >= totalPuzzles;
+  // "Played through" means every guess is done AND (if there's a tail) the
+  // reader has stepped it to the final move. Fast-forward bypasses both.
+  const summaryUnlocked = revealEnd || (allDone && (!hasTail || tailDone));
 
   return (
     <>
@@ -1311,15 +1330,21 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
         );
       })}
 
-      {tailStart < game.sans.length && (
+      {hasTail && (
         <div ref={tailRef} className="scroll-mt-4">
-          <TailCard game={game} startPly={tailStart} userColor={userColor} locked={!allDone && !revealEnd} />
+          <TailCard
+            game={game}
+            startPly={tailStart}
+            userColor={userColor}
+            locked={!allDone && !revealEnd}
+            onReachedEnd={() => setTailDone(true)}
+          />
         </div>
       )}
 
       {/* Overall summary — sealed until the game is played through (or skipped) */}
       {summary && (
-        (allDone || revealEnd)
+        summaryUnlocked
           ? <SummaryCard summary={summary} />
           : <LockedSummaryCard onReveal={() => setRevealEnd(true)} />
       )}
