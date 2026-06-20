@@ -1138,12 +1138,55 @@ function TailCard({ game, startPly, userColor, locked }: {
   );
 }
 
+// ─── Overall summary card ─────────────────────────────────────────────────────
+
+function SummaryCard({ summary }: { summary: string }) {
+  return (
+    <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
+      <div className="bg-purple-50 dark:bg-purple-900/30 px-4 py-3 border-b border-purple-200 dark:border-purple-800">
+        <span className="font-semibold text-sm text-purple-800 dark:text-purple-200">
+          ✨ Overall summary
+        </span>
+      </div>
+      <div className="p-4 space-y-3 text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
+        {summary.split('\n\n').map((para, i) => (
+          <p key={i}>{renderWithBold(para)}</p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Locked summary — stays sealed until the whole game has been played through,
+// with a fast-forward escape hatch for readers who'd rather skip ahead.
+function LockedSummaryCard({ onReveal }: { onReveal: () => void }) {
+  return (
+    <div className="border border-dashed border-purple-300 dark:border-purple-700 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+      <span className="font-semibold text-sm text-purple-600 dark:text-purple-300">
+        ✨ Overall summary
+      </span>
+      <div className="flex items-center gap-2 shrink-0">
+        <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:inline">
+          🔒 Unlocks at the end
+        </span>
+        <button
+          onClick={onReveal}
+          className="text-xs px-3 py-1.5 border border-purple-300 dark:border-purple-600 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-300 transition-colors"
+        >
+          ⏭ Skip to the end
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Game walkthrough container ───────────────────────────────────────────────
 
-export function GameWalkthrough({ pgn, sections, userColor }: {
+export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
   pgn: string;
   sections: MoveSection[];
   userColor: 'white' | 'black';
+  summary?: string;
 }) {
   const game = useMemo(() => parseGame(pgn), [pgn]);
 
@@ -1168,6 +1211,7 @@ export function GameWalkthrough({ pgn, sections, userColor }: {
 
   const totalPuzzles = items.filter(it => it.guessPly !== null).length;
   const [doneCount, setDoneCount] = useState(0);
+  const [revealEnd, setRevealEnd] = useState(false); // fast-forward past the puzzles
 
   // After a move is guessed/revealed, glide to the next board in the reading view.
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -1209,6 +1253,7 @@ export function GameWalkthrough({ pgn, sections, userColor }: {
             </div>
           </div>
         )}
+        {summary && <SummaryCard summary={summary} />}
       </>
     );
   }
@@ -1230,7 +1275,7 @@ export function GameWalkthrough({ pgn, sections, userColor }: {
 
   return (
     <>
-      <p className="text-xs text-center text-gray-500 dark:text-gray-400">
+      <p className="text-xs text-left text-gray-500 dark:text-gray-400">
         This post follows my game move by move. Wherever I paused to record my thoughts,
         you can try to guess my move — which isn&apos;t necessarily the best one! Reveal what I was
         thinking first, or guess straight away. Afterwards you&apos;ll see my own self-criticism or
@@ -1268,8 +1313,15 @@ export function GameWalkthrough({ pgn, sections, userColor }: {
 
       {tailStart < game.sans.length && (
         <div ref={tailRef} className="scroll-mt-4">
-          <TailCard game={game} startPly={tailStart} userColor={userColor} locked={!allDone} />
+          <TailCard game={game} startPly={tailStart} userColor={userColor} locked={!allDone && !revealEnd} />
         </div>
+      )}
+
+      {/* Overall summary — sealed until the game is played through (or skipped) */}
+      {summary && (
+        (allDone || revealEnd)
+          ? <SummaryCard summary={summary} />
+          : <LockedSummaryCard onReveal={() => setRevealEnd(true)} />
       )}
     </>
   );

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { MoveSection, GameWalkthrough, renderWithBold } from '@/components/blog-shared';
+import { MoveSection, GameWalkthrough } from '@/components/blog-shared';
 
 interface GameMeta {
   white: string;
@@ -133,30 +133,14 @@ export default function BlogPage() {
             </div>
 
             {/* Game walkthrough: the game is the backbone — the reader plays
-                through it from move 1, and journal entries unlock as guess
-                points along the way. */}
+                through it from move 1, journal entries unlock as guess points
+                along the way, and the overall summary unlocks at the end. */}
             <GameWalkthrough
               pgn={data.pgn}
               sections={data.sections}
               userColor={data.userColor}
+              summary={data.summary}
             />
-
-            {/* Overall summary */}
-            {data.summary && (
-              <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
-                <div className="bg-purple-50 dark:bg-purple-900/30 px-4 py-3 border-b border-purple-200 dark:border-purple-800">
-                  <span className="font-semibold text-sm text-purple-800 dark:text-purple-200">
-                    ✨ Overall Summary
-                  </span>
-                </div>
-                <div className="p-4 space-y-3 text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
-                  {data.summary.split('\n\n').map((para, i) => (
-                    <p key={i}>{renderWithBold(para)}</p>
-                  ))}
-                </div>
-              </div>
-            )}
-
           </>
         )}
       </main>

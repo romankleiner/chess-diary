@@ -6,7 +6,6 @@ import {
   MoveSection,
   QUALITY_STYLE,
   formatEval,
-  renderWithBold,
 } from '@/components/blog-shared';
 
 interface BlogPostModalProps {
@@ -276,27 +275,9 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
           )}
 
           {status === 'done' && (
-            <>
-              {/* Same walkthrough the public /blog page renders, so the
-                  preview matches what readers will see. */}
-              <GameWalkthrough pgn={pgn} sections={sections} userColor={userColor} />
-
-              {summary && (
-                <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
-                  <div className="bg-purple-50 dark:bg-purple-900/30 px-4 py-2 border-b border-purple-200 dark:border-purple-800">
-                    <span className="font-semibold text-sm text-purple-800 dark:text-purple-200">
-                      ✨ Overall Summary
-                    </span>
-                  </div>
-                  <div className="p-4 space-y-3 text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
-                    {summary.split('\n\n').map((para, i) => (
-                      <p key={i}>{renderWithBold(para)}</p>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-            </>
+            /* Same walkthrough (and gated summary) the public /blog page
+               renders, so the preview matches exactly what readers will see. */
+            <GameWalkthrough pgn={pgn} sections={sections} userColor={userColor} summary={summary} />
           )}
         </div>
 
