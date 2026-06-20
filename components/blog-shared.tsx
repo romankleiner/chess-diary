@@ -21,7 +21,8 @@ const Chessboard = dynamic(
 export interface EngineEval {
   moveQuality: string;
   centipawnLoss: number;
-  evaluation: number; // white-POV, pawn units
+  evaluation: number;          // white-POV, pawn units
+  bestMoveSan?: string | null; // engine's preferred move, when different from played
 }
 
 export interface MoveSection {
@@ -712,9 +713,7 @@ function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
   const quality = QUALITY_STYLE[engineEval.moveQuality] ?? null;
   const lost    = engineEval.centipawnLoss;
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-2">
-      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">⚙️ Engine check</p>
-
+    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-2.5">
       <div className="flex items-baseline justify-between gap-3 text-base">
         <span className="text-gray-600 dark:text-gray-400">Evaluation of the position</span>
         <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
@@ -722,7 +721,16 @@ function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
         </span>
       </div>
 
-      <div className="flex items-baseline justify-between gap-3 text-base border-t border-gray-200 dark:border-gray-700 pt-2">
+      {engineEval.bestMoveSan && (
+        <div className="flex items-baseline justify-between gap-3 text-base border-t border-gray-200 dark:border-gray-700 pt-2.5">
+          <span className="text-gray-600 dark:text-gray-400">Engine&apos;s best move</span>
+          <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
+            {engineEval.bestMoveSan}
+          </span>
+        </div>
+      )}
+
+      <div className="flex items-baseline justify-between gap-3 text-base border-t border-gray-200 dark:border-gray-700 pt-2.5">
         <span className="text-gray-600 dark:text-gray-400">My move vs. the engine&apos;s best</span>
         {lost > 0 ? (
           <span className={`font-mono font-semibold ${quality?.color ?? 'text-gray-700 dark:text-gray-300'}`}>
@@ -755,7 +763,7 @@ function SectionBody({ section, phase, onShowAnalysis }: {
         <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
           💭 My thinking
         </p>
-        <div className="text-base text-gray-800 dark:text-gray-200 leading-relaxed space-y-3">
+        <div className="text-base text-gray-800 dark:text-gray-200 leading-relaxed space-y-4">
           {renderProse(section.thinking)}
         </div>
         {section.moveNotation && phase === 'solved_blind' && (
@@ -798,7 +806,7 @@ function SectionBody({ section, phase, onShowAnalysis }: {
               <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
                 📝 My post-game analysis
               </p>
-              <div className="text-base text-gray-700 dark:text-gray-300 leading-relaxed space-y-3">
+              <div className="text-base text-gray-700 dark:text-gray-300 leading-relaxed space-y-4">
                 {renderProse(section.postReview)}
               </div>
             </div>
@@ -815,13 +823,17 @@ function SectionBody({ section, phase, onShowAnalysis }: {
 // guessPly. Resolving (correct guess or give-up) reveals the entry content and
 // unlocks the next card via onResolved.
 
-function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResolved }: {
+function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResolved, contentRef }: {
   section: MoveSection;
   game: ParsedGame;
   startPly: number;
   guessPly: number;
   state: 'locked' | 'active' | 'done';
   onResolved: () => void;
+  /** Container holding the engine eval / thinking / analysis blocks — the
+   *  walkthrough scrolls here after a guess resolves so the just-revealed
+   *  content is visible (rather than jumping past it to the next card). */
+  contentRef?: React.Ref<HTMLDivElement>;
 }) {
   const [phase, setPhase]             = useState<SectionPhase>('puzzle');
   const [viewIdx, setViewIdx]         = useState(startPly);
@@ -1019,15 +1031,21 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
         </span>
       </div>
 
-      <div className="p-4 space-y-3">
+      <div className="p-4 space-y-4">
 
         {/* ── Hints / prompt ───────────────────────────────────────── */}
-        {!resolved && viewIdx < guessPly && (
-          <p className="text-sm text-center text-gray-500 dark:text-gray-400">
-            ▶ Play through the moves to reach my next thought
-            {' '}({guessPly - viewIdx} {guessPly - viewIdx === 1 ? 'move' : 'moves'} to go)
-          </p>
-        )}
+        {!resolved && viewIdx < guessPly && (() => {
+          const fullmove = Math.floor(guessPly / 2) + 1;
+          const target   = guessPly % 2 === 0 ? `${fullmove}.` : `${fullmove}...`;
+          return (
+            <p className="text-sm text-center text-gray-500 dark:text-gray-400">
+              ▶ Play through to my move at{' '}
+              <span className="font-mono font-medium text-gray-700 dark:text-gray-300">
+                {target}
+              </span>
+            </p>
+          );
+        })()}
         {atPuzzle && (
           <div className="text-center space-y-0.5">
             {section.opponentLastMove && (
@@ -1115,11 +1133,17 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
           </div>
         )}
 
-        <SectionBody
-          section={section}
-          phase={phase}
-          onShowAnalysis={() => setPhase('complete')}
-        />
+        {/* The post-guess reveals (engine eval, thinking, AI commentary,
+            post-game review) live here. We hand the parent a ref to this
+            wrapper so the walkthrough's smooth scroll lands inside the
+            current card rather than jumping past it. */}
+        <div ref={contentRef} className="space-y-4 scroll-mt-4">
+          <SectionBody
+            section={section}
+            phase={phase}
+            onShowAnalysis={() => setPhase('complete')}
+          />
+        </div>
       </div>
     </div>
   );
@@ -1186,7 +1210,7 @@ function SummaryCard({ summary }: { summary: string }) {
           ✨ Overall summary
         </span>
       </div>
-      <div className="p-4 space-y-3 text-base text-gray-800 dark:text-gray-200 leading-relaxed">
+      <div className="p-4 space-y-4 text-base text-gray-800 dark:text-gray-200 leading-relaxed">
         {renderProse(summary)}
       </div>
     </div>
@@ -1250,23 +1274,26 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
   const [revealEnd, setRevealEnd] = useState(false); // fast-forward past the puzzles
   const [tailDone, setTailDone]   = useState(false); // tail stepped to the final move
 
-  // After a move is guessed/revealed, glide to the next board in the reading view.
-  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const tailRef  = useRef<HTMLDivElement | null>(null);
-  const isFirst  = useRef(true);
+  // After a guess resolves, glide to the just-revealed engine / commentary
+  // block on the *current* card — not the next card — so AI comments, the
+  // engine eval, and the post-game review aren't scrolled past.
+  const contentRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const isFirst     = useRef(true);
   useEffect(() => {
     if (isFirst.current) { isFirst.current = false; return; }
     if (doneCount === 0) return;
-    // The card whose unlock order === doneCount is the one that just opened up.
-    let order = 0, targetIdx = -1;
+    // The card whose unlock order === doneCount-1 is the one that just resolved.
+    let order = 0, resolvedIdx = -1;
     for (let i = 0; i < items.length; i++) {
       if (items[i].guessPly !== null) {
-        if (order === doneCount) { targetIdx = i; break; }
+        if (order === doneCount - 1) { resolvedIdx = i; break; }
         order++;
       }
     }
-    const el = targetIdx >= 0 ? cardRefs.current[targetIdx] : tailRef.current;
-    const t = setTimeout(() => el?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350);
+    const el = resolvedIdx >= 0 ? contentRefs.current[resolvedIdx] : null;
+    // block:'nearest' = "only scroll if it isn't already visible" — so a card
+    // already in view doesn't move at all, and a card half-off-screen pans in.
+    const t = setTimeout(() => el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneCount]);
@@ -1344,42 +1371,35 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
       )}
 
       {items.map((it, i) => {
-        let inner: React.ReactNode;
         if (it.guessPly !== null) {
           const order = prefix[i];
           const state = order > doneCount ? 'locked' : order < doneCount ? 'done' : 'active';
-          inner = (
+          return (
             <WalkthroughMoveCard
+              key={i}
               section={it.section}
               game={game}
               startPly={it.startPly}
               guessPly={it.guessPly}
               state={state}
               onResolved={() => setDoneCount(c => c + 1)}
+              contentRef={el => { contentRefs.current[i] = el; }}
             />
           );
-        } else {
-          inner = prefix[i] <= doneCount
-            ? <MoveSectionCard section={it.section} />
-            : <LockedCard title={maskedHeader(it.section)} />;
         }
-        return (
-          <div key={i} ref={el => { cardRefs.current[i] = el; }} className="scroll-mt-4">
-            {inner}
-          </div>
-        );
+        return prefix[i] <= doneCount
+          ? <MoveSectionCard key={i} section={it.section} />
+          : <LockedCard key={i} title={maskedHeader(it.section)} />;
       })}
 
       {hasTail && (
-        <div ref={tailRef} className="scroll-mt-4">
-          <TailCard
-            game={game}
-            startPly={tailStart}
-            userColor={userColor}
-            locked={!allDone && !revealEnd}
-            onReachedEnd={() => setTailDone(true)}
-          />
-        </div>
+        <TailCard
+          game={game}
+          startPly={tailStart}
+          userColor={userColor}
+          locked={!allDone && !revealEnd}
+          onReachedEnd={() => setTailDone(true)}
+        />
       )}
 
       {/* Overall summary — sealed until the game is played through (or skipped) */}

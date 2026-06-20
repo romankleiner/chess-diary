@@ -233,6 +233,47 @@ describe('POST /api/games/[id]/blog-post — engineEval', () => {
     const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
     expect(sections[0].engineEval).toBeNull();
   });
+
+  it('converts UCI bestMove to SAN when the user did not play the engine top choice', async () => {
+    // gameA.pgn = '1. e4 e5 2. Nf3 Nc6'. moveEntry: moveNumber=2, moveNotation='Nf3'.
+    // Pretend engine preferred Nc3 (UCI: b1c3) and the user lost 30 cp by playing Nf3.
+    const customAnalysis = {
+      ...analysisA,
+      moves: [
+        { moveNumber: 2, color: 'white', move: 'Nf3', centipawnLoss: 30, moveQuality: 'good', evaluation: 0.1, bestMove: 'b1c3' },
+      ],
+    };
+    mockGetAnalysis.mockResolvedValue(customAnalysis);
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval.bestMoveSan).toBe('Nc3');
+  });
+
+  it('omits bestMoveSan when the user already played the engine top choice', async () => {
+    const customAnalysis = {
+      ...analysisA,
+      moves: [
+        { moveNumber: 2, color: 'white', move: 'Nf3', centipawnLoss: 0, moveQuality: 'excellent', evaluation: 0.3, bestMove: 'g1f3' },
+      ],
+    };
+    mockGetAnalysis.mockResolvedValue(customAnalysis);
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval.bestMoveSan).toBeNull();
+  });
+
+  it('leaves bestMoveSan null when analysis omits a bestMove', async () => {
+    const customAnalysis = {
+      ...analysisA,
+      moves: [
+        { moveNumber: 2, color: 'white', move: 'Nf3', centipawnLoss: 30, moveQuality: 'good', evaluation: 0.1 /* no bestMove */ },
+      ],
+    };
+    mockGetAnalysis.mockResolvedValue(customAnalysis);
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval.bestMoveSan).toBeNull();
+  });
 });
 
 // ─── aiReview and postReview passthrough ──────────────────────────────────────

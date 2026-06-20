@@ -19,7 +19,8 @@ async function resolveBlogOwner(gameId: string): Promise<string | null> {
 interface EngineEval {
   moveQuality: string;
   centipawnLoss: number;
-  evaluation: number; // white-POV, pawn units
+  evaluation: number;        // white-POV, pawn units
+  bestMoveSan: string | null; // engine's preferred move at the position, when different
 }
 
 interface MoveSection {
@@ -93,6 +94,7 @@ export async function POST(
     // (used by the client-side game walkthrough).
     let pgnSans: string[] = [];
     let pgnFenKeys: string[] = []; // pgnFenKeys[p] = position before ply p
+    let pgnFens: string[] = [];     // full FENs for chess.js parsing
     try {
       if (game.pgn) {
         const chess = new Chess();
@@ -100,6 +102,7 @@ export async function POST(
         const verbose = chess.history({ verbose: true });
         pgnSans    = verbose.map((m: any) => m.san as string);
         pgnFenKeys = verbose.map((m: any) => fenKey(m.before as string));
+        pgnFens    = verbose.map((m: any) => m.before as string);
       }
     } catch { /* unparseable PGN → sections stay unanchored */ }
 
@@ -175,10 +178,30 @@ export async function POST(
               normSan(m.move) === normSan(playedSan)
           );
           if (hit) {
+            // Convert UCI bestMove ("e2e4", "g1f3", "e7e8q") to SAN — but only
+            // when the user did NOT already play the best move (centipawnLoss > 0).
+            let bestMoveSan: string | null = null;
+            if (
+              hit.centipawnLoss > 0 &&
+              typeof hit.bestMove === 'string' &&
+              plyIndex !== null &&
+              pgnFens[plyIndex]
+            ) {
+              const uci  = hit.bestMove;
+              const from = uci.slice(0, 2);
+              const to   = uci.slice(2, 4);
+              const promo = uci.length === 5 ? uci.slice(4, 5) : undefined;
+              try {
+                const c = new Chess(pgnFens[plyIndex]);
+                const m = c.move({ from, to, ...(promo && { promotion: promo as any }) });
+                if (m) bestMoveSan = m.san;
+              } catch { /* malformed bestMove → omit */ }
+            }
             engineEval = {
               moveQuality:   hit.moveQuality,
               centipawnLoss: hit.centipawnLoss,
               evaluation:    hit.evaluation,
+              bestMoveSan,
             };
           }
         }
