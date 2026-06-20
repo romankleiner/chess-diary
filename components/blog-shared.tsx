@@ -76,6 +76,30 @@ export function renderWithBold(text: string): React.ReactNode {
   );
 }
 
+// ─── Prose renderer ───────────────────────────────────────────────────────────
+// Splits text into paragraphs on blank lines and preserves single line breaks
+// within a paragraph. Each segment also runs through renderWithBold so **foo**
+// markers still work. Use this anywhere a journal entry or AI summary is
+// rendered, so the author's intended formatting survives.
+
+export function renderProse(text: string, paragraphClass?: string): React.ReactNode {
+  const cls = paragraphClass ?? '';
+  const paragraphs = text.split(/\n{2,}/);
+  return paragraphs.map((para, pi) => {
+    const lines = para.split('\n');
+    return (
+      <p key={pi} className={cls}>
+        {lines.map((line, li) => (
+          <React.Fragment key={li}>
+            {renderWithBold(line)}
+            {li < lines.length - 1 && <br />}
+          </React.Fragment>
+        ))}
+      </p>
+    );
+  });
+}
+
 // ─── Inline PGN navigator ─────────────────────────────────────────────────────
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKB1R w KQkq - 0 1';
@@ -603,8 +627,8 @@ function maskedHeader(section: MoveSection): string {
 function LockedCard({ title }: { title: string }) {
   return (
     <div className="border border-dashed border-gray-300 dark:border-gray-600 rounded-lg px-4 py-3 flex items-center justify-between opacity-70">
-      <span className="font-semibold text-sm text-gray-500 dark:text-gray-400">{title}</span>
-      <span className="text-xs text-gray-400 dark:text-gray-500">🔒 Keep playing to unlock</span>
+      <span className="font-semibold text-base text-gray-500 dark:text-gray-400">{title}</span>
+      <span className="text-sm text-gray-400 dark:text-gray-500">🔒 Keep playing to unlock</span>
     </div>
   );
 }
@@ -688,17 +712,17 @@ function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
   const quality = QUALITY_STYLE[engineEval.moveQuality] ?? null;
   const lost    = engineEval.centipawnLoss;
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-1.5">
-      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">⚙️ Engine check</p>
+    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-2">
+      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">⚙️ Engine check</p>
 
-      <div className="flex items-baseline justify-between gap-3 text-sm">
+      <div className="flex items-baseline justify-between gap-3 text-base">
         <span className="text-gray-600 dark:text-gray-400">Evaluation of the position</span>
         <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
           {formatEval(engineEval.evaluation)}
         </span>
       </div>
 
-      <div className="flex items-baseline justify-between gap-3 text-sm border-t border-gray-200 dark:border-gray-700 pt-1.5">
+      <div className="flex items-baseline justify-between gap-3 text-base border-t border-gray-200 dark:border-gray-700 pt-2">
         <span className="text-gray-600 dark:text-gray-400">My move vs. the engine&apos;s best</span>
         {lost > 0 ? (
           <span className={`font-mono font-semibold ${quality?.color ?? 'text-gray-700 dark:text-gray-300'}`}>
@@ -711,7 +735,7 @@ function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
         )}
       </div>
       {quality && lost > 0 && (
-        <p className={`text-[11px] ${quality.color} text-right`}>{quality.label}</p>
+        <p className={`text-xs ${quality.color} text-right`}>{quality.label}</p>
       )}
     </div>
   );
@@ -727,15 +751,15 @@ function SectionBody({ section, phase, onShowAnalysis }: {
   const resolved = phase === 'solved_blind' || phase === 'complete';
   return (
     <>
-      <div>
-        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
           💭 My thinking
         </p>
-        <p className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
-          {section.thinking}
-        </p>
+        <div className="text-base text-gray-800 dark:text-gray-200 leading-relaxed space-y-3">
+          {renderProse(section.thinking)}
+        </div>
         {section.moveNotation && phase === 'solved_blind' && (
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Move played:{' '}
             <span className="font-mono font-medium text-gray-700 dark:text-gray-300">
               {section.moveNotation}
@@ -750,7 +774,7 @@ function SectionBody({ section, phase, onShowAnalysis }: {
       {phase === 'solved_blind' && (
         <button
           onClick={onShowAnalysis}
-          className="text-xs px-3 py-1.5 border border-amber-300 dark:border-amber-600 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/30 text-amber-700 dark:text-amber-300 transition-colors"
+          className="text-sm px-3 py-1.5 border border-amber-300 dark:border-amber-600 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/30 text-amber-700 dark:text-amber-300 transition-colors"
         >
           📊 Show post-game analysis
         </button>
@@ -759,24 +783,24 @@ function SectionBody({ section, phase, onShowAnalysis }: {
       {phase === 'complete' && (
         <>
           {section.aiReview && (
-            <div>
-              <p className="text-xs font-medium text-cyan-600 dark:text-cyan-400 mb-1">
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium text-cyan-600 dark:text-cyan-400">
                 🤖 AI analysis
               </p>
-              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed italic">
-                {section.aiReview}
-              </p>
+              <div className="text-base text-gray-700 dark:text-gray-300 leading-relaxed italic space-y-3">
+                {renderProse(section.aiReview)}
+              </div>
             </div>
           )}
 
           {section.postReview && (
-            <div>
-              <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-0.5">
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
                 📝 My post-game analysis
               </p>
-              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-                {section.postReview}
-              </p>
+              <div className="text-base text-gray-700 dark:text-gray-300 leading-relaxed space-y-3">
+                {renderProse(section.postReview)}
+              </div>
             </div>
           )}
         </>
@@ -983,11 +1007,11 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
 
       {/* ── Header ──────────────────────────────────────────────────── */}
-      <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
-        <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
+      <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2.5 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
+        <span className="font-semibold text-base text-gray-800 dark:text-gray-200">
           {resolved ? section.header : maskedHeader(section)}
         </span>
-        <span className="text-xs text-gray-400">
+        <span className="text-sm text-gray-400">
           {new Date(section.timestamp).toLocaleString([], {
             month: 'short', day: 'numeric',
             hour: '2-digit', minute: '2-digit',
@@ -999,7 +1023,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
 
         {/* ── Hints / prompt ───────────────────────────────────────── */}
         {!resolved && viewIdx < guessPly && (
-          <p className="text-xs text-center text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-center text-gray-500 dark:text-gray-400">
             ▶ Play through the moves to reach my next thought
             {' '}({guessPly - viewIdx} {guessPly - viewIdx === 1 ? 'move' : 'moves'} to go)
           </p>
@@ -1007,12 +1031,12 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
         {atPuzzle && (
           <div className="text-center space-y-0.5">
             {section.opponentLastMove && (
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 Opponent played{' '}
                 <span className="font-mono font-medium">{section.opponentLastMove}</span>
               </p>
             )}
-            <p className="text-sm font-medium text-purple-700 dark:text-purple-300">
+            <p className="text-base font-medium text-purple-700 dark:text-purple-300">
               🎯 Find my move on the board
             </p>
           </div>
@@ -1125,8 +1149,8 @@ function TailCard({ game, startPly, userColor, locked, onReachedEnd }: {
 
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2 border-b border-gray-200 dark:border-gray-600">
-        <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
+      <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2.5 border-b border-gray-200 dark:border-gray-600">
+        <span className="font-semibold text-base text-gray-800 dark:text-gray-200">
           ♟ The rest of the game
         </span>
       </div>
@@ -1158,14 +1182,12 @@ function SummaryCard({ summary }: { summary: string }) {
   return (
     <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
       <div className="bg-purple-50 dark:bg-purple-900/30 px-4 py-3 border-b border-purple-200 dark:border-purple-800">
-        <span className="font-semibold text-sm text-purple-800 dark:text-purple-200">
+        <span className="font-semibold text-base text-purple-800 dark:text-purple-200">
           ✨ Overall summary
         </span>
       </div>
-      <div className="p-4 space-y-3 text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
-        {summary.split('\n\n').map((para, i) => (
-          <p key={i}>{renderWithBold(para)}</p>
-        ))}
+      <div className="p-4 space-y-3 text-base text-gray-800 dark:text-gray-200 leading-relaxed">
+        {renderProse(summary)}
       </div>
     </div>
   );
@@ -1176,16 +1198,16 @@ function SummaryCard({ summary }: { summary: string }) {
 function LockedSummaryCard({ onReveal }: { onReveal: () => void }) {
   return (
     <div className="border border-dashed border-purple-300 dark:border-purple-700 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
-      <span className="font-semibold text-sm text-purple-600 dark:text-purple-300">
+      <span className="font-semibold text-base text-purple-600 dark:text-purple-300">
         ✨ Overall summary
       </span>
       <div className="flex items-center gap-2 shrink-0">
-        <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:inline">
+        <span className="text-sm text-gray-400 dark:text-gray-500 hidden sm:inline">
           🔒 Unlocks at the end
         </span>
         <button
           onClick={onReveal}
-          className="text-xs px-3 py-1.5 border border-purple-300 dark:border-purple-600 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-300 transition-colors"
+          className="text-sm px-3 py-1.5 border border-purple-300 dark:border-purple-600 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/30 text-purple-700 dark:text-purple-300 transition-colors"
         >
           ⏭ Skip to the end
         </button>
@@ -1294,14 +1316,32 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
 
   return (
     <>
-      <p className="text-xs text-left text-gray-500 dark:text-gray-400">
+      <p className="text-base text-left text-gray-600 dark:text-gray-300 leading-relaxed">
         This post follows my game move by move. Wherever I paused to record my thoughts,
         you can try to guess my move — which isn&apos;t necessarily the best one! Reveal what I was
         thinking first, or guess straight away. Afterwards you&apos;ll see my own self-criticism or
         praise from when I reviewed the moment with an engine — and sometimes AI commentary too,
         depending on whether it was any good.
-        <span className="ml-1 font-medium tabular-nums">{doneCount}/{totalPuzzles} unlocked</span>
       </p>
+
+      {/* Sticky progress chip — sits to the right of the main column on wide
+          screens, and at the top-right on narrow ones. Hides once everything
+          (game included) is open so it doesn't linger over the summary. */}
+      {!summaryUnlocked && (
+        <div
+          className="fixed z-40 top-3 right-3 sm:top-1/3 sm:right-4 md:right-6 lg:right-10
+                     bg-white dark:bg-gray-800 border border-purple-200 dark:border-purple-700
+                     rounded-full shadow-md px-3.5 py-2 flex items-center gap-2"
+          aria-live="polite"
+        >
+          <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            Unlocked
+          </span>
+          <span className="text-base font-semibold tabular-nums text-purple-700 dark:text-purple-300">
+            {doneCount}/{totalPuzzles}
+          </span>
+        </div>
+      )}
 
       {items.map((it, i) => {
         let inner: React.ReactNode;

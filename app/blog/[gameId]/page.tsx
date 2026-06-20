@@ -122,12 +122,12 @@ export default function BlogPage() {
             {/* Game header */}
             <div className="space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
                   {data.gameMeta.white} vs {data.gameMeta.black}
                 </h1>
                 <ResultBadge result={data.gameMeta.result} />
               </div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-base text-gray-500 dark:text-gray-400">
                 {data.gameMeta.date}
               </p>
             </div>
