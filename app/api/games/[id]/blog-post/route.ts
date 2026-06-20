@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import { Chess } from 'chess.js';
-import { getGame, getJournal, getAnalysis, getSetting } from '@/lib/db';
+import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
+
+// Resolve whose game this is without requiring the viewer to be logged in.
+// A published (shared) game is readable by anyone — including signed-in users
+// who aren't the author. An unpublished game is visible only to its author
+// via their session, so they can preview a draft before sharing.
+async function resolveBlogOwner(gameId: string): Promise<string | null> {
+  const publishedOwner = await getBlogOwner(gameId);
+  if (publishedOwner) return publishedOwner;
+  const { userId } = await auth();
+  return userId ?? null;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,11 +57,19 @@ export async function POST(
   try {
     const { id: gameId } = await params;
 
+    const ownerId = await resolveBlogOwner(gameId);
+    if (!ownerId) {
+      return NextResponse.json(
+        { error: 'This blog post hasn’t been shared by its author.' },
+        { status: 404 }
+      );
+    }
+
     const [game, journalEntries, analysis, username] = await Promise.all([
-      getGame(gameId),
-      getJournal(),
-      getAnalysis(gameId),
-      getSetting('chesscom_username'),
+      getGame(gameId, ownerId),
+      getJournal(ownerId),
+      getAnalysis(gameId, ownerId),
+      getSetting('chesscom_username', ownerId),
     ]);
 
     if (!game) {

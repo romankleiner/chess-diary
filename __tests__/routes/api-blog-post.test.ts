@@ -7,15 +7,19 @@ vi.mock('@/lib/db', () => ({
   getJournal: vi.fn(),
   getAnalysis: vi.fn(),
   getSetting: vi.fn(),
+  getBlogOwner: vi.fn(),
 }));
 
 import { POST } from '@/app/api/games/[id]/blog-post/route';
-import { getGame, getJournal, getAnalysis, getSetting } from '@/lib/db';
+import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
+import { auth } from '@clerk/nextjs/server';
 
-const mockGetGame     = vi.mocked(getGame);
-const mockGetJournal  = vi.mocked(getJournal);
-const mockGetAnalysis = vi.mocked(getAnalysis);
-const mockGetSetting  = vi.mocked(getSetting);
+const mockGetGame      = vi.mocked(getGame);
+const mockGetJournal   = vi.mocked(getJournal);
+const mockGetAnalysis  = vi.mocked(getAnalysis);
+const mockGetSetting   = vi.mocked(getSetting);
+const mockGetBlogOwner = vi.mocked(getBlogOwner);
+const mockAuth         = vi.mocked(auth);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +39,9 @@ beforeEach(() => {
   });
   mockGetJournal.mockResolvedValue([]);
   mockGetAnalysis.mockResolvedValue(null);
+  mockGetBlogOwner.mockResolvedValue(null); // unpublished by default
+  // Default: signed-in author (the global mock-clerk stub may be cleared above)
+  mockAuth.mockResolvedValue({ userId: 'test-user-123' } as any);
 });
 
 // ─── 404 on missing game ──────────────────────────────────────────────────────
@@ -45,6 +52,50 @@ describe('POST /api/games/[id]/blog-post — 404', () => {
     const res = await POST(makeReq('ghost-id'), params('ghost-id'));
     expect(res.status).toBe(404);
     expect((await res.json()).error).toMatch(/not found/i);
+  });
+});
+
+// ─── Anonymous / shared access ────────────────────────────────────────────────
+
+describe('POST /api/games/[id]/blog-post — anonymous access', () => {
+  it('returns 404 for an anonymous visitor when the game is not shared', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as any);
+    mockGetBlogOwner.mockResolvedValue(null);
+    mockGetGame.mockResolvedValue(gameA);
+    const res = await POST(makeReq(), params(gameA.id));
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toMatch(/shared/i);
+    expect(mockGetGame).not.toHaveBeenCalled(); // bails out before touching data
+  });
+
+  it('serves a shared game to an anonymous visitor using the published owner', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as any);
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetGame.mockResolvedValue(gameA);
+    mockGetJournal.mockResolvedValue([thoughtEntry]);
+
+    const res = await POST(makeReq(), params(gameA.id));
+    expect(res.status).toBe(200);
+    // db reads are scoped to the published owner, not the (absent) viewer
+    expect(mockGetGame).toHaveBeenCalledWith(gameA.id, 'owner-abc');
+    expect(mockGetJournal).toHaveBeenCalledWith('owner-abc');
+  });
+
+  it('a published game takes precedence over the viewer session', async () => {
+    // A signed-in user who is NOT the author still sees the published owner's game
+    mockAuth.mockResolvedValue({ userId: 'someone-else' } as any);
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetGame.mockResolvedValue(gameA);
+    await POST(makeReq(), params(gameA.id));
+    expect(mockGetGame).toHaveBeenCalledWith(gameA.id, 'owner-abc');
+  });
+
+  it('an unpublished game falls back to the author session for previews', async () => {
+    mockGetBlogOwner.mockResolvedValue(null);
+    mockAuth.mockResolvedValue({ userId: 'author-xyz' } as any);
+    mockGetGame.mockResolvedValue(gameA);
+    await POST(makeReq(), params(gameA.id));
+    expect(mockGetGame).toHaveBeenCalledWith(gameA.id, 'author-xyz');
   });
 });
 

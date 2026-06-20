@@ -219,6 +219,39 @@ export async function saveSettings(settings: Record<string, string>, userId?: st
 }
 
 // ============================================================
+// Public blog index — Redis Hash: chess-diary:public:blog
+//   field = gameId, value = owner userId
+//
+// Games are private by default. Clicking "Share" publishes a game's blog
+// here, which is the only way an unauthenticated visitor can resolve its
+// owner (and therefore read it). Keyed by gameId globally: if two users
+// ever share the same chess.com game id, the most recent publisher wins —
+// an acceptable edge case for this single-user app.
+// ============================================================
+
+const PUBLIC_BLOG_KEY = 'chess-diary:public:blog';
+
+export async function publishBlog(gameId: string, userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  await client.hset(PUBLIC_BLOG_KEY, gameId, uid);
+}
+
+// Public read — no auth, by design.
+export async function getBlogOwner(gameId: string): Promise<string | null> {
+  const client = getRedisClient();
+  return client.hget(PUBLIC_BLOG_KEY, gameId);
+}
+
+export async function unpublishBlog(gameId: string, userId?: string): Promise<void> {
+  const uid = userId || await getUserId();
+  const client = getRedisClient();
+  // Only the publisher may un-share their own game.
+  const owner = await client.hget(PUBLIC_BLOG_KEY, gameId);
+  if (owner === uid) await client.hdel(PUBLIC_BLOG_KEY, gameId);
+}
+
+// ============================================================
 // Progress — per-game keys with TTL (unchanged from task 3)
 // ============================================================
 

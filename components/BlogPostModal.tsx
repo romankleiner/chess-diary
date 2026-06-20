@@ -156,6 +156,8 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
   const [error, setError]         = useState('');
   const [copied, setCopied]         = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [sharing, setSharing]       = useState(false);
+  const [shareError, setShareError] = useState(false);
 
   const generate = async () => {
     setStatus('generating');
@@ -207,6 +209,20 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
 
   const handleShareLink = async () => {
     const url = `${window.location.origin}/blog/${gameId}`;
+    setSharing(true);
+    setShareError(false);
+
+    // Publish first — without this the link 404s for anyone not signed in.
+    try {
+      const res = await fetch(`/api/games/${gameId}/share`, { method: 'POST' });
+      if (!res.ok) throw new Error('publish failed');
+    } catch {
+      setShareError(true);
+      setSharing(false);
+      return;
+    }
+
+    setSharing(false);
     try {
       await navigator.clipboard.writeText(url);
       setLinkCopied(true);
@@ -286,12 +302,18 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
 
         {/* ── Footer ─────────────────────────────────────────────────── */}
         {status === 'done' && (
-          <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 flex-wrap">
+          <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end items-center gap-2 flex-wrap">
+            {shareError && (
+              <span className="text-xs text-red-600 dark:text-red-400 mr-auto">
+                Couldn’t publish the link — please try again.
+              </span>
+            )}
             <button
               onClick={handleShareLink}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-lg transition-colors"
+              disabled={sharing}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors"
             >
-              {linkCopied ? '✓ Link copied!' : '🔗 Share link'}
+              {sharing ? 'Publishing…' : linkCopied ? '✓ Link copied!' : '🔗 Share link'}
             </button>
             <button
               onClick={handleCopy}
