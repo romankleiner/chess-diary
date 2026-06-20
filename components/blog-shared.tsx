@@ -1159,8 +1159,11 @@ export function GameWalkthrough({ pgn, sections, userColor }: {
   return (
     <>
       <p className="text-xs text-center text-gray-500 dark:text-gray-400">
-        This post follows the game move by move. Step through each board — when you reach one
-        of my journal moments, guess what I played to unlock my thoughts.
+        This post follows my game move by move. Wherever I paused to record my thoughts,
+        you can try to guess my move — which isn&apos;t necessarily the best one! Reveal what I was
+        thinking first, or guess straight away. Afterwards you&apos;ll see my own self-criticism or
+        praise from when I reviewed the moment with an engine — and sometimes AI commentary too,
+        depending on whether it was any good.
         <span className="ml-1 font-medium tabular-nums">{doneCount}/{totalPuzzles} unlocked</span>
       </p>
 
