@@ -838,8 +838,11 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   const [phase, setPhase]             = useState<SectionPhase>('puzzle');
   const [viewIdx, setViewIdx]         = useState(startPly);
   const [tempFen, setTempFen]         = useState<string | null>(null);
-  const [feedback, setFeedback]       = useState<'correct' | 'wrong' | null>(null);
-  const [resolvedHow, setResolvedHow] = useState<'guessed' | 'revealed' | null>(null);
+  const [feedback, setFeedback]       = useState<'correct' | 'best' | 'wrong' | null>(null);
+  // 'guessed'       — reader played the author's actual move
+  // 'guessed_best'  — reader played the engine's top move (the author didn't)
+  // 'revealed'      — reader gave up
+  const [resolvedHow, setResolvedHow] = useState<'guessed' | 'guessed_best' | 'revealed' | null>(null);
 
   const [selectedSquare, setSelectedSquare]   = useState<string | null>(null);
   const [selHighlights, setSelHighlights]     = useState<Record<string, React.CSSProperties>>({});
@@ -863,12 +866,18 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   const expectedSan = game.sans[guessPly];
   const boardFen    = tempFen ?? game.fens[viewIdx];
 
-  // Green (guessed) / amber (revealed) highlight on the journal move, shown
-  // only while viewing the position right after it.
+  // Resolved-move highlight on the squares of the author's move:
+  //   green  — reader played the same move
+  //   blue   — reader played the engine's top move (better than what I played)
+  //   amber  — reader gave up
+  // Shown only while the board is at the position right after the move.
   const resolvedHl: Record<string, React.CSSProperties> = {};
   if (resolved && viewIdx === guessPly + 1 && !tempFen) {
     const { from, to } = game.moves[guessPly];
-    const color = resolvedHow === 'guessed' ? 'rgba(80, 200, 100, 0.55)' : 'rgba(255, 200, 60, 0.5)';
+    const color =
+      resolvedHow === 'guessed'      ? 'rgba(80, 200, 100, 0.55)' :
+      resolvedHow === 'guessed_best' ? 'rgba(96, 165, 250, 0.55)' :
+                                       'rgba(255, 200, 60, 0.50)';
     resolvedHl[from] = { backgroundColor: color };
     resolvedHl[to]   = { backgroundColor: color };
   }
@@ -919,9 +928,22 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       move = chess.move({ from, to, promotion: 'q' });
       if (!move) return 'illegal';
 
-      if (normSan(move.san) === normSan(expectedSan)) {
+      const tried   = normSan(move.san);
+      const bestSan = section.engineEval?.bestMoveSan ?? null;
+
+      if (tried === normSan(expectedSan)) {
         setFeedback('correct');
         resolve('guessed', phase === 'puzzle' ? 'solved_blind' : 'complete');
+        return 'correct';
+      }
+      // The engine preferred something different from what the author played,
+      // and the reader found it — accept it and commend them. Treated like a
+      // correct guess for unlocking, but the banner explains they out-played
+      // the author. The board still snaps to the author's move position so
+      // the game can continue from the actual line.
+      if (bestSan && tried === normSan(bestSan)) {
+        setFeedback('best');
+        resolve('guessed_best', phase === 'puzzle' ? 'solved_blind' : 'complete');
         return 'correct';
       }
       // Wrong — show the attempted move briefly in red, then revert
@@ -1096,12 +1118,26 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
 
         {/* ── Feedback banner ──────────────────────────────────────── */}
         {feedback === 'correct' && (
-          <p className="text-xs text-green-600 dark:text-green-400 font-medium">
+          <p className="text-sm text-green-600 dark:text-green-400 font-medium">
             ✓ Correct — that&apos;s the move I played!
           </p>
         )}
+        {feedback === 'best' && (
+          <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+            ⭐ Even better — you found the engine&apos;s top move
+            {section.engineEval?.bestMoveSan && (
+              <>{' '}(<span className="font-mono">{section.engineEval.bestMoveSan}</span>)</>
+            )}!
+            {section.moveNotation && (
+              <span className="font-normal text-gray-600 dark:text-gray-400">
+                {' '}I played{' '}
+                <span className="font-mono">{section.moveNotation}</span> here.
+              </span>
+            )}
+          </p>
+        )}
         {feedback === 'wrong' && atPuzzle && (
-          <p className="text-xs text-red-600 dark:text-red-400">
+          <p className="text-sm text-red-600 dark:text-red-400">
             ✗ Not quite — try a different move.
           </p>
         )}
