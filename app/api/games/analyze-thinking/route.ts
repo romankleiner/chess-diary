@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
     console.log(`[AI-ANALYSIS] User is playing ${userColor}`);
 
     const verbosityVal = verbosity || 'detailed';
-    const modelVal = model || 'claude-sonnet-4-6';
+    const modelVal = model || 'claude-sonnet-5';
 
     console.log(`[AI-ANALYSIS] Using verbosity: ${verbosityVal}, model: ${modelVal}`);
 

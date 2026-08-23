@@ -184,27 +184,28 @@ export default function SettingsPage() {
             AI Model
           </label>
           <select
-            value={settings.ai_model || 'claude-sonnet-4-6'}
+            value={settings.ai_model || 'claude-sonnet-5'}
             onChange={(e) => updateSetting('ai_model', e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
           >
-            <optgroup label="Claude 4 (Latest)">
-              <option value="claude-opus-4-7">Claude Opus 4.7 - Most capable</option>
-              <option value="claude-sonnet-4-6">Claude Sonnet 4.6 - Recommended</option>
+            <optgroup label="Most capable">
+              <option value="claude-fable-5">Claude Fable 5 - Anthropic's most capable</option>
+              <option value="claude-opus-4-8">Claude Opus 4.8 - Most capable Opus-tier</option>
+            </optgroup>
+            <optgroup label="Balanced (recommended)">
+              <option value="claude-sonnet-5">Claude Sonnet 5 - Best balance</option>
+            </optgroup>
+            <optgroup label="Fast & cheap">
+              <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
+            </optgroup>
+            <optgroup label="Previous generation">
+              <option value="claude-opus-4-7">Claude Opus 4.7</option>
+              <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
               <option value="claude-opus-4-6">Claude Opus 4.6</option>
-              <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 - Fast & cheap</option>
-            </optgroup>
-            <optgroup label="Claude 3.5">
-              <option value="claude-3-5-sonnet-20240620">Claude 3.5 Sonnet (Jun 2024)</option>
-            </optgroup>
-            <optgroup label="Claude 3">
-              <option value="claude-3-opus-20240229">Claude 3 Opus</option>
-              <option value="claude-3-sonnet-20240229">Claude 3 Sonnet</option>
-              <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
             </optgroup>
           </select>
           <p className="text-xs text-gray-500 mt-1">
-            Choose the AI model for analyzing your chess thinking. Claude Sonnet 4.6 offers the best balance.
+            Choose the AI model for analyzing your chess thinking. Claude Sonnet 5 offers the best balance of speed, cost, and quality.
           </p>
           <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs">
             <strong>📚 Latest models:</strong> Check{' '}
