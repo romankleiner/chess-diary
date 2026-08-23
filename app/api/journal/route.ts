@@ -5,14 +5,19 @@ import { getLocalTimestamp, filterEntriesByDate } from '@/lib/timestamps';
 export async function GET(request: NextRequest) {
   try {
     const entries = await getJournal();
-    
-    // Get date filters from query params
+
     const { searchParams } = new URL(request.url);
+    const gameId = searchParams.get('gameId');
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
-    
-    const filteredEntries = filterEntriesByDate(entries, startDate, endDate);
-    
+
+    // A gameId filter is inherently all-time — filtering server-side avoids
+    // shipping the full journal (with inline base64 images) just to render a
+    // handful of entries for one game.
+    const filteredEntries = gameId
+      ? entries.filter((e: any) => e.gameId === gameId)
+      : filterEntriesByDate(entries, startDate, endDate);
+
     return NextResponse.json({ entries: filteredEntries });
   } catch (error) {
     console.error('Error fetching journal entries:', error);

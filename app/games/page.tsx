@@ -70,13 +70,13 @@ export default function GamesPage() {
   const loadGames = async () => {
     setLoadError(null);
     try {
-      // Fetch games and journal entries in parallel — one Redis call each.
-      // Deriving existingSummaries and gamesWithEntries from a single journal
-      // fetch avoids N per-game summary checks that could time out and silently
-      // drop "View Summary" state after a Chess.com fetch.
+      // Fetch games and journal summary in parallel — one Redis call each.
+      // /api/journal/summary returns only {gameId, entryType} per entry, avoiding
+      // shipping full entries (with inline base64 images) just to derive the
+      // "has entries" / "has summary" sets rendered on this page.
       const [gamesResponse, journalResponse] = await Promise.all([
         fetch('/api/games', { signal: AbortSignal.timeout(15000) }),
-        fetch('/api/journal?startDate=2000-01-01&endDate=2099-12-31', { signal: AbortSignal.timeout(15000) }),
+        fetch('/api/journal/summary', { signal: AbortSignal.timeout(15000) }),
       ]);
 
       if (!gamesResponse.ok) {

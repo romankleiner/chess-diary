@@ -899,7 +899,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     setViewIdx(Math.max(startPly, Math.min(maxIdx, idx)));
   };
 
-  const resolve = (how: 'guessed' | 'revealed', nextPhase: SectionPhase) => {
+  const resolve = (how: 'guessed' | 'guessed_best' | 'revealed', nextPhase: SectionPhase) => {
     clearTransient();
     setResolvedHow(how);
     setPhase(nextPhase);

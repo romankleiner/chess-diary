@@ -6,10 +6,20 @@ export async function GET(request: NextRequest) {
   try {
     const games = await getGames();
 
-    // analysisCompleted / analysisDepth / analysisEngine are written directly onto
-    // the game object by the analyze route when analysis finishes, so no need to
-    // load the full analyses hash just to derive these flags.
-    const gamesList = Object.values(games || {}).map((game: any) => ({ ...game }));
+    // Project to summary fields only. The list page never renders pgn/moves/fen,
+    // and shipping them all makes the payload big enough to time out on slow
+    // (e.g. travel wifi) connections. Detail pages fetch the full game separately.
+    const gamesList = Object.values(games || {}).map((game: any) => ({
+      id: game.id,
+      opponent: game.opponent,
+      date: game.date,
+      result: game.result,
+      white: game.white,
+      black: game.black,
+      analysisCompleted: game.analysisCompleted,
+      analysisDepth: game.analysisDepth,
+      analysisEngine: game.analysisEngine,
+    }));
     
     // Sort by date descending
     gamesList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());

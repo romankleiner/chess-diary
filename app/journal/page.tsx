@@ -119,7 +119,7 @@ export default function JournalPage() {
 
   useEffect(() => {
     loadEntries();
-  }, [selectedDate, viewRangeDays]);
+  }, [selectedDate, viewRangeDays, filterGameId]);
 
   useEffect(() => {
     loadActiveGames();
@@ -242,17 +242,23 @@ export default function JournalPage() {
   const loadEntries = async () => {
     setLoading(true);
     try {
-      const endDate = new Date(selectedDate);
-      const startDate = new Date(selectedDate);
-      startDate.setDate(startDate.getDate() - (viewRangeDays - 1));
-      
-      const startDateStr = startDate.toISOString().split('T')[0];
-      const endDateStr = endDate.toISOString().split('T')[0];
-      
-      // Use smart API call instead of polling each day
-      const response = await fetch(
-        `/api/journal?startDate=${startDateStr}&endDate=${endDateStr}`
-      );
+      // When filtering to a specific game, fetch only that game's entries —
+      // otherwise picking an old game forces a full-journal download (with
+      // inline base64 images) just to render a handful of matching entries.
+      const isGameFilter = filterGameId !== 'all' && filterGameId !== 'general';
+      let url: string;
+      if (isGameFilter) {
+        url = `/api/journal?gameId=${encodeURIComponent(filterGameId)}`;
+      } else {
+        const endDate = new Date(selectedDate);
+        const startDate = new Date(selectedDate);
+        startDate.setDate(startDate.getDate() - (viewRangeDays - 1));
+        const startDateStr = startDate.toISOString().split('T')[0];
+        const endDateStr = endDate.toISOString().split('T')[0];
+        url = `/api/journal?startDate=${startDateStr}&endDate=${endDateStr}`;
+      }
+
+      const response = await fetch(url);
       const data = await response.json();
       
       const allEntries: JournalEntry[] = data.entries || [];
