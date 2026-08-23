@@ -6,20 +6,14 @@ export async function GET(request: NextRequest) {
   try {
     const games = await getGames();
 
-    // Project to summary fields only. The list page never renders pgn/moves/fen,
-    // and shipping them all makes the payload big enough to time out on slow
-    // (e.g. travel wifi) connections. Detail pages fetch the full game separately.
-    const gamesList = Object.values(games || {}).map((game: any) => ({
-      id: game.id,
-      opponent: game.opponent,
-      date: game.date,
-      result: game.result,
-      white: game.white,
-      black: game.black,
-      analysisCompleted: game.analysisCompleted,
-      analysisDepth: game.analysisDepth,
-      analysisEngine: game.analysisEngine,
-    }));
+    // Strip the per-move analysis array (tens of KB per analyzed game); it's the
+    // dominant payload cost and no list consumer renders it. Everything else —
+    // pgn/fen/turn/move_by/url/timeControl — is kept because the journal page
+    // uses them to render active games and filter "my turn".
+    const gamesList = Object.values(games || {}).map((game: any) => {
+      const { moves, ...rest } = game;
+      return rest;
+    });
     
     // Sort by date descending
     gamesList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
