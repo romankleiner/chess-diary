@@ -121,11 +121,34 @@ export default function JournalPage() {
     loadEntries();
   }, [selectedDate, viewRangeDays, filterGameId]);
 
+  // Stable set of "games that have any entry" — the filter dropdown relies on
+  // this instead of scanning the currently-loaded `entries`, because a game
+  // filter narrows entries to one game and would collapse the dropdown.
+  const [gameIdsWithEntries, setGameIdsWithEntries] = useState<Set<string>>(new Set());
+
+  const refreshGameIdsWithEntries = useCallback(async () => {
+    try {
+      const res = await fetch('/api/journal/summary');
+      if (!res.ok) return;
+      const data = await res.json();
+      const ids = new Set<string>(
+        (data.entries || [])
+          .map((e: any) => e.gameId)
+          .filter(Boolean)
+          .map((id: any) => String(id))
+      );
+      setGameIdsWithEntries(ids);
+    } catch (err) {
+      console.error('Error refreshing game index:', err);
+    }
+  }, []);
+
   useEffect(() => {
     loadActiveGames();
     loadUsername();
     checkForDraft(); // Check for saved draft on mount
-  }, []); // Only run once on mount
+    refreshGameIdsWithEntries();
+  }, [refreshGameIdsWithEntries]); // Only run once on mount
 
   const saveDraft = useCallback(() => {
     // Only save if there's content
@@ -445,6 +468,7 @@ export default function JournalPage() {
           // Add the new entry directly to state instead of reloading all entries
           if (data.entry) {
             setEntries(prevEntries => [...prevEntries, data.entry]);
+            if (data.entry?.gameId) refreshGameIdsWithEntries();
           }
           
           // If a move was specified, toggle the turn in the game
@@ -534,6 +558,7 @@ export default function JournalPage() {
       if (response.ok) {
         // Remove entry from state instead of reloading all entries
         setEntries(prevEntries => prevEntries.filter(e => e.id !== entryId));
+        refreshGameIdsWithEntries();
       } else {
         alert('Failed to delete entry');
       }
@@ -1360,8 +1385,10 @@ export default function JournalPage() {
                 <option value="all">All Entries</option>
                 <option value="general">General Thoughts Only</option>
                 {(() => {
-                  // Get games that have journal entries
-                  const gamesWithEntries = allGames.filter(g => entries.some(e => e.gameId === g.id));
+                  // Get games that have journal entries — sourced from a stable
+                  // summary fetch so the dropdown stays populated even when a
+                  // game filter narrows `entries` to one game's records.
+                  const gamesWithEntries = allGames.filter(g => gameIdsWithEntries.has(g.id));
                   
                   // Separate active from finished games
                   const activeGames = gamesWithEntries
