@@ -61,6 +61,7 @@ export default function JournalPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [entriesError, setEntriesError] = useState<string | null>(null);
   const [activeGames, setActiveGames] = useState<Game[]>([]);
   const [allGames, setAllGames] = useState<Game[]>([]);
   const [gamesFetchedAt, setGamesFetchedAt] = useState<number>(Date.now());
@@ -75,6 +76,8 @@ export default function JournalPage() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
   const [entryMode, setEntryMode] = useState<'general' | 'game'>('general');
   const [filterGameId, setFilterGameId] = useState<string>('all'); // 'all', 'general', or specific game ID
   const [viewRangeDays, setViewRangeDays] = useState<number>(7); // Configurable view range
@@ -264,6 +267,7 @@ export default function JournalPage() {
 
   const loadEntries = async () => {
     setLoading(true);
+    setEntriesError(null);
     try {
       // When filtering to a specific game, fetch only that game's entries —
       // otherwise picking an old game forces a full-journal download (with
@@ -282,13 +286,17 @@ export default function JournalPage() {
       }
 
       const response = await fetch(url);
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null);
+        throw new Error(errorBody?.error || `Server returned ${response.status}`);
+      }
       const data = await response.json();
-      
+
       const allEntries: JournalEntry[] = data.entries || [];
-      
+
       allEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setEntries(allEntries);
-      
+
       // Auto-select first game only if nothing is currently selected
       const gameEntries = allEntries.filter((e: JournalEntry) => e.gameId);
       if (gameEntries.length > 0 && !currentGameId) {
@@ -296,6 +304,10 @@ export default function JournalPage() {
       }
     } catch (error) {
       console.error('Error loading entries:', error);
+      // Leave `entries` untouched — a failed fetch isn't evidence the journal
+      // is empty, and clearing it would show a misleading "no entries" state
+      // instead of a clear error the user can retry.
+      setEntriesError(error instanceof Error ? error.message : 'Failed to load entries');
     } finally {
       setLoading(false);
     }
@@ -305,15 +317,21 @@ export default function JournalPage() {
     try {
       const fetchTime = Date.now();
       const response = await fetch('/api/games');
+      if (!response.ok) {
+        // Leave allGames/activeGames untouched on failure rather than
+        // clobbering them with an empty list from an error response.
+        console.error(`Error loading active games: server returned ${response.status}`);
+        return;
+      }
       const data = await response.json();
-      
+
       // Store all games for display in journal
       setAllGames(data.games || []);
-      
+
       // Filter for active games for selection
       const active = data.games.filter((g: Game) => !g.result || g.result === 'null');
       setActiveGames(active);
-      
+
       // Store when games were fetched for accurate time remaining calculation
       setGamesFetchedAt(fetchTime);
     } catch (error) {
@@ -784,34 +802,80 @@ export default function JournalPage() {
   };
 
   const handleExportJournal = async () => {
+    setExporting(true);
+    setExportProgress(null);
     try {
       const startDate = exportStartDate || '2020-01-01';
       const endDate = exportEndDate;
-      
-      // Request Word document
+
+      // The export endpoint streams newline-delimited JSON: progress lines while
+      // it works through entries (board-diagram generation is sequential on the
+      // server, by design), then one "done" line carrying the finished docx as
+      // base64.
       const response = await fetch(
         `/api/journal/export?startDate=${startDate}&endDate=${endDate}&format=docx&username=${encodeURIComponent(username)}&includePostReviews=${showPostReviews}`
       );
-      
-      if (!response.ok) {
+
+      if (!response.ok || !response.body) {
         alert('Failed to export journal');
         return;
       }
-      
-      // Download the Word document
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `chess-journal-${startDate}-to-${endDate}.docx`;
-      a.click();
-      URL.revokeObjectURL(url);
-      
-      setShowExportModal(false);
-      
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let doneHandled = false;
+      let sawError = false;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          if (!line.trim()) continue;
+
+          const msg = JSON.parse(line);
+          if (msg.type === 'progress') {
+            setExportProgress({ current: msg.current, total: msg.total });
+          } else if (msg.type === 'done') {
+            doneHandled = true;
+            const byteChars = atob(msg.data);
+            const byteNumbers = new Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) {
+              byteNumbers[i] = byteChars.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], {
+              type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = msg.filename || `chess-journal-${startDate}-to-${endDate}.docx`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setShowExportModal(false);
+          } else if (msg.type === 'error') {
+            sawError = true;
+            alert(msg.message || 'Failed to export journal');
+          }
+        }
+      }
+
+      if (!doneHandled && !sawError) {
+        alert('Export did not complete. Please try again.');
+      }
+
     } catch (error) {
       console.error('Error exporting journal:', error);
       alert('Failed to export journal');
+    } finally {
+      setExporting(false);
+      setExportProgress(null);
     }
   };
 
@@ -942,18 +1006,41 @@ export default function JournalPage() {
               <p className="text-xs text-gray-500">
                 Export format: Microsoft Word document (.docx) with chronological entries (oldest to newest)
               </p>
+
+              {exporting && (
+                <div>
+                  <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-300">
+                    <span>Generating document...</span>
+                    {exportProgress && (
+                      <span>{exportProgress.current}/{exportProgress.total} entries</span>
+                    )}
+                  </div>
+                  <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2 mt-1">
+                    <div
+                      className="bg-blue-500 h-2 rounded-full transition-all"
+                      style={{
+                        width: exportProgress
+                          ? `${(exportProgress.current / exportProgress.total) * 100}%`
+                          : '0%'
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
-            
+
             <div className="flex gap-3">
               <button
                 onClick={handleExportJournal}
-                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                disabled={exporting}
+                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
               >
-                Export
+                {exporting ? 'Exporting...' : 'Export'}
               </button>
               <button
                 onClick={() => setShowExportModal(false)}
-                className="flex-1 bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400 dark:bg-gray-600 dark:text-white dark:hover:bg-gray-500"
+                disabled={exporting}
+                className="flex-1 bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400 dark:bg-gray-600 dark:text-white dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
@@ -1459,11 +1546,25 @@ export default function JournalPage() {
           </div>
         </div>
         
+        {entriesError && (
+          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-md text-sm text-red-800 dark:text-red-200 flex items-center justify-between gap-3">
+            <span>Failed to load entries: {entriesError}. What&apos;s shown below may be out of date.</span>
+            <button
+              onClick={loadEntries}
+              className="shrink-0 px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 text-xs font-medium"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <p className="text-center text-gray-600">Loading...</p>
         ) : entries.length === 0 ? (
           <p className="text-center text-gray-600">
-            No entries in the last {viewRangeDays} day{viewRangeDays !== 1 ? 's' : ''}. Start writing!
+            {entriesError
+              ? 'Could not load entries — see the error above.'
+              : `No entries in the last ${viewRangeDays} day${viewRangeDays !== 1 ? 's' : ''}. Start writing!`}
           </p>
         ) : (
           <div className="space-y-6">

@@ -45,56 +45,20 @@ export async function getCachedBoardImage(
   
   const imageBuffer = await response.arrayBuffer();
   
-  // Upload to blob storage with public access
+  // Upload to blob storage with public access. allowOverwrite is required
+  // because head()+put() isn't atomic: two concurrent cache misses for the
+  // same FEN/pov both reach here and race to write the same key. The key is
+  // deterministic (same FEN+pov ⇒ same image), so the loser overwriting with
+  // an equivalent image is harmless — without this flag, put() throws.
   console.log('[BOARD-CACHE] Uploading to blob storage...');
   const blob = await put(cacheKey, imageBuffer, {
     access: 'public',
     contentType: 'image/png',
     token: process.env.BLOB_IMAGES_READ_WRITE_TOKEN,
+    allowOverwrite: true,
   });
   
   console.log('[BOARD-CACHE] Cached:', blob.url);
-  return blob.url;
-}
-
-/**
- * Get image URL for a journal entry image
- * If it's a base64 image, migrate it to PUBLIC blob storage
- * If it's already a URL, return it as-is
- */
-export async function getImageUrl(
-  entryId: number,
-  image: string,
-  imageIndex: number
-): Promise<string> {
-  // Check if already migrated (URL format)
-  if (image.startsWith('http')) {
-    return image; // Already a blob URL
-  }
-  
-  // Still base64, migrate now
-  const matches = image.match(/^data:image\/(\w+);base64,(.+)$/);
-  if (!matches) {
-    throw new Error('Invalid image format');
-  }
-  
-  const imageType = matches[1];
-  const base64Data = matches[2];
-  const imageBuffer = Buffer.from(base64Data, 'base64');
-  
-  // Upload to PUBLIC blob storage
-  const blobKey = `journal/${entryId}/${imageIndex}.${imageType}`;
-  
-  console.log(`[IMAGE-MIGRATE] Migrating image: ${blobKey}`);
-  
-  const blob = await put(blobKey, imageBuffer, {
-    access: 'public',
-    contentType: `image/${imageType}`,
-    token: process.env.BLOB_IMAGES_READ_WRITE_TOKEN,
-  });
-  
-  console.log(`[IMAGE-MIGRATE] Migrated: ${blob.url}`);
-
   return blob.url;
 }
 
