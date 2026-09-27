@@ -238,12 +238,12 @@ export async function POST(
     if (summaryEntry) {
       const parts: string[] = [];
 
-      // Free-text content (if any)
-      if (summaryEntry.content?.trim()) {
-        parts.push(summaryEntry.content.trim());
-      }
-
-      // Structured reflections
+      // Note: summaryEntry.content is NOT independent free text — the
+      // post-game-summary API always sets it to a copy of lessonsLearned (or
+      // whatWentWell as a fallback), purely so generic journal-list UI has a
+      // non-empty preview to show. Including it here would duplicate whatever
+      // reflection field it was copied from, so only the structured
+      // reflections below feed the summary.
       const r = summaryEntry.postGameSummary?.reflections;
       if (r) {
         if (r.whatWentWell)   parts.push(`**What went well:** ${r.whatWentWell}`);
