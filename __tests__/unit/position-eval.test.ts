@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   MATE_PAWNS,
   formatPawns,
+  formatPawnsFine,
   isMatePawns,
   parseChessApiEval,
   roundPawns,
@@ -136,6 +137,33 @@ describe('formatPawns', () => {
     expect(formatPawns(-0.04)).toBe('0.0');
     expect(formatPawns(-0)).toBe('0.0');
     expect(formatPawns(0.04)).toBe('0.0');
+  });
+});
+
+describe('formatPawnsFine', () => {
+  it('shows two decimals, with a sign for White’s edge', () => {
+    expect(formatPawnsFine(0.4)).toBe('+0.40');
+    expect(formatPawnsFine(-1.255)).toBe('-1.25');
+    expect(formatPawnsFine(0)).toBe('0.00');
+    expect(formatPawnsFine(12.5)).toBe('+12.50');
+  });
+
+  it('reads a forced mate as Mate, not as 100.00, whatever size it was stored at', () => {
+    expect(formatPawnsFine(100)).toBe('+Mate');
+    expect(formatPawnsFine(-100)).toBe('-Mate');
+    expect(formatPawnsFine(104)).toBe('+Mate');
+    expect(formatPawnsFine(-1234)).toBe('-Mate');
+    expect(formatPawnsFine(90)).toBe('+Mate');
+  });
+
+  it('does not mistake a big but ordinary advantage for mate', () => {
+    expect(formatPawnsFine(89.5)).toBe('+89.50');
+  });
+
+  it('never prints a signed zero', () => {
+    expect(formatPawnsFine(-0.004)).toBe('0.00');
+    expect(formatPawnsFine(-0)).toBe('0.00');
+    expect(formatPawnsFine(0.004)).toBe('0.00');
   });
 });
 

@@ -1,6 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getJournal, saveJournalEntry, deleteJournalEntry } from '@/lib/db';
+import { getJournal, saveJournalEntry, deleteJournalEntry, getGame, getAnalysis } from '@/lib/db';
 import { getLocalTimestamp, filterEntriesByDate } from '@/lib/timestamps';
+import { addMissingReviewEvals } from '@/lib/review-eval';
+import type { JournalEntryLike } from '@/lib/review-eval';
+
+// A post-game review shows the engine's eval of the move it is about. The copy
+// saved with the review is often missing (the game wasn't analysed yet when it was
+// written, or it was edited since), so any review without one gets it worked out
+// from the game and its analysis. Nothing is written back, only the games that
+// reviews on this page need are read, and a failure here must never cost the reader
+// their journal, so on any error the entries are returned as stored.
+async function withReviewEvals<T extends JournalEntryLike>(entries: T[]): Promise<T[]> {
+  try {
+    return await addMissingReviewEvals(entries, async gameId => {
+      const [game, analysis] = await Promise.all([getGame(gameId), getAnalysis(gameId)]);
+      return game ? { pgn: game.pgn, analysis } : null;
+    });
+  } catch (error) {
+    console.error('[JOURNAL] Could not add review evals:', error instanceof Error ? error.message : error);
+    return entries;
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,7 +38,7 @@ export async function GET(request: NextRequest) {
       ? entries.filter((e: any) => e.gameId === gameId)
       : filterEntriesByDate(entries, startDate, endDate);
 
-    return NextResponse.json({ entries: filteredEntries });
+    return NextResponse.json({ entries: await withReviewEvals(filteredEntries) });
   } catch (error) {
     console.error('Error fetching journal entries:', error);
     return NextResponse.json(

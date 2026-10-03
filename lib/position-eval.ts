@@ -95,6 +95,17 @@ export function formatPawns(pawns: number, mate?: number | null): string {
 }
 
 /**
+ * Like formatPawns but to two decimals, for places that show the finer figure
+ * ("+0.35"). A forced mate still reads "+Mate" rather than "+100.00", and a tiny
+ * negative reads "0.00" rather than "-0.00".
+ */
+export function formatPawnsFine(pawns: number): string {
+  if (isMatePawns(pawns)) return formatPawns(pawns);
+  const shown = Number(pawns.toFixed(2)) || 0;
+  return (shown > 0 ? '+' : '') + shown.toFixed(2);
+}
+
+/**
  * Round to the one decimal that gets printed. Anything that compares
  * evaluations must round this way, or a sentence can disagree with the number
  * beside it (Math.round(0.35 * 10) is 4, but 0.35 prints as 0.3). Never

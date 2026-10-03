@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { GrammarCheck } from './grammar-check';
 import PostGameSummaryCard from '@/components/PostGameSummaryCard';
+import { formatPawnsFine } from '@/lib/position-eval';
 
 // Helper function to get current time in local timezone as ISO string
 function getLocalTimestamp(): string {
@@ -1981,9 +1982,9 @@ export default function JournalPage() {
                                            daysDiff === 1 ? '1 day after game' :
                                            `${daysDiff} days after game`;
                                   })()}
-                                  {entry.postReview.evalAfter !== undefined && (
+                                  {typeof entry.postReview.evalAfter === 'number' && (
                                     <span className="ml-2">
-                                      · {entry.postReview.evalAfter > 0 ? '+' : ''}{entry.postReview.evalAfter.toFixed(2)}
+                                      · {formatPawnsFine(entry.postReview.evalAfter)}
                                       {entry.postReview.moveQuality && ` · ${entry.postReview.moveQuality}`}
                                       {entry.postReview.centipawnLoss !== undefined && ` · ${entry.postReview.centipawnLoss} cp`}
                                     </span>
