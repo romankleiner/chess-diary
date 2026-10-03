@@ -11,8 +11,10 @@ import Image from 'next/image';
 import { Chess } from 'chess.js';
 import { splitNotation } from '@/lib/notation';
 import { formatPawns } from '@/lib/position-eval';
-import { playerPawns, rateGuess } from '@/lib/guess-eval';
+import { playerPawns, rateGuess, topLinePawns } from '@/lib/guess-eval';
 import type { GuessRating } from '@/lib/guess-eval';
+import { MOVE_QUALITIES } from '@/lib/analysis-utils';
+import type { AnalysisSummary, MoveQualityKey, SideSummary } from '@/lib/analysis-utils';
 
 // react-chessboard uses browser drag APIs — must be client-only.
 const Chessboard = dynamic(
@@ -27,6 +29,7 @@ export interface EngineEval {
   centipawnLoss: number;
   evaluation: number;          // white-POV, pawn units
   bestMoveSan?: string | null; // engine's preferred move, when different from played
+  topLine?: string | null;     // the engine's line from there in numbered SAN, when different from played
   depth?: number | null;       // search depth of the stored analysis; a guess is checked as deeply
 }
 
@@ -633,17 +636,25 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
             {(section.postReview || section.engineEval) && (
               <PostGameBlock compact>
                 {section.engineEval && (
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {formatEval(section.engineEval.evaluation)}
-                    {quality && (
-                      <span className={`ml-1 ${QUALITY_TEXT[section.engineEval.moveQuality] ?? ''}`}>
-                        · {section.engineEval.moveQuality}
-                      </span>
+                  <div className="space-y-1">
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {formatEval(section.engineEval.evaluation)}
+                      {quality && (
+                        <span className={`ml-1 ${QUALITY_TEXT[section.engineEval.moveQuality] ?? ''}`}>
+                          · {section.engineEval.moveQuality}
+                        </span>
+                      )}
+                      {section.engineEval.centipawnLoss > 0 && (
+                        <span> · {section.engineEval.centipawnLoss} cp</span>
+                      )}
+                    </p>
+                    {(section.engineEval.topLine ?? section.engineEval.bestMoveSan) && (
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        Engine&apos;s top line:{' '}
+                        <Notation>{(section.engineEval.topLine ?? section.engineEval.bestMoveSan) as string}</Notation>
+                      </p>
                     )}
-                    {section.engineEval.centipawnLoss > 0 && (
-                      <span> · {section.engineEval.centipawnLoss} cp</span>
-                    )}
-                  </p>
+                  </div>
                 )}
                 {section.postReview && renderProse(section.postReview)}
               </PostGameBlock>
@@ -687,7 +698,7 @@ function parseGame(pgn: string): ParsedGame | null {
 // Uses a callback ref so the observer attaches whenever the measured node
 // mounts — a plain useEffect+useRef would miss cards that start locked and
 // only render their board (and ref target) once unlocked.
-function useBoardWidth(max = 360) {
+function useBoardWidth(max = 480) {
   const [width, setWidth] = useState(280);
   const obsRef = useRef<ResizeObserver | null>(null);
   const ref = useCallback((node: HTMLDivElement | null) => {
@@ -719,6 +730,12 @@ function LockedCard({ title }: { title: string }) {
   );
 }
 
+// Moves are counted the way players count them -- a whole move is White's move
+// and Black's reply -- so 16 plies read "8", and a half-played move reads "4.5".
+export function formatMoveCount(plies: number): string {
+  return plies % 2 === 0 ? String(plies / 2) : `${(plies - 1) / 2}.5`;
+}
+
 // Step controls (⏮ ◀ ▶ ⏭) over a fen-index range
 function StepControls({ viewIdx, minIdx, maxIdx, goTo }: {
   viewIdx: number;
@@ -727,7 +744,7 @@ function StepControls({ viewIdx, minIdx, maxIdx, goTo }: {
   goTo: (idx: number) => void;
 }) {
   return (
-    <div className="flex items-center justify-center gap-2.5 text-gray-700 dark:text-gray-300">
+    <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-2.5 text-gray-700 dark:text-gray-300">
       {[
         { label: '⏮', action: () => goTo(minIdx),      disabled: viewIdx === minIdx },
         { label: '◀', action: () => goTo(viewIdx - 1), disabled: viewIdx === minIdx },
@@ -738,13 +755,13 @@ function StepControls({ viewIdx, minIdx, maxIdx, goTo }: {
           key={label}
           onClick={action}
           disabled={disabled}
-          className="w-12 h-12 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default text-2xl transition-colors"
+          className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default text-2xl transition-colors"
         >
           {label}
         </button>
       ))}
-      <span className="text-sm tabular-nums text-gray-500 dark:text-gray-400 ml-1 w-14 text-center">
-        {viewIdx - minIdx} / {maxIdx - minIdx}
+      <span className="text-sm tabular-nums text-gray-500 dark:text-gray-400 ml-1 min-w-[3.5rem] sm:min-w-[4.5rem] text-center">
+        {formatMoveCount(viewIdx - minIdx)} / {formatMoveCount(maxIdx - minIdx)}
       </span>
     </div>
   );
@@ -794,9 +811,12 @@ function MoveChips({ game, fromPly, toPly, viewIdx, goTo, guessPly, guessColor }
 
 // Engine check shown once the move is revealed: the evaluation of the resulting
 // position and, separately, how far the move fell short of the engine's best.
-function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
+function EvalCallout({ engineEval, color }: { engineEval: EngineEval; color: 'white' | 'black' }) {
   const quality = QUALITY_STYLE[engineEval.moveQuality] ?? null;
   const lost    = engineEval.centipawnLoss;
+  // Only present when my move wasn't the engine's top move. Older analyses have
+  // no stored line, in which case the best move on its own is shown.
+  const topLine = engineEval.topLine ?? engineEval.bestMoveSan ?? null;
   return (
     <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-2.5">
       <div className="flex items-baseline justify-between gap-3 text-base">
@@ -806,12 +826,17 @@ function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
         </span>
       </div>
 
-      {engineEval.bestMoveSan && (
-        <div className="flex items-baseline justify-between gap-3 text-base border-t border-gray-200 dark:border-gray-700 pt-2.5">
-          <span className="text-gray-600 dark:text-gray-400">Engine&apos;s best move</span>
-          <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
-            {engineEval.bestMoveSan}
-          </span>
+      {topLine && (
+        <div className="border-t border-gray-200 dark:border-gray-700 pt-2.5 space-y-1.5">
+          <div className="flex items-baseline justify-between gap-3 text-base">
+            <span className="text-gray-600 dark:text-gray-400">Engine&apos;s top line</span>
+            <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
+              {formatPawns(topLinePawns(engineEval, color))}
+            </span>
+          </div>
+          <p className="text-base leading-relaxed text-gray-900 dark:text-gray-50">
+            <Notation>{topLine}</Notation>
+          </p>
         </div>
       )}
 
@@ -847,7 +872,9 @@ export function SectionBody({ section, phase }: {
       <ThinkingBlock>{renderProse(section.thinking)}</ThinkingBlock>
 
       {/* Engine eval + diff, shown as soon as the move is revealed */}
-      {solved && section.engineEval && <EvalCallout engineEval={section.engineEval} />}
+      {solved && section.engineEval && (
+        <EvalCallout engineEval={section.engineEval} color={section.userColor} />
+      )}
 
       {solved && section.aiReview && (
         <AiAnalysisBlock>{renderProse(section.aiReview)}</AiAnalysisBlock>
@@ -1213,126 +1240,141 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
         </span>
       </div>
 
-      <div className="p-4 space-y-4">
+      {/* One column on narrow cards. Once the card itself is wide enough
+          (a container query, so the preview modal adapts as well as the page)
+          the board and its controls sit on the left and everything else --
+          prompts, feedback, and the commentary -- reads down the right, so a
+          wide screen isn't a narrow column with empty margins. */}
+      <div className="@container">
+        <div className="p-4 grid gap-4 grid-cols-[minmax(0,1fr)] @4xl:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] @4xl:grid-rows-[auto_1fr] @4xl:gap-x-6 @4xl:gap-y-0">
 
-        {/* ── Hints / prompt ───────────────────────────────────────── */}
-        {!resolved && viewIdx < guessPly && (
-          <p className="text-sm text-center text-gray-500 dark:text-gray-400">
-            ▶ Play through to my next commentated move
-          </p>
-        )}
-        {atPuzzle && (
-          <div className="text-center space-y-0.5">
-            {section.opponentLastMove && (
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Opponent played{' '}
-                <span className="font-mono font-medium">{section.opponentLastMove}</span>
+          {/* ── Hints / prompt ───────────────────────────────────────── */}
+          <div className="space-y-4 empty:hidden @4xl:col-start-2 @4xl:row-start-1 @4xl:mb-4">
+            {!resolved && viewIdx < guessPly && (
+              <p className="text-sm text-center text-gray-500 dark:text-gray-400">
+                ▶ Play through to my next commentated move
               </p>
             )}
-            <p className="text-base font-medium text-purple-700 dark:text-purple-300">
-              🎯 Find my move on the board
-            </p>
+            {atPuzzle && (
+              <div className="text-center space-y-0.5">
+                {section.opponentLastMove && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Opponent played{' '}
+                    <span className="font-mono font-medium">{section.opponentLastMove}</span>
+                  </p>
+                )}
+                <p className="text-base font-medium text-purple-700 dark:text-purple-300">
+                  🎯 Find my move on the board
+                </p>
+              </div>
+            )}
           </div>
-        )}
 
-        {/* ── Board ────────────────────────────────────────────────── */}
-        <div ref={boardRef} className="flex justify-center">
-          <div style={{ width: boardWidth, cursor: atPuzzle ? 'pointer' : 'default' }}>
-            <Chessboard
-              options={{
-                id:                 boardId,
-                position:           boardFen,
-                boardOrientation:   section.userColor,
-                allowDragging:      atPuzzle,
-                allowDrawingArrows: false,
-                ...(atPuzzle && {
-                  onSquareClick: handleSquareClick,
-                  onPieceDrop:   handlePieceDrop,
-                  canDragPiece:  ({ piece }: { piece: { pieceType: string } }) => isOwnColor(piece.pieceType),
-                }),
-                squareStyles: { ...resolvedHl, ...flashHighlights, ...selHighlights },
-                boardStyle:   { borderRadius: '4px', border: '1px solid #d1d5db' },
-              }}
+          {/* ── Board and its controls ───────────────────────────────── */}
+          <div className="space-y-4 @4xl:col-start-1 @4xl:row-start-1 @4xl:row-span-2">
+            <div ref={boardRef} className="flex justify-center">
+              <div style={{ width: boardWidth, cursor: atPuzzle ? 'pointer' : 'default' }}>
+                <Chessboard
+                  options={{
+                    id:                 boardId,
+                    position:           boardFen,
+                    boardOrientation:   section.userColor,
+                    allowDragging:      atPuzzle,
+                    allowDrawingArrows: false,
+                    ...(atPuzzle && {
+                      onSquareClick: handleSquareClick,
+                      onPieceDrop:   handlePieceDrop,
+                      canDragPiece:  ({ piece }: { piece: { pieceType: string } }) => isOwnColor(piece.pieceType),
+                    }),
+                    squareStyles: { ...resolvedHl, ...flashHighlights, ...selHighlights },
+                    boardStyle:   { borderRadius: '4px', border: '1px solid #d1d5db' },
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* ── Navigation ───────────────────────────────────────────── */}
+            <StepControls viewIdx={viewIdx} minIdx={startPly} maxIdx={maxIdx} goTo={goTo} />
+            <MoveChips
+              game={game}
+              fromPly={startPly}
+              toPly={resolved ? guessPly : guessPly - 1}
+              viewIdx={viewIdx}
+              goTo={goTo}
+              guessPly={guessPly}
+              guessColor={resolvedHow === 'revealed' ? 'amber' : 'green'}
             />
           </div>
-        </div>
 
-        {/* ── Navigation ───────────────────────────────────────────── */}
-        <StepControls viewIdx={viewIdx} minIdx={startPly} maxIdx={maxIdx} goTo={goTo} />
-        <MoveChips
-          game={game}
-          fromPly={startPly}
-          toPly={resolved ? guessPly : guessPly - 1}
-          viewIdx={viewIdx}
-          goTo={goTo}
-          guessPly={guessPly}
-          guessColor={resolvedHow === 'revealed' ? 'amber' : 'green'}
-        />
+          {/* ── Feedback, controls and commentary ────────────────────── */}
+          <div className="space-y-4 @4xl:col-start-2 @4xl:row-start-2">
 
-        {/* ── Feedback banner ──────────────────────────────────────── */}
-        {feedback === 'correct' && (
-          <p className="text-sm text-green-600 dark:text-green-400 font-medium">
-            ✓ Correct — that&apos;s the move I played!
-          </p>
-        )}
-        {feedback === 'best' && (
-          <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">
-            ⭐ Even better — you found the engine&apos;s top move
-            {section.engineEval?.bestMoveSan && (
-              <>{' '}(<span className="font-mono">{section.engineEval.bestMoveSan}</span>)</>
-            )}!
-            {section.moveNotation && (
-              <span className="font-normal text-gray-600 dark:text-gray-400">
-                {' '}I played{' '}
-                <span className="font-mono">{section.moveNotation}</span> here.
-              </span>
+            {/* ── Feedback banner ──────────────────────────────────────── */}
+            {feedback === 'correct' && (
+              <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                ✓ Correct — that&apos;s the move I played!
+              </p>
             )}
-          </p>
-        )}
-        {feedback === 'wrong' && atPuzzle && (
-          <p className="text-sm text-red-600 dark:text-red-400">
-            ✗ Not quite — try a different move.
-          </p>
-        )}
-
-        {/* ── Engine check of the latest guess ─────────────────────── */}
-        {guessEval && (atPuzzle || resolved) && (
-          <GuessEvalCard state={guessEval} color={section.userColor} />
-        )}
-
-        {/* ── Puzzle controls ──────────────────────────────────────── */}
-        {atPuzzle && (
-          <div className="flex gap-2 flex-wrap">
-            {phase === 'puzzle' && (
-              <button
-                onClick={() => {
-                  setPhase('thinking_shown');
-                  setFeedback(null);
-                  setSelectedSquare(null);
-                  setSelHighlights({});
-                }}
-                className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
-              >
-                💭 Reveal thinking
-              </button>
+            {feedback === 'best' && (
+              <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+                ⭐ Even better — you found the engine&apos;s top move
+                {section.engineEval?.bestMoveSan && (
+                  <>{' '}(<span className="font-mono">{section.engineEval.bestMoveSan}</span>)</>
+                )}!
+                {section.moveNotation && (
+                  <span className="font-normal text-gray-600 dark:text-gray-400">
+                    {' '}I played{' '}
+                    <span className="font-mono">{section.moveNotation}</span> here.
+                  </span>
+                )}
+              </p>
             )}
-            {phase === 'thinking_shown' && (
-              <button
-                onClick={() => resolve('revealed')}
-                className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
-              >
-                🏳 Give up — show the move
-              </button>
+            {feedback === 'wrong' && atPuzzle && (
+              <p className="text-sm text-red-600 dark:text-red-400">
+                ✗ Not quite — try a different move.
+              </p>
             )}
+
+            {/* ── Engine check of the latest guess ─────────────────────── */}
+            {guessEval && (atPuzzle || resolved) && (
+              <GuessEvalCard state={guessEval} color={section.userColor} />
+            )}
+
+            {/* ── Puzzle controls ──────────────────────────────────────── */}
+            {atPuzzle && (
+              <div className="flex gap-2 flex-wrap">
+                {phase === 'puzzle' && (
+                  <button
+                    onClick={() => {
+                      setPhase('thinking_shown');
+                      setFeedback(null);
+                      setSelectedSquare(null);
+                      setSelHighlights({});
+                    }}
+                    className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+                  >
+                    💭 Reveal thinking
+                  </button>
+                )}
+                {phase === 'thinking_shown' && (
+                  <button
+                    onClick={() => resolve('revealed')}
+                    className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+                  >
+                    🏳 Give up — show the move
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* The post-guess reveals (engine eval, thinking, AI commentary,
+                post-game review) live here. We hand the parent a ref to this
+                wrapper so the walkthrough's smooth scroll lands inside the
+                current card rather than jumping past it. */}
+            <div ref={contentRef} className="space-y-4 scroll-mt-4">
+              <SectionBody section={section} phase={phase} />
+            </div>
           </div>
-        )}
-
-        {/* The post-guess reveals (engine eval, thinking, AI commentary,
-            post-game review) live here. We hand the parent a ref to this
-            wrapper so the walkthrough's smooth scroll lands inside the
-            current card rather than jumping past it. */}
-        <div ref={contentRef} className="space-y-4 scroll-mt-4">
-          <SectionBody section={section} phase={phase} />
         </div>
       </div>
     </div>
@@ -1400,8 +1442,125 @@ function SummaryCard({ summary }: { summary: string }) {
           ✨ Overall summary
         </span>
       </div>
-      <div className="p-4 space-y-4 text-base text-gray-800 dark:text-gray-200 leading-relaxed">
+      {/* Capped so lines stay readable when the page is wide */}
+      <div className="p-4 space-y-4 max-w-3xl text-base text-gray-800 dark:text-gray-200 leading-relaxed">
         {renderProse(summary)}
+      </div>
+    </div>
+  );
+}
+
+// ─── Engine review card ───────────────────────────────────────────────────────
+// How the game went by the engine's reckoning, as on the game's analysis page:
+// both players' accuracy and how many of their moves fall in each quality
+// category. Shown at the end of the game, ahead of my own overall summary.
+
+const QUALITY_NAME: Record<MoveQualityKey, string> = {
+  book: 'Book', excellent: 'Excellent', good: 'Good', inaccuracy: 'Inaccuracy', mistake: 'Mistake', blunder: 'Blunder',
+};
+
+// Same colours as the legend on the analysis page.
+const QUALITY_BADGE: Record<MoveQualityKey, string> = {
+  book:       'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+  excellent:  'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+  good:       'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+  inaccuracy: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+  mistake:    'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+  blunder:    'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+};
+
+const QUALITY_HINT: Record<MoveQualityKey, string> = {
+  book: 'opening theory', excellent: '≤ 25 cp lost', good: '≤ 50 cp', inaccuracy: '≤ 100 cp', mistake: '≤ 200 cp', blunder: '> 200 cp',
+};
+
+export function EngineSummaryCard({ summary, players, userColor }: {
+  summary: AnalysisSummary;
+  players?: { white: string; black: string };
+  /** The author's colour: their column is marked "me". */
+  userColor: 'white' | 'black';
+}) {
+  const sides = (['white', 'black'] as const).map(color => ({
+    color,
+    name: players?.[color] || (color === 'white' ? 'White' : 'Black'),
+    data: summary[color] as SideSummary,
+    isMe: color === userColor,
+  }));
+  const hasAccuracy = sides.some(s => s.data.accuracy !== null);
+  const hasLoss     = sides.some(s => s.data.averageCentipawnLoss !== null);
+
+  // The author's column carries a faint tint so "me" is easy to pick out
+  const cell = (isMe: boolean) =>
+    `px-3 py-1.5 text-right font-mono tabular-nums ${isMe ? 'bg-purple-50 dark:bg-purple-900/20' : ''}`;
+  const dash = <span className="text-gray-500 dark:text-gray-400">—</span>;
+
+  return (
+    <div className="border border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden">
+      <div className="bg-blue-50 dark:bg-blue-900/30 px-4 py-3 border-b border-blue-200 dark:border-blue-800">
+        <span className="font-semibold text-base text-blue-900 dark:text-blue-200">📊 Engine review</span>
+      </div>
+
+      <div className="p-4 max-w-2xl">
+        <table className="w-full text-base text-gray-800 dark:text-gray-200">
+          <thead>
+            <tr>
+              <td />
+              {sides.map(s => (
+                <th key={s.color} scope="col" className={`px-3 pb-2 text-right align-bottom font-semibold ${s.isMe ? 'bg-purple-50 dark:bg-purple-900/20 rounded-t-lg' : ''}`}>
+                  <span className="block break-words">{s.name}</span>
+                  <span className="block text-xs font-normal text-gray-600 dark:text-gray-400">
+                    {s.color === 'white' ? 'White' : 'Black'}{s.isMe ? ' · me' : ''}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {hasAccuracy && (
+              <tr className="border-t border-gray-200 dark:border-gray-700">
+                <th scope="row" className="py-1.5 pr-3 text-left font-medium">Accuracy</th>
+                {sides.map(s => (
+                  <td key={s.color} className={cell(s.isMe)}>
+                    {s.data.accuracy !== null ? `${s.data.accuracy}%` : dash}
+                  </td>
+                ))}
+              </tr>
+            )}
+            {hasLoss && (
+              <tr className="border-t border-gray-200 dark:border-gray-700">
+                <th scope="row" className="py-1.5 pr-3 text-left font-medium">Average loss per move</th>
+                {sides.map(s => (
+                  <td key={s.color} className={cell(s.isMe)}>
+                    {s.data.averageCentipawnLoss !== null ? `${s.data.averageCentipawnLoss} cp` : dash}
+                  </td>
+                ))}
+              </tr>
+            )}
+            <tr className="border-t border-gray-200 dark:border-gray-700">
+              <th scope="row" className="py-1.5 pr-3 text-left font-medium">Moves analysed</th>
+              {sides.map(s => <td key={s.color} className={cell(s.isMe)}>{s.data.moves}</td>)}
+            </tr>
+            <tr className="border-t border-gray-200 dark:border-gray-700">
+              <th colSpan={3} scope="colgroup" className="pt-3 pb-1 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                Moves by quality
+              </th>
+            </tr>
+            {MOVE_QUALITIES.map(q => (
+              <tr key={q}>
+                <th scope="row" className="py-1.5 pr-3 text-left font-normal">
+                  <span className={`inline-block rounded px-2 py-0.5 text-sm font-medium ${QUALITY_BADGE[q]}`}>
+                    {QUALITY_NAME[q]}
+                  </span>{' '}
+                  <span className="text-xs text-gray-600 dark:text-gray-400">{QUALITY_HINT[q]}</span>
+                </th>
+                {sides.map(s => (
+                  <td key={s.color} className={`${cell(s.isMe)} ${s.data.counts[q] === 0 ? 'text-gray-500 dark:text-gray-400' : 'font-semibold'}`}>
+                    {s.data.counts[q]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -1409,11 +1568,11 @@ function SummaryCard({ summary }: { summary: string }) {
 
 // Locked summary — stays sealed until the whole game has been played through,
 // with a fast-forward escape hatch for readers who'd rather skip ahead.
-function LockedSummaryCard({ onReveal }: { onReveal: () => void }) {
+function LockedSummaryCard({ onReveal, label = '✨ Overall summary' }: { onReveal: () => void; label?: string }) {
   return (
     <div className="border border-dashed border-purple-300 dark:border-purple-700 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
       <span className="font-semibold text-base text-purple-600 dark:text-purple-300">
-        ✨ Overall summary
+        {label}
       </span>
       <div className="flex items-center gap-2 shrink-0">
         <span className="text-sm text-gray-400 dark:text-gray-500 hidden sm:inline">
@@ -1441,11 +1600,15 @@ export function revealScrollBlock(contentHeight: number, viewportHeight: number)
 
 // ─── Game walkthrough container ───────────────────────────────────────────────
 
-export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
+export function GameWalkthrough({ pgn, sections, userColor, summary = '', analysisSummary = null, players }: {
   pgn: string;
   sections: MoveSection[];
   userColor: 'white' | 'black';
   summary?: string;
+  /** Engine review shown at the end of the game, ahead of the summary. */
+  analysisSummary?: AnalysisSummary | null;
+  /** Player names for the engine review's column headings. */
+  players?: { white: string; black: string };
 }) {
   const game = useMemo(() => parseGame(pgn), [pgn]);
 
@@ -1520,6 +1683,7 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
             </div>
           </div>
         )}
+        {analysisSummary && <EngineSummaryCard summary={analysisSummary} players={players} userColor={userColor} />}
         {summary && <SummaryCard summary={summary} />}
       </>
     );
@@ -1546,7 +1710,7 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
 
   return (
     <>
-      <p className="text-base text-left text-gray-600 dark:text-gray-300 leading-relaxed">
+      <p className="max-w-3xl text-base text-left text-gray-600 dark:text-gray-300 leading-relaxed">
         This post follows my game move by move. Wherever I paused to record my thoughts,
         you can try to guess my move — which isn&apos;t necessarily the best one! Reveal what I was
         thinking first, or guess straight away. Afterwards you&apos;ll see my own self-criticism or
@@ -1554,12 +1718,13 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
         depending on whether it was any good.
       </p>
 
-      {/* Sticky progress chip — sits to the right of the main column on wide
-          screens, and at the top-right on narrow ones. Hides once everything
-          (game included) is open so it doesn't linger over the summary. */}
+      {/* Sticky progress chip — at the top-right, or beside the main column on
+          very wide screens, where the margin is wide enough to hold it without
+          covering a card. Hides once everything (game included) is open so it
+          doesn't linger over the summary. */}
       {!summaryUnlocked && (
         <div
-          className="fixed z-40 top-3 right-3 sm:top-1/3 sm:right-4 md:right-6 lg:right-10
+          className="fixed z-40 top-3 right-3 2xl:top-1/3 2xl:right-10
                      bg-white dark:bg-gray-800 border border-purple-200 dark:border-purple-700
                      rounded-full shadow-md px-3.5 py-2 flex items-center gap-2"
           aria-live="polite"
@@ -1605,11 +1770,21 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
         />
       )}
 
-      {/* Overall summary — sealed until the game is played through (or skipped) */}
-      {summary && (
+      {/* Engine review and overall summary — sealed until the game is played through (or skipped) */}
+      {(summary || analysisSummary) && (
         summaryUnlocked
-          ? <SummaryCard summary={summary} />
-          : <LockedSummaryCard onReveal={() => setRevealEnd(true)} />
+          ? (
+            <>
+              {analysisSummary && <EngineSummaryCard summary={analysisSummary} players={players} userColor={userColor} />}
+              {summary && <SummaryCard summary={summary} />}
+            </>
+          )
+          : (
+            <LockedSummaryCard
+              onReveal={() => setRevealEnd(true)}
+              label={summary ? '✨ Overall summary' : '📊 Engine review'}
+            />
+          )
       )}
     </>
   );

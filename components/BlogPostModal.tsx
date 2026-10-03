@@ -7,6 +7,7 @@ import {
   QUALITY_STYLE,
   formatEval,
 } from '@/components/blog-shared';
+import type { AnalysisSummary } from '@/lib/analysis-utils';
 
 interface BlogPostModalProps {
   gameId: string;
@@ -152,6 +153,8 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
   const [summary, setSummary]     = useState('');
   const [pgn, setPgn]             = useState('');
   const [userColor, setUserColor] = useState<'white' | 'black'>('white');
+  const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null);
+  const [players, setPlayers]     = useState<{ white: string; black: string } | undefined>(undefined);
   const [error, setError]         = useState('');
   const [copied, setCopied]         = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -172,6 +175,8 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
       setSummary(data.summary || '');
       setPgn(data.pgn || '');
       setUserColor(data.userColor || 'white');
+      setAnalysisSummary(data.analysisSummary ?? null);
+      setPlayers(data.gameMeta ? { white: data.gameMeta.white, black: data.gameMeta.black } : undefined);
       setStatus('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate blog post');
@@ -233,7 +238,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl shadow-xl">
+      <div className="bg-white dark:bg-gray-800 w-full max-w-5xl max-h-[85vh] flex flex-col rounded-xl shadow-xl">
 
         {/* ── Header ─────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
@@ -277,7 +282,14 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
           {status === 'done' && (
             /* Same walkthrough (and gated summary) the public /blog page
                renders, so the preview matches exactly what readers will see. */
-            <GameWalkthrough pgn={pgn} sections={sections} userColor={userColor} summary={summary} />
+            <GameWalkthrough
+              pgn={pgn}
+              sections={sections}
+              userColor={userColor}
+              summary={summary}
+              analysisSummary={analysisSummary}
+              players={players}
+            />
           )}
         </div>
 

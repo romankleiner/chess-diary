@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { MoveSection, GameWalkthrough } from '@/components/blog-shared';
+import type { AnalysisSummary } from '@/lib/analysis-utils';
 
 interface GameMeta {
   white: string;
@@ -17,6 +18,7 @@ interface BlogData {
   summary: string;
   pgn: string;
   userColor: 'white' | 'black';
+  analysisSummary?: AnalysisSummary | null;
   gameMeta: GameMeta;
 }
 
@@ -83,7 +85,7 @@ export default function BlogPage() {
 
       {/* ── Top bar ──────────────────────────────────────────────────── */}
       <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <a
             href="/"
             className="text-sm font-semibold text-purple-600 dark:text-purple-400 hover:underline"
@@ -93,7 +95,7 @@ export default function BlogPage() {
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto px-4 py-8 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
 
         {/* ── Loading ──────────────────────────────────────────────────── */}
         {status === 'loading' && (
@@ -140,13 +142,15 @@ export default function BlogPage() {
               sections={data.sections}
               userColor={data.userColor}
               summary={data.summary}
+              analysisSummary={data.analysisSummary}
+              players={{ white: data.gameMeta.white, black: data.gameMeta.black }}
             />
           </>
         )}
       </main>
 
       {/* ── Footer ───────────────────────────────────────────────────── */}
-      <footer className="max-w-2xl mx-auto px-4 py-8 text-center text-xs text-gray-400 dark:text-gray-600">
+      <footer className="max-w-6xl mx-auto px-4 py-8 text-center text-xs text-gray-400 dark:text-gray-600">
         Written with{' '}
         <a href="/" className="hover:underline text-purple-500 dark:text-purple-400">
           Chess Diary

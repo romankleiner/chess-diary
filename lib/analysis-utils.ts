@@ -75,6 +75,74 @@ export function getMoveQuality(cpLoss: number): string {
   return 'blunder';
 }
 
+/** The move-quality categories, best to worst -- the legend on the game's analysis page. */
+export const MOVE_QUALITIES = ['book', 'excellent', 'good', 'inaccuracy', 'mistake', 'blunder'] as const;
+export type MoveQualityKey = (typeof MOVE_QUALITIES)[number];
+
+export interface SideSummary {
+  /** Moves analysed for this side. */
+  moves: number;
+  accuracy: number | null;
+  /** Mean centipawn loss over the non-book moves, like the accuracy figure. */
+  averageCentipawnLoss: number | null;
+  counts: Record<MoveQualityKey, number>;
+}
+
+export interface AnalysisSummary {
+  white: SideSummary;
+  black: SideSummary;
+}
+
+/** The parts of a stored analysis the summary reads; everything is optional because old analyses vary. */
+interface StoredAnalysis {
+  moves?: unknown;
+  whiteAccuracy?: unknown;
+  blackAccuracy?: unknown;
+}
+
+interface StoredMove {
+  color?: string;
+  moveQuality?: string;
+  quality?: string;
+  centipawnLoss?: unknown;
+}
+
+/**
+ * Both players' accuracy and how many of their moves fall in each quality
+ * category -- the overview shown at the end of the blog. Returns null when the
+ * game has no analysed moves.
+ */
+export function summarizeAnalysis(analysis: StoredAnalysis | null | undefined): AnalysisSummary | null {
+  if (!analysis || !Array.isArray(analysis.moves) || analysis.moves.length === 0) return null;
+  const allMoves = analysis.moves as StoredMove[];
+
+  const side = (color: 'white' | 'black'): SideSummary => {
+    const counts = Object.fromEntries(MOVE_QUALITIES.map(q => [q, 0])) as Record<MoveQualityKey, number>;
+    const moves = allMoves.filter(m => m?.color === color);
+
+    let lossTotal = 0, lossCount = 0;
+    for (const move of moves) {
+      const quality: string = move.moveQuality || move.quality || '';
+      if ((MOVE_QUALITIES as readonly string[]).includes(quality)) counts[quality as MoveQualityKey]++;
+      // Book moves carry a loss of 0 and are left out of accuracy, so leave them out here too.
+      if (quality !== 'book' && typeof move.centipawnLoss === 'number') {
+        lossTotal += move.centipawnLoss;
+        lossCount++;
+      }
+    }
+
+    const accuracy = color === 'white' ? analysis.whiteAccuracy : analysis.blackAccuracy;
+    return {
+      moves: moves.length,
+      accuracy: typeof accuracy === 'number' ? accuracy : null,
+      averageCentipawnLoss: lossCount > 0 ? Math.round(lossTotal / lossCount) : null,
+      counts,
+    };
+  };
+
+  return { white: side('white'), black: side('black') };
+}
+
 /**
  * Compute summary statistics for the user's moves in a completed game analysis.
  * Returns null if analysis data is missing.

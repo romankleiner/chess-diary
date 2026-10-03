@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { Chess } from 'chess.js';
 import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
+import { summarizeAnalysis } from '@/lib/analysis-utils';
+import { formatSanLine, uciLineToSan } from '@/lib/position-facts';
 
 // Resolve whose game this is without requiring the viewer to be logged in.
 // A published (shared) game is readable by anyone — including signed-in users
@@ -21,6 +23,7 @@ interface EngineEval {
   centipawnLoss: number;
   evaluation: number;        // white-POV, pawn units
   bestMoveSan: string | null; // engine's preferred move at the position, when different
+  topLine: string | null;    // the engine's line from there in numbered SAN ("6. d4 exd4 7. e5"), when my move wasn't its top move
   depth: number | null;      // search depth of the stored analysis, so a reader's guess can be checked as deeply
 }
 
@@ -198,11 +201,29 @@ export async function POST(
                 if (m) bestMoveSan = m.san;
               } catch { /* malformed bestMove → omit */ }
             }
+
+            // The engine's whole line, not just its first move. The stored line
+            // is only trusted if it starts with the best move; otherwise fall
+            // back to the best move alone. A line that turns illegal partway
+            // is cut short rather than dropped.
+            let topLine: string | null = null;
+            if (bestMoveSan && plyIndex !== null && pgnFens[plyIndex]) {
+              const stored: string[] = Array.isArray(hit.principalVariation)
+                ? hit.principalVariation.map(String)
+                : typeof hit.principalVariation === 'string'
+                  ? hit.principalVariation.split(/\s+/).filter(Boolean)
+                  : [];
+              const line = stored.length > 0 && stored[0] === hit.bestMove ? stored : [hit.bestMove];
+              const { sans } = uciLineToSan(pgnFens[plyIndex], line);
+              if (sans.length > 0) topLine = formatSanLine(pgnFens[plyIndex], sans, { bareSingle: false });
+            }
+
             engineEval = {
               moveQuality:   hit.moveQuality,
               centipawnLoss: hit.centipawnLoss,
               evaluation:    hit.evaluation,
               bestMoveSan,
+              topLine,
               depth:         typeof analysis?.depth === 'number' ? analysis.depth : null,
             };
           }
@@ -264,6 +285,7 @@ export async function POST(
       summary,
       pgn: game.pgn || '',
       userColor,
+      analysisSummary: summarizeAnalysis(analysis),
       gameMeta: {
         white:       game.white       || '',
         black:       game.black       || '',

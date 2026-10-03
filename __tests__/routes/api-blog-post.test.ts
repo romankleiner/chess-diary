@@ -290,6 +290,67 @@ describe('POST /api/games/[id]/blog-post — engineEval', () => {
     expect(sections[0].engineEval.depth).toBeNull();
   });
 
+  // gameA.pgn = '1. e4 e5 2. Nf3 Nc6'; the entry is move 2 for White, so the
+  // position before it is after 1. e4 e5 and the numbering starts at "2.".
+  const lineFor = async (move: Record<string, unknown>) => {
+    mockGetAnalysis.mockResolvedValue({ ...analysisA, moves: [{ moveNumber: 2, color: 'white', move: 'Nf3', moveQuality: 'good', evaluation: 0.1, ...move }] });
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    return sections[0].engineEval;
+  };
+
+  it('gives the engine’s whole line in numbered SAN when my move was not its top move', async () => {
+    const eval_ = await lineFor({ centipawnLoss: 30, bestMove: 'b1c3', principalVariation: ['b1c3', 'g8f6', 'g1f3', 'b8c6'] });
+    expect(eval_.topLine).toBe('2. Nc3 Nf6 3. Nf3 Nc6');
+  });
+
+  it('starts the numbering at the right move for Black, with an ellipsis', async () => {
+    // Black's reply is ply 3; the position before it is after 1. e4 e5 2. Nf3.
+    mockGetAnalysis.mockResolvedValue({
+      ...analysisA,
+      moves: [{ moveNumber: 2, color: 'black', move: 'Nc6', moveQuality: 'good', evaluation: 0.1, centipawnLoss: 30, bestMove: 'g8f6', principalVariation: ['g8f6', 'f3e5'] }],
+    });
+    mockGetJournal.mockResolvedValue([{ ...moveEntry, moveNumber: 2, moveNotation: 'Nc6' }]);
+    mockGetSetting.mockImplementation(async (key: string) => (key === 'chesscom_username' ? 'opponent_a' : null));
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval.topLine).toBe('2... Nf6 3. Nxe5');
+  });
+
+  it('has no top line when I played the engine’s top move', async () => {
+    const eval_ = await lineFor({ centipawnLoss: 0, bestMove: 'g1f3', principalVariation: ['g1f3', 'b8c6'] });
+    expect(eval_.topLine).toBeNull();
+  });
+
+  it('falls back to the best move alone when no line was stored', async () => {
+    const eval_ = await lineFor({ centipawnLoss: 30, bestMove: 'b1c3' });
+    expect(eval_.topLine).toBe('2. Nc3');
+  });
+
+  it('accepts a line stored as one space-separated string', async () => {
+    const eval_ = await lineFor({ centipawnLoss: 30, bestMove: 'b1c3', principalVariation: 'b1c3 g8f6' });
+    expect(eval_.topLine).toBe('2. Nc3 Nf6');
+  });
+
+  it('does not trust a stored line that does not start with the best move', async () => {
+    const eval_ = await lineFor({ centipawnLoss: 30, bestMove: 'b1c3', principalVariation: ['g1f3', 'b8c6'] });
+    expect(eval_.topLine).toBe('2. Nc3');
+  });
+
+  it('cuts the line short where it stops being legal, keeping the good part', async () => {
+    const eval_ = await lineFor({ centipawnLoss: 30, bestMove: 'b1c3', principalVariation: ['b1c3', 'g8f6', 'e2e5', 'b8c6'] });
+    expect(eval_.topLine).toBe('2. Nc3 Nf6');
+  });
+
+  it('has no top line when there is no best move to show', async () => {
+    const eval_ = await lineFor({ centipawnLoss: 30 });
+    expect(eval_.topLine).toBeNull();
+  });
+
+  it('leaves the line out rather than failing on a best move that makes no sense', async () => {
+    const eval_ = await lineFor({ centipawnLoss: 30, bestMove: 'zzzz', principalVariation: ['zzzz'] });
+    expect(eval_.topLine).toBeNull();
+  });
+
   it('leaves bestMoveSan null when analysis omits a bestMove', async () => {
     const customAnalysis = {
       ...analysisA,
@@ -454,6 +515,34 @@ describe('POST /api/games/[id]/blog-post — summary', () => {
 });
 
 // ─── Response shape ───────────────────────────────────────────────────────────
+
+describe('POST /api/games/[id]/blog-post — analysisSummary', () => {
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue(gameA);
+  });
+
+  it('summarizes both players’ accuracy and move categories', async () => {
+    mockGetAnalysis.mockResolvedValue(analysisA);
+    const { analysisSummary } = await (await POST(makeReq(), params(gameA.id))).json();
+
+    expect(analysisSummary.white).toMatchObject({ moves: 2, accuracy: 88.5, counts: { excellent: 1, good: 1 } });
+    expect(analysisSummary.black).toMatchObject({ moves: 2, accuracy: 74.2, counts: { mistake: 1, blunder: 1 } });
+  });
+
+  it('is null when the game has not been analysed', async () => {
+    mockGetAnalysis.mockResolvedValue(null);
+    const body = await (await POST(makeReq(), params(gameA.id))).json();
+
+    expect(body.analysisSummary).toBeNull();
+  });
+
+  it('is null when the analysis has no moves', async () => {
+    mockGetAnalysis.mockResolvedValue({ ...analysisA, moves: [] });
+    const body = await (await POST(makeReq(), params(gameA.id))).json();
+
+    expect(body.analysisSummary).toBeNull();
+  });
+});
 
 describe('POST /api/games/[id]/blog-post — response shape', () => {
   beforeEach(() => {

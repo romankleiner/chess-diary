@@ -77,7 +77,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 | POST | `/api/games/[id]/analysis/progress` | Read/write in-progress analysis state |
 | POST | `/api/games/analyze` | Run Stockfish or chess-api.com analysis on a game |
 | POST | `/api/games/analyze-thinking` | Run Claude AI analysis on the player's recorded thinking |
-| POST | `/api/games/[id]/blog-post` | Generate a markdown blog post from analysis + journal |
+| POST | `/api/games/[id]/blog-post` | Build the blog from analysis + journal: per-move `sections` (each with its engine check, including the engine's `topLine` in numbered SAN and the analysis `depth`), the written `summary`, the `pgn`, and `analysisSummary` (both players' accuracy and move-quality counts, for the end-of-game review). Readable without sign-in once the game is shared |
 
 ### Journal
 
@@ -138,6 +138,7 @@ Pure functions for processing engine output:
 - `calculateAccuracy(winPercentageLoss)` — chess.com win-percentage accuracy formula
 - `getMoveQuality(centipawnLoss, isBookMove)` — classifies moves as book / excellent / good / inaccuracy / mistake / blunder
 - `normalizeCpLoss(cp)` — handles mate-score ceiling artifacts
+- `summarizeAnalysis(analysis)` — both players' accuracy, average centipawn loss (book moves excluded, as in accuracy) and how many moves fall in each of `MOVE_QUALITIES` (book, excellent, good, inaccuracy, mistake, blunder — the legend on the game's analysis page). Feeds the blog's end-of-game engine review. There is no "brilliant" category: nothing in the analysis produces one
 
 ### `lib/analysis-prompt.ts` — Claude Prompt Builder
 Constructs the prompt sent to Claude for AI analysis of player thinking. Incorporates: position FEN, engine evaluation before/after, best move, principal variation, the player's recorded thought process, and game context. Adjusts wording when the move is in the opening book. An optional `PromptGrounding` argument adds the verified position facts, the engine line in SAN, and the `[[line: ...]]` marker rules described below.
@@ -207,7 +208,10 @@ Generates local-timezone ISO timestamps and filters journal entries by date rang
 | `PostGameSummaryCard.tsx` | Collapsible card displaying a post-game reflection entry (stats grid + coloured reflection sections) |
 | `PostGameSummaryForm.tsx` | Form for writing post-game reflections: "What went well", "Mistakes", "Lessons Learned", "Next Steps" |
 | `BlogPostModal.tsx` | Modal for generating and viewing a game analysis as a formatted blog post |
-| `blog-shared.tsx` | Types and interactive pieces shared by the modal and the public `/blog/[gameId]` page: `GameWalkthrough` (guess-the-move cards), the commentary boxes (`ThinkingBlock`, `AiAnalysisBlock`, `PostGameBlock`), `EvalCallout`, and `GuessEvalCard` (engine check of a reader's guess). `renderProse` / `renderInline` render commentary text with `**bold**` and chess notation set apart. A move has three phases (`puzzle` → optionally `thinking_shown` → `complete`); solving it, by guessing or giving up, goes straight to `complete`, which shows the thinking, engine check, AI analysis and post-game review together |
+| `blog-shared.tsx` | Types and interactive pieces shared by the modal and the public `/blog/[gameId]` page: `GameWalkthrough` (guess-the-move cards), the commentary boxes (`ThinkingBlock`, `AiAnalysisBlock`, `PostGameBlock`), `EvalCallout`, and `GuessEvalCard` (engine check of a reader's guess). `renderProse` / `renderInline` render commentary text with `**bold**` and chess notation set apart. A move has three phases (`puzzle` → optionally `thinking_shown` → `complete`); solving it, by guessing or giving up, goes straight to `complete`, which shows the thinking, engine check (with the engine's top line when my move wasn't its top move), AI analysis and post-game review together. At the end of the game `EngineSummaryCard` shows both players' accuracy and move-quality counts, sealed behind the same unlock as the overall summary. Step counters count whole moves (`formatMoveCount`: 16 plies read "8", an odd ply "4.5") |
+
+### Blog layout
+The public blog and the preview modal share `GameWalkthrough`, and the page is `max-w-6xl` (the modal `max-w-5xl`). Each guess card lays itself out with a **container query** (`@container` / `@4xl:` — about 896px of card width), not a viewport breakpoint, so the narrower modal adapts correctly: below that it is one column; above it the board and its controls sit on the left (28rem) and the prompts, feedback and commentary read down the right. The single-column grid track is `minmax(0,1fr)` — a plain `auto` track grows to the widest control row and clips a phone-sized card. Running prose (intro, overall summary) is capped at `max-w-3xl` so lines stay readable on a wide page, and the "Unlocked" progress chip sits at the top-right except on `2xl` screens, where the margin is wide enough to hold it beside the column.
 
 ---
 
