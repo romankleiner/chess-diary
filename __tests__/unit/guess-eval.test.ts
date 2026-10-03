@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { compareGuess, fetchGuessEval, playerPawns, rateGuess, topLinePawns } from '@/lib/guess-eval';
+import { compareGuess, earnsMoveOn, fetchGuessEval, playerPawns, rateGuess, topLinePawns } from '@/lib/guess-eval';
 import { formatPawns } from '@/lib/position-eval';
 import type { PositionEval } from '@/lib/position-eval';
 
@@ -141,6 +141,76 @@ describe('compareGuess — against my move', () => {
   });
 });
 
+describe('compareGuess — vsMine, the judgement as a value to act on', () => {
+  const vs = (guess: PositionEval, mine: number, color: 'white' | 'black' = 'white') =>
+    compareGuess({ guess, mine, top: mine, color }).vsMine;
+
+  it('is "better" when the guess beats my move by more than the engine’s noise', () => {
+    expect(vs(ev(0.9), 0.5)).toBe('better'); // 0.4 better
+    expect(vs(ev(0.7), 0.5)).toBe('better'); // 0.2: the smallest gap that counts
+  });
+
+  it('is "same" for a tie or a gap of a tenth or less, which is noise', () => {
+    expect(vs(ev(0.5), 0.5)).toBe('same');
+    expect(vs(ev(0.6), 0.5)).toBe('same'); // 0.1 better still ties
+    expect(vs(ev(0.4), 0.5)).toBe('same');
+  });
+
+  it('is "worse" when the guess falls behind my move', () => {
+    expect(vs(ev(0.1), 0.5)).toBe('worse');
+    expect(vs(ev(0.3), 0.5)).toBe('worse'); // 0.2 behind
+  });
+
+  it('judges from Black’s side: a lower White evaluation is better', () => {
+    expect(vs(ev(-0.9), -0.5, 'black')).toBe('better');
+    expect(vs(ev(-0.5), -0.5, 'black')).toBe('same');
+    expect(vs(ev(-0.1), -0.5, 'black')).toBe('worse');
+    // …and the same White-POV numbers mean the opposite for White
+    expect(vs(ev(-0.9), -0.5, 'white')).toBe('worse');
+  });
+
+  it('counts finding a mate that my move did not as better', () => {
+    expect(vs(ev(100, 3), 1.0)).toBe('better');
+    expect(vs(ev(-100, -3), -1.0, 'black')).toBe('better');
+  });
+
+  it('counts avoiding a mate I walked into as better', () => {
+    expect(vs(ev(-0.5), -100)).toBe('better');
+  });
+
+  it('is "same" when both moves mate, or both walk into mate', () => {
+    expect(vs(ev(100, 2), 100)).toBe('same');
+    expect(vs(ev(-100, -2), -100)).toBe('same');
+  });
+
+  it('is "worse" when the guess walks into a mate or misses the one I had', () => {
+    expect(vs(ev(-100, -2), 0.3)).toBe('worse');
+    expect(vs(ev(2.0), 100)).toBe('worse');
+  });
+
+  it('is never "better" for a guess that merely matches the top line when my move did too', () => {
+    const c = compareGuess({ guess: ev(1.0), mine: 1.0, top: 1.0, color: 'white' });
+    expect(c.vsMine).toBe('same');
+  });
+
+  it('always agrees with the sentence on the card', () => {
+    const values = [-100, -50, -3, -1.3, -0.6, -0.5, -0.4, -0.1, 0, 0.1, 0.4, 0.5, 0.6, 1.3, 3, 50, 100];
+    const mates = (p: number) => (Math.abs(p) >= 90 ? (p > 0 ? 2 : -2) : null);
+    let checked = 0;
+    for (const color of ['white', 'black'] as const) {
+      for (const guess of values) {
+        for (const mine of values) {
+          const c = compareGuess({ guess: ev(guess, mates(guess)), mine, top: mine, color });
+          const expected = c.versusMine.startsWith('Better') ? 'better' : c.versusMine.startsWith('Worse') ? 'worse' : 'same';
+          expect(c.vsMine, `${color} guess ${guess} vs mine ${mine}: "${c.versusMine}"`).toBe(expected);
+          checked++;
+        }
+      }
+    }
+    expect(checked).toBe(2 * values.length * values.length);
+  });
+});
+
 describe('compareGuess — forced mates', () => {
   it('celebrates finding the mate the engine found', () => {
     const c = compareGuess({ guess: ev(100, 3), mine: 100, top: 100, color: 'white' });
@@ -259,6 +329,50 @@ describe('rateGuess', () => {
     const fetchFn = okReply({ error: 'Could not evaluate that position right now.' }, false, 502);
     await expect(rateGuess({ fenAfterGuess: START_FEN, isEngineBest: false, engine, color: 'white', fetchFn }))
       .rejects.toThrow('Could not evaluate');
+  });
+});
+
+// ─── moving on after a better guess ───────────────────────────────────────────
+
+describe('earnsMoveOn', () => {
+  const open = { isEngineBest: false, alreadySolved: false, stillOnPage: true };
+  const rated = (vsMine: 'better' | 'same' | 'worse') => ({ comparison: { vsMine } });
+
+  it('moves on for a guess that beats my move, while the move is open', () => {
+    expect(earnsMoveOn({ ...rated('better'), ...open })).toBe(true);
+  });
+
+  it('does not move on for a guess that only ties or loses to my move', () => {
+    expect(earnsMoveOn({ ...rated('same'), ...open })).toBe(false);
+    expect(earnsMoveOn({ ...rated('worse'), ...open })).toBe(false);
+  });
+
+  it('does not count a late answer once the move is already solved, which would unlock a second card', () => {
+    // e.g. the reader gave up, or found my move, while the engine was still thinking
+    expect(earnsMoveOn({ ...rated('better'), ...open, alreadySolved: true })).toBe(false);
+  });
+
+  it('does not count an answer that arrives after the card has left the page', () => {
+    expect(earnsMoveOn({ ...rated('better'), ...open, stillOnPage: false })).toBe(false);
+  });
+
+  it('leaves the engine’s own top move to the instant path that already accepts it', () => {
+    expect(earnsMoveOn({ ...rated('better'), ...open, isEngineBest: true })).toBe(false);
+  });
+
+  it('needs every condition at once', () => {
+    const better = rated('better');
+    for (const flag of ['isEngineBest', 'alreadySolved'] as const) {
+      expect(earnsMoveOn({ ...better, ...open, [flag]: true })).toBe(false);
+    }
+    expect(earnsMoveOn({ ...better, ...open, stillOnPage: false })).toBe(false);
+    expect(earnsMoveOn({ ...better, ...open })).toBe(true);
+  });
+
+  it('works with a real comparison', () => {
+    const c = compareGuess({ guess: ev(0.9), mine: 0.3, top: 0.6, color: 'white' });
+    expect(earnsMoveOn({ comparison: c, ...open })).toBe(true);
+    expect(earnsMoveOn({ comparison: compareGuess({ guess: ev(0.35), mine: 0.3, top: 0.6, color: 'white' }), ...open })).toBe(false);
   });
 });
 

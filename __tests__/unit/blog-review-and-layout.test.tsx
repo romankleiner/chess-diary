@@ -458,6 +458,15 @@ describe('the walkthrough card layout', () => {
     expect(html).not.toContain('lg:right-10');
   });
 
+  it('tells readers that a move the engine rates above mine counts too', () => {
+    const intro = html.match(/<p class="max-w-3xl[^"]*">(This post follows[\s\S]*?)<\/p>/)![1];
+
+    expect(intro).toContain('If you find a move the');
+    expect(intro).toContain('engine rates above mine, that counts too.');
+    // …and still says the original thing about guessing
+    expect(intro).toContain('isn&#x27;t necessarily the best one');
+  });
+
   it('keeps running text a readable width on a wide page', () => {
     expect(html).toMatch(/<p class="max-w-3xl[^"]*">This post follows my game/);
   });

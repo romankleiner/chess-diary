@@ -10,8 +10,9 @@ import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { Chess } from 'chess.js';
 import { splitNotation } from '@/lib/notation';
+import { splitLinks } from '@/lib/linkify';
 import { formatPawns } from '@/lib/position-eval';
-import { playerPawns, rateGuess, topLinePawns } from '@/lib/guess-eval';
+import { earnsMoveOn, playerPawns, rateGuess, topLinePawns } from '@/lib/guess-eval';
 import type { GuessRating } from '@/lib/guess-eval';
 import { MOVE_QUALITIES } from '@/lib/analysis-utils';
 import type { AnalysisSummary, MoveQualityKey, SideSummary } from '@/lib/analysis-utils';
@@ -85,10 +86,11 @@ export function normSan(s: string): string {
 }
 
 // ─── Inline renderer ──────────────────────────────────────────────────────────
-// Within a paragraph: converts **text** markers to <strong>, and sets chess
-// notation ("9...Bxd2+ 10. Nxd2", "Nf3", "O-O") apart from the words around it
-// in a monospaced, tinted chip. Chips can wrap across lines (box-decoration-clone
-// repaints the tint on each line) and stay upright inside italic text.
+// Within a paragraph: converts **text** markers to <strong>, turns web addresses
+// into links, and sets chess notation ("9...Bxd2+ 10. Nxd2", "Nf3", "O-O") apart
+// from the words around it in a monospaced, tinted chip. Chips can wrap across
+// lines (box-decoration-clone repaints the tint on each line) and stay upright
+// inside italic text.
 
 function Notation({ children }: { children: string }) {
   return (
@@ -107,12 +109,35 @@ function renderNotation(text: string): React.ReactNode {
   );
 }
 
+// Web addresses become links that open in a new tab (so a reader's progress
+// through the walkthrough isn't lost). Addresses are split out first, so text
+// inside one is never mistaken for chess notation. Only http(s) addresses are
+// ever linked (see lib/linkify.ts), and long ones wrap rather than push the
+// card wider than a phone.
+function renderTextSegments(text: string): React.ReactNode {
+  return splitLinks(text).map((segment, i) =>
+    segment.href ? (
+      <a
+        key={i}
+        href={segment.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-700 underline underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-200 [overflow-wrap:anywhere]"
+      >
+        {segment.text}
+      </a>
+    ) : (
+      <React.Fragment key={i}>{renderNotation(segment.text)}</React.Fragment>
+    )
+  );
+}
+
 export function renderInline(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, i) =>
     part.startsWith('**') && part.endsWith('**')
-      ? <strong key={i}>{renderNotation(part.slice(2, -2))}</strong>
-      : <React.Fragment key={i}>{renderNotation(part)}</React.Fragment>
+      ? <strong key={i}>{renderTextSegments(part.slice(2, -2))}</strong>
+      : <React.Fragment key={i}>{renderTextSegments(part)}</React.Fragment>
   );
 }
 
@@ -987,16 +1012,25 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   const [phase, setPhase]             = useState<SectionPhase>('puzzle');
   const [viewIdx, setViewIdx]         = useState(startPly);
   const [tempFen, setTempFen]         = useState<string | null>(null);
-  const [feedback, setFeedback]       = useState<'correct' | 'best' | 'wrong' | null>(null);
-  // 'guessed'       — reader played the author's actual move
-  // 'guessed_best'  — reader played the engine's top move (the author didn't)
-  // 'revealed'      — reader gave up
-  const [resolvedHow, setResolvedHow] = useState<'guessed' | 'guessed_best' | 'revealed' | null>(null);
+  const [feedback, setFeedback]       = useState<'correct' | 'best' | 'better' | 'wrong' | null>(null);
+  // 'guessed'        — reader played the author's actual move
+  // 'guessed_best'   — reader played the engine's top move (the author didn't)
+  // 'guessed_better' — reader played another move the engine rates above the author's
+  // 'revealed'       — reader gave up
+  const [resolvedHow, setResolvedHow] = useState<'guessed' | 'guessed_best' | 'guessed_better' | 'revealed' | null>(null);
+  // The reader's move that out-scored mine (the guess that earned the move on)
+  const [betterSan, setBetterSan] = useState<string | null>(null);
 
   // Engine check of the reader's latest guess. guessSeq numbers the checks so a
   // slow answer to an earlier guess can't overwrite the card for a later one.
   const [guessEval, setGuessEval] = useState<GuessEvalState | null>(null);
   const guessSeq = useRef(0);
+  // A wrong guess is judged when the engine answers, which can be after the
+  // reader has done something else. These let that late answer tell whether
+  // it still applies: the card must not already be solved (or the move on twice
+  // would unlock two cards) and must still be on the page.
+  const resolvedRef = useRef(false);
+  const aliveRef = useRef(true);
 
   const [selectedSquare, setSelectedSquare]   = useState<string | null>(null);
   const [selHighlights, setSelHighlights]     = useState<Record<string, React.CSSProperties>>({});
@@ -1008,8 +1042,15 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   // multiple mounted boards don't interfere (jerky animation otherwise).
   const boardId = `wt-${useId().replace(/:/g, '')}`;
 
+  // Set on mount as well as cleared on unmount, so a development-mode remount
+  // (which runs the cleanup, then this again) doesn't leave it false
+  useEffect(() => {
+    aliveRef.current = true;
+  }, []);
+
   // Clear the wrong-move revert timer on unmount, and drop any engine check still in flight
   useEffect(() => () => {
+    aliveRef.current = false;
     if (wrongMoveTimerRef.current) clearTimeout(wrongMoveTimerRef.current);
     guessSeq.current++;
   }, []);
@@ -1023,16 +1064,17 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
 
   // Resolved-move highlight on the squares of the author's move:
   //   green  — reader played the same move
-  //   blue   — reader played the engine's top move (better than what I played)
+  //   blue   — reader played a move better than mine (the engine's top move, or
+  //            any other the engine scores higher than what I played)
   //   amber  — reader gave up
   // Shown only while the board is at the position right after the move.
   const resolvedHl: Record<string, React.CSSProperties> = {};
   if (resolved && viewIdx === guessPly + 1 && !tempFen) {
     const { from, to } = game.moves[guessPly];
     const color =
-      resolvedHow === 'guessed'      ? 'rgba(80, 200, 100, 0.55)' :
-      resolvedHow === 'guessed_best' ? 'rgba(96, 165, 250, 0.55)' :
-                                       'rgba(255, 200, 60, 0.50)';
+      resolvedHow === 'guessed'                                     ? 'rgba(80, 200, 100, 0.55)' :
+      resolvedHow === 'guessed_best' || resolvedHow === 'guessed_better' ? 'rgba(96, 165, 250, 0.55)' :
+                                                                      'rgba(255, 200, 60, 0.50)';
     resolvedHl[from] = { backgroundColor: color };
     resolvedHl[to]   = { backgroundColor: color };
   }
@@ -1054,7 +1096,10 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     setViewIdx(Math.max(startPly, Math.min(maxIdx, idx)));
   };
 
-  const resolve = (how: 'guessed' | 'guessed_best' | 'revealed') => {
+  const resolve = (how: 'guessed' | 'guessed_best' | 'guessed_better' | 'revealed') => {
+    // Solving a card unlocks the next one, so it must happen exactly once
+    if (resolvedRef.current) return;
+    resolvedRef.current = true;
     clearTransient();
     setResolvedHow(how);
     setPhase('complete');
@@ -1074,6 +1119,22 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     setGuessEval({ san, status: 'loading' });
     rateGuess({ fenAfterGuess, isEngineBest, engine, color: section.userColor })
       .then(rating => {
+        // A guess the engine scores above my move earns the move on, as if the
+        // reader had found mine. This applies even if they have since tried
+        // another move: the better one still counts, and the card then shows it.
+        if (earnsMoveOn({
+          comparison: rating.comparison,
+          isEngineBest,
+          alreadySolved: resolvedRef.current,
+          stillOnPage: aliveRef.current,
+        })) {
+          guessSeq.current++;
+          setGuessEval({ san, status: 'done', rating });
+          setBetterSan(san);
+          setFeedback('better');
+          resolve('guessed_better');
+          return;
+        }
         if (seq === guessSeq.current) setGuessEval({ san, status: 'done', rating });
       })
       .catch(error => {
@@ -1321,6 +1382,18 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
                 {section.engineEval?.bestMoveSan && (
                   <>{' '}(<span className="font-mono">{section.engineEval.bestMoveSan}</span>)</>
                 )}!
+                {section.moveNotation && (
+                  <span className="font-normal text-gray-600 dark:text-gray-400">
+                    {' '}I played{' '}
+                    <span className="font-mono">{section.moveNotation}</span> here.
+                  </span>
+                )}
+              </p>
+            )}
+            {feedback === 'better' && (
+              <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+                ⭐ Better than mine — the engine rates{' '}
+                {betterSan ? <span className="font-mono">{betterSan}</span> : 'your move'} above the move I played, so it counts.
                 {section.moveNotation && (
                   <span className="font-normal text-gray-600 dark:text-gray-400">
                     {' '}I played{' '}
@@ -1740,7 +1813,8 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
     <>
       <p className="max-w-3xl text-base text-left text-gray-600 dark:text-gray-300 leading-relaxed">
         This post follows my game move by move. Wherever I paused to record my thoughts,
-        you can try to guess my move — which isn&apos;t necessarily the best one! Reveal what I was
+        you can try to guess my move — which isn&apos;t necessarily the best one! If you find a move the
+        engine rates above mine, that counts too. Reveal what I was
         thinking first, or guess straight away. Afterwards you&apos;ll see my own self-criticism or
         praise from when I reviewed the moment with an engine — and sometimes AI commentary too,
         depending on whether it was any good.

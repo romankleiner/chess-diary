@@ -132,3 +132,104 @@ describe('renderProse — chess notation', () => {
     expect(html).toContain('&amp;');
   });
 });
+
+// ─── hyperlinks ───────────────────────────────────────────────────────────────
+
+/** Each link in the markup: its href and the text it shows. */
+const anchors = (html: string) =>
+  [...html.matchAll(/<a href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map(m => ({ href: m[1], text: m[2] }));
+
+describe('renderProse — hyperlinks', () => {
+  const GAME = 'https://www.chess.com/game/daily/899870281?move=0';
+
+  it('turns a web address into a link, showing the address', () => {
+    const html = render(`The game is at ${GAME} if you want it.`);
+
+    expect(anchors(html)).toEqual([{ href: GAME, text: GAME }]);
+    expect(html).toContain('The game is at <a ');
+    expect(html).toContain('</a> if you want it.');
+  });
+
+  it('opens links in a new tab without handing the page to the destination', () => {
+    const html = render(GAME);
+
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it('styles a link so it reads as one, in light and dark mode', () => {
+    const html = render(GAME);
+
+    expect(html).toContain('underline');
+    expect(html).toContain('text-blue-700');
+    expect(html).toContain('dark:text-blue-300');
+  });
+
+  it('lets a long address wrap instead of widening the card', () => {
+    expect(render(GAME)).toContain('[overflow-wrap:anywhere]');
+  });
+
+  it('leaves the full stop after an address outside the link', () => {
+    const html = render(`See ${GAME}.`);
+
+    expect(anchors(html)[0].href).toBe(GAME);
+    expect(html).toMatch(/<\/a>\.<\/p>$/);
+  });
+
+  it('works inside **bold**', () => {
+    const html = render(`**Watch ${GAME}** closely`);
+
+    expect(html).toContain('<strong>Watch <a ');
+    expect(anchors(html)).toEqual([{ href: GAME, text: GAME }]);
+  });
+
+  it('works on every line and in every paragraph', () => {
+    const html = render('One https://a.com/1\nTwo https://b.com/2\n\nThree https://c.com/3');
+    expect(anchors(html).map(a => a.href)).toEqual(['https://a.com/1', 'https://b.com/2', 'https://c.com/3']);
+  });
+
+  it('does not mistake chess-looking text inside an address for notation', () => {
+    const html = render('See https://example.com/e4/Nf3/Bb5?move=0 now');
+
+    expect(chips(html)).toEqual([]);
+    expect(anchors(html)[0].href).toBe('https://example.com/e4/Nf3/Bb5?move=0');
+  });
+
+  it('still sets notation apart in the words around a link', () => {
+    const html = render(`After 9...Bxd2+ 10. Nxd2 see ${GAME} and Qxd2.`);
+
+    expect(chips(html)).toEqual(['9...Bxd2+ 10. Nxd2', 'Qxd2']);
+    expect(anchors(html)).toEqual([{ href: GAME, text: GAME }]);
+  });
+
+  it('writes an ampersand in an address correctly in the markup', () => {
+    const html = render('https://a.com/x?a=1&b=2');
+
+    expect(html).toContain('href="https://a.com/x?a=1&amp;b=2"');
+    expect(html).not.toContain('a=1&b=2');
+  });
+
+  it('never makes a link from a scheme other than http or https', () => {
+    const html = render('javascript:alert(1) data:text/html,hi ftp://a.com/x file:///etc/passwd');
+
+    expect(anchors(html)).toEqual([]);
+    expect(html).not.toContain('<a ');
+  });
+
+  it('cannot be tricked into a script link by markup in the text', () => {
+    const html = render('<a href="javascript:alert(1)">x</a> https://ok.com/a');
+
+    expect(html).not.toContain('<a href="javascript');
+    expect(html).toContain('&lt;a href=');
+    expect(anchors(html)).toEqual([{ href: 'https://ok.com/a', text: 'https://ok.com/a' }]);
+  });
+
+  it('leaves text with no address exactly as it was', () => {
+    expect(render('No links here.')).toBe('<p class="">No links here.</p>');
+  });
+
+  it('never changes the words: the visible text is the original text', () => {
+    const text = `See ${GAME}, (and https://a.com/x).\n\nThen **bold https://b.com/y** and Nf3.`;
+    expect(textOf(render(text))).toBe(text.replace(/\*\*/g, ''));
+  });
+});

@@ -56,7 +56,14 @@ export interface GuessComparison {
   headline: string;
   /** One line on the guess against my move. */
   versusMine: string;
+  /**
+   * The same judgement as `versusMine`, as a value to act on. "better" is
+   * beyond the engine's noise, so a guess that only ties my move is "same".
+   */
+  vsMine: VersusMine;
 }
+
+export type VersusMine = 'better' | 'same' | 'worse';
 
 export function compareGuess({ guess, mine, top, color }: {
   guess: PositionEval;
@@ -85,17 +92,20 @@ export function compareGuess({ guess, mine, top, color }: {
   else if (loss === 0) headline = g > t ? "At least as good as the engine's top line" : "Matches the engine's top line";
   else headline = `${loss.toFixed(1)} behind the engine's top line`;
 
+  // One judgement, put into words and into a value together, so the sentence
+  // on the card and the decision to move on can't disagree.
   let versusMine: string;
-  if (guessMates && mineMates) versusMine = 'Also a forced mate, like mine';
-  else if (guessMates) versusMine = 'Better than my move — it finds a forced mate';
-  else if (mineMates) versusMine = 'Worse than my move — I had a forced mate';
-  else if (guessMated && !mineMated) versusMine = 'Worse than my move — it walks into a forced mate';
-  else if (mineMated && !guessMated) versusMine = 'Better than my move — I walked into a forced mate';
+  let vsMine: VersusMine;
+  if (guessMates && mineMates) [vsMine, versusMine] = ['same', 'Also a forced mate, like mine'];
+  else if (guessMates) [vsMine, versusMine] = ['better', 'Better than my move — it finds a forced mate'];
+  else if (mineMates) [vsMine, versusMine] = ['worse', 'Worse than my move — I had a forced mate'];
+  else if (guessMated && !mineMated) [vsMine, versusMine] = ['worse', 'Worse than my move — it walks into a forced mate'];
+  else if (mineMated && !guessMated) [vsMine, versusMine] = ['better', 'Better than my move — I walked into a forced mate'];
   else {
     const diff = round1(g - m);
-    if (Math.abs(diff) <= SAME_WITHIN_PAWNS + 1e-9) versusMine = 'About the same as my move';
-    else if (diff > 0) versusMine = `Better than my move by ${diff.toFixed(1)}`;
-    else versusMine = `Worse than my move by ${(-diff).toFixed(1)}`;
+    if (Math.abs(diff) <= SAME_WITHIN_PAWNS + 1e-9) [vsMine, versusMine] = ['same', 'About the same as my move'];
+    else if (diff > 0) [vsMine, versusMine] = ['better', `Better than my move by ${diff.toFixed(1)}`];
+    else [vsMine, versusMine] = ['worse', `Worse than my move by ${(-diff).toFixed(1)}`];
   }
 
   return {
@@ -106,7 +116,25 @@ export function compareGuess({ guess, mine, top, color }: {
     quality: getMoveQuality(Math.round(loss * 100)),
     headline,
     versusMine,
+    vsMine,
   };
+}
+
+/**
+ * Whether a rated guess earns the move on, as if the reader had found mine: it
+ * must beat my move beyond the engine's noise. A guess is rated when the engine
+ * answers, which can be after the reader has done something else, so the answer
+ * only counts while the move is still open (solving it unlocks the next one,
+ * which must happen once) and its card is still on the page. The engine's own
+ * top move is accepted separately, at once, so it is left out here.
+ */
+export function earnsMoveOn({ comparison, isEngineBest, alreadySolved, stillOnPage }: {
+  comparison: Pick<GuessComparison, 'vsMine'>;
+  isEngineBest: boolean;
+  alreadySolved: boolean;
+  stillOnPage: boolean;
+}): boolean {
+  return comparison.vsMine === 'better' && !isEngineBest && !alreadySolved && stillOnPage;
 }
 
 /** What the blog stores about my move's engine check, as far as rating a guess needs it. */
