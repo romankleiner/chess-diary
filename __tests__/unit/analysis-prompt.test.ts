@@ -190,13 +190,16 @@ describe('buildAnalysisPrompt — verbosity', () => {
   it('produces a detailed instruction for verbosity "detailed" (default)', () => {
     const promptDefault = buildAnalysisPrompt('thinking', null, null, null);
     const promptExplicit = buildAnalysisPrompt('thinking', null, null, null, 'detailed');
-    expect(promptDefault).toContain('detailed analysis (2-3 paragraphs)');
-    expect(promptExplicit).toContain('detailed analysis (2-3 paragraphs)');
+    for (const prompt of [promptDefault, promptExplicit]) {
+      expect(prompt).toContain('Write 2-3 flowing paragraphs (no labels or headers)');
+      expect(prompt).not.toContain('3-4 flowing paragraphs');
+    }
   });
 
   it('produces an extensive instruction for verbosity "extensive"', () => {
     const prompt = buildAnalysisPrompt('thinking', null, null, null, 'extensive');
-    expect(prompt).toContain('extensive analysis (3-4 paragraphs)');
+    expect(prompt).toContain('Write 3-4 flowing paragraphs (no labels or headers)');
+    expect(prompt).not.toContain('2-3 flowing paragraphs');
   });
 
   it('falls back to concise for verbosity "concise"', () => {

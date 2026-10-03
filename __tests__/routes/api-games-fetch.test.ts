@@ -4,7 +4,7 @@ import { gameA, gameB } from '../helpers/fixtures';
 
 vi.mock('@/lib/db', () => ({
   getSetting: vi.fn(),
-  getGame: vi.fn(),
+  getGames: vi.fn(),
   saveGame: vi.fn(),
 }));
 
@@ -15,11 +15,11 @@ vi.mock('@/lib/chesscom', () => ({
 }));
 
 import { POST } from '@/app/api/games/fetch/route';
-import { getSetting, getGame, saveGame } from '@/lib/db';
+import { getSetting, getGames, saveGame } from '@/lib/db';
 import { fetchPlayerGames, fetchActiveGames, parseChessComGame } from '@/lib/chesscom';
 
 const mockGetSetting = vi.mocked(getSetting);
-const mockGetGame = vi.mocked(getGame);
+const mockGetGames = vi.mocked(getGames);
 const mockSaveGame = vi.mocked(saveGame);
 const mockFetchArchived = vi.mocked(fetchPlayerGames);
 const mockFetchActive = vi.mocked(fetchActiveGames);
@@ -35,7 +35,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockSaveGame.mockResolvedValue(undefined);
   mockFetchActive.mockResolvedValue({ games: [] });
-  mockGetGame.mockResolvedValue(null);
+  mockGetGames.mockResolvedValue({}); // no games stored yet
 });
 
 // ─── validation ───────────────────────────────────────────────────────────────
@@ -73,8 +73,8 @@ describe('POST /api/games/fetch — preserves analysisCompleted', () => {
     mockGetSetting.mockResolvedValue('testuser');
     mockFetchArchived.mockResolvedValue({ games: [{}] });
     mockParse.mockReturnValue({ ...gameA, analysisCompleted: false });
-    // Existing game in DB already has analysis
-    mockGetGame.mockResolvedValue({ ...gameA, analysisCompleted: true });
+    // Existing game in DB already has analysis (existing games are read in one getGames() call)
+    mockGetGames.mockResolvedValue({ [gameA.id]: { ...gameA, analysisCompleted: true } });
 
     await POST(makeReq());
     const [, savedGame] = mockSaveGame.mock.calls[0];
@@ -85,11 +85,68 @@ describe('POST /api/games/fetch — preserves analysisCompleted', () => {
     mockGetSetting.mockResolvedValue('testuser');
     mockFetchArchived.mockResolvedValue({ games: [{}] });
     mockParse.mockReturnValue({ ...gameA, analysisCompleted: false });
-    mockGetGame.mockResolvedValue(null);
+    mockGetGames.mockResolvedValue({});
 
     await POST(makeReq());
     const [, savedGame] = mockSaveGame.mock.calls[0];
     expect(savedGame.analysisCompleted).toBe(false);
+  });
+
+  it('keeps analysisDepth and analysisEngine from the existing game', async () => {
+    mockGetSetting.mockResolvedValue('testuser');
+    mockFetchArchived.mockResolvedValue({ games: [{}] });
+    mockParse.mockReturnValue({ ...gameA, analysisCompleted: false });
+    mockGetGames.mockResolvedValue({
+      [gameA.id]: { ...gameA, analysisCompleted: true, analysisDepth: 18, analysisEngine: 'Stockfish' },
+    });
+
+    await POST(makeReq());
+    const [, savedGame] = mockSaveGame.mock.calls[0];
+    expect(savedGame.analysisDepth).toBe(18);
+    expect(savedGame.analysisEngine).toBe('Stockfish');
+  });
+
+  it('saves the game under its own id', async () => {
+    mockGetSetting.mockResolvedValue('testuser');
+    mockFetchArchived.mockResolvedValue({ games: [{}] });
+    mockParse.mockReturnValue(gameA);
+
+    await POST(makeReq());
+    const [savedId] = mockSaveGame.mock.calls[0];
+    expect(savedId).toBe(gameA.id);
+  });
+});
+
+// ─── batched read of existing games ───────────────────────────────────────────
+
+describe('POST /api/games/fetch — existing games are read in one batch', () => {
+  it('calls getGames once for the whole fetch rather than once per game', async () => {
+    mockGetSetting.mockResolvedValue('testuser');
+    mockFetchArchived.mockResolvedValue({ games: [{}, {}] });
+    mockParse.mockReturnValueOnce(gameA).mockReturnValueOnce(gameB).mockReturnValue(gameA);
+
+    await POST(makeReq());
+    expect(mockSaveGame).toHaveBeenCalledTimes(2); // two distinct games saved…
+    expect(mockGetGames).toHaveBeenCalledOnce();   // …from a single read of existing ones
+  });
+});
+
+// ─── completed vs. active duplicates ──────────────────────────────────────────
+
+describe('POST /api/games/fetch — completed beats active', () => {
+  it('keeps the completed version when Chess.com lists a finished game as active too', async () => {
+    mockGetSetting.mockResolvedValue('testuser');
+    // Same game id from the monthly archive (finished) and the active-games endpoint (still listed).
+    const finished = { ...gameA, result: '1-0' };
+    const stillActive = { ...gameA, result: null };
+    mockFetchArchived.mockResolvedValue({ games: [{ kind: 'archived' }] });
+    mockFetchActive.mockResolvedValue({ games: [{ kind: 'active' }] });
+    mockParse.mockImplementation((raw: any) => (raw.kind === 'active' ? stillActive : finished));
+
+    await POST(makeReq());
+    expect(mockSaveGame).toHaveBeenCalledOnce();
+    const [, savedGame] = mockSaveGame.mock.calls[0];
+    expect(savedGame.result).toBe('1-0');
   });
 });
 

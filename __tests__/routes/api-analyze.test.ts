@@ -4,6 +4,10 @@
  * IS_VERCEL is a module-level constant, so we need vi.doMock + vi.resetModules()
  * + a dynamic import inside beforeAll to force its value per describe block.
  * vi.doMock (unlike vi.mock) is NOT hoisted, so it can be called inside functions.
+ *
+ * @/lib/opening-book is mocked in every POST block. The real isBookMove() reads
+ * public/books/opening-book.bin, and any real book lists 1. e4 e5 — so without
+ * the mock these tests would silently depend on whatever book file is on disk.
  */
 
 import { vi, describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
@@ -82,6 +86,7 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
   const saveGame     = vi.fn();
   const clearGameProgress = vi.fn();
   const setGameProgress   = vi.fn();
+  const isBookMove        = vi.fn();
 
   // Persistent fetch mock — module-level so we can reset per test.
   const fetchMock = vi.fn();
@@ -97,6 +102,7 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
       clearGameProgress, setGameProgress, getGameProgress: vi.fn(),
     }));
     vi.doMock('@se-oss/stockfish', () => ({ Stockfish: vi.fn() }));
+    vi.doMock('@/lib/opening-book', () => ({ isBookMove }));
 
     // Stub global fetch AFTER resetModules so the re-imported route sees it
     vi.stubGlobal('fetch', fetchMock);
@@ -110,11 +116,13 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     vi.unstubAllGlobals();
     vi.doUnmock('@/lib/db');
     vi.doUnmock('@se-oss/stockfish');
+    vi.doUnmock('@/lib/opening-book');
   });
 
   beforeEach(() => {
     vi.clearAllMocks();
     fetchMock.mockReset();
+    isBookMove.mockResolvedValue(false); // out of book unless a test says otherwise
     saveAnalysis.mockResolvedValue(undefined);
     saveGame.mockResolvedValue(undefined);
     clearGameProgress.mockResolvedValue(undefined);
@@ -161,18 +169,24 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
   //
   // White move (e4): cpLoss = max(0, 0 − (−200)) = 200 → 'mistake'
   // Black move (e5): cpLoss = max(0, −250 − (−200)) = max(0, −50) = 0 → 'excellent'
+  //
+  // The "before" responses name an engine best move that is NOT the move played
+  // (d2d4 for White, g8f6 for Black). The route zeroes the loss of any move that
+  // matches the engine's best move, so reusing the played move here (as an
+  // earlier version of this mock did with e2e4) would hide the 200 cp loss.
+
+  const makeEval = (evalPawns: number, move: string) => ({
+    ok: true,
+    json: async () => ({ eval: evalPawns, move, continuationArr: [] }),
+    text: async () => '',
+  });
 
   function queueChessApiResponses() {
-    const makeEval = (evalPawns: number, move = 'e2e4') => ({
-      ok: true,
-      json: async () => ({ eval: evalPawns, move, continuationArr: [] }),
-      text: async () => '',
-    });
     fetchMock
-      .mockResolvedValueOnce(makeEval(0.0))    // before e4
-      .mockResolvedValueOnce(makeEval(-2.0))   // after e4
-      .mockResolvedValueOnce(makeEval(-2.0))   // before e5
-      .mockResolvedValueOnce(makeEval(-2.5));  // after e5
+      .mockResolvedValueOnce(makeEval(0.0, 'd2d4'))    // before e4 — engine prefers d4
+      .mockResolvedValueOnce(makeEval(-2.0, 'e7e5'))   // after e4
+      .mockResolvedValueOnce(makeEval(-2.0, 'g8f6'))   // before e5 — engine prefers Nf6
+      .mockResolvedValueOnce(makeEval(-2.5, 'd2d4'));  // after e5
   }
 
   it('moves get correct moveQuality labels from getMoveQuality', async () => {
@@ -226,33 +240,53 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
   });
 
   it('does NOT call saveGame or clearGameProgress when batch is incomplete', async () => {
-    // Use depth=20 → batchSize=2; only 2 moves in PGN, so it should complete.
-    // For an incomplete test, pass a startMoveIndex that exceeds the batch.
-    // Easier: mock a longer PGN by providing a game with many moves but only
-    // expose 2 api calls. We test incomplete by starting at a later index.
-    //
-    // Actually, with SIMPLE_PGN (2 moves) and depth=20 batchSize=2:
-    //   startMoveIndex=0, endMoveIndex=min(2,2)=2 → completed.
-    // Use depth=25 → batchSize=1; startMoveIndex=0, endMoveIndex=1 → not done.
-
+    // The route sizes batches by depth to fit the 60 s limit:
+    //   depth ≤ 10 → 12 moves, ≤ 14 → 8, ≤ 18 → 5, deeper → 3.
+    // At depth 25 a batch is 3 moves, so a 4-move game is NOT finished by the
+    // first batch (the old 2-move PGN always fit in a single batch).
     getSetting.mockImplementation(async (key: string) => {
-      if (key === 'analysis_depth') return '25'; // depth > 18 → batchSize = 1
+      if (key === 'analysis_depth') return '25';
       if (key === 'chesscom_username') return 'testuser';
       return null;
     });
-    getGame.mockResolvedValue(gameWithPgn);
-    // Only 2 calls needed for batchSize=1 (1 move)
-    const makeEval = (v: number) => ({ ok: true, json: async () => ({ eval: v, move: 'e2e4', continuationArr: [] }), text: async () => '' });
-    fetchMock.mockResolvedValueOnce(makeEval(0.0)).mockResolvedValueOnce(makeEval(0.3));
+    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' }); // 4 plies
+    // 3 moves in the batch × 2 evaluations each (before and after the move)
+    for (let i = 0; i < 6; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
 
     const res = await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 0 }));
     const body = await res.json();
 
     expect(body.completed).toBe(false);
-    expect(body.nextMoveIndex).toBe(1);
+    expect(body.nextMoveIndex).toBe(3);
+    expect(body.analysis.moves).toHaveLength(3);
     expect(saveAnalysis).toHaveBeenCalledOnce();
     expect(saveGame).not.toHaveBeenCalled();    // game NOT yet marked complete
     expect(clearGameProgress).not.toHaveBeenCalled();
+  });
+
+  it('finishes the game on the following batch', async () => {
+    getSetting.mockImplementation(async (key: string) => {
+      if (key === 'analysis_depth') return '25';
+      if (key === 'chesscom_username') return 'testuser';
+      return null;
+    });
+    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' });
+    // The first batch's moves are already stored; the second batch adds the last ply.
+    getAnalysis.mockResolvedValue({
+      moves: [
+        { moveNumber: 1, color: 'white', move: 'e4', centipawnLoss: 0 },
+        { moveNumber: 1, color: 'black', move: 'e5', centipawnLoss: 0 },
+        { moveNumber: 2, color: 'white', move: 'Nf3', centipawnLoss: 0 },
+      ],
+    });
+    fetchMock.mockResolvedValueOnce(makeEval(0.3, 'd2d4')).mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
+
+    const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 3 }))).json();
+
+    expect(body.completed).toBe(true);
+    expect(body.analysis.moves).toHaveLength(4);
+    expect(saveGame).toHaveBeenCalledOnce();
+    expect(clearGameProgress).toHaveBeenCalledOnce();
   });
 
   it('analysis includes engine: chess-api.com', async () => {
@@ -261,6 +295,72 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
 
     const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
     expect(analysis.engine).toBe('chess-api.com');
+  });
+
+  it('zeroes the loss when the player played the engine’s best move', async () => {
+    getGame.mockResolvedValue(gameWithPgn);
+    // Same evals as the mistake scenario, but the engine's pick for White IS e2e4,
+    // so the two independent evaluations disagreeing is treated as noise.
+    fetchMock
+      .mockResolvedValueOnce(makeEval(0.0, 'e2e4'))
+      .mockResolvedValueOnce(makeEval(-2.0, 'e7e5'))
+      .mockResolvedValueOnce(makeEval(-2.0, 'g8f6'))
+      .mockResolvedValueOnce(makeEval(-2.5, 'd2d4'));
+
+    const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+    const white = analysis.moves.find((m: any) => m.color === 'white');
+    expect(white.centipawnLoss).toBe(0);
+    expect(white.moveQuality).toBe('excellent');
+  });
+
+  // ── Opening book ────────────────────────────────────────────────────────────
+
+  describe('opening book moves', () => {
+    it('are labelled "book" with zero loss, keep their evaluation, and are left out of accuracy', async () => {
+      getGame.mockResolvedValue(gameWithPgn);
+      queueChessApiResponses(); // White's e4 would be a 200 cp mistake if it counted
+      isBookMove.mockImplementation(async (_fen: string, uci: string) => uci === 'e2e4');
+
+      const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+      const white = analysis.moves.find((m: any) => m.color === 'white');
+      const black = analysis.moves.find((m: any) => m.color === 'black');
+
+      expect(white.moveQuality).toBe('book');
+      expect(white.centipawnLoss).toBe(0);
+      expect(white.evaluation).toBe(-2); // still stored, so the eval chart has no gap
+      expect(black.moveQuality).toBe('excellent'); // not in book → graded normally
+
+      // White's only move is a book move → nothing counts against White's accuracy.
+      expect(analysis.whiteAccuracy).toBe(100);
+    });
+
+    it('do not shield later moves: a non-book mistake still lowers accuracy', async () => {
+      getGame.mockResolvedValue(gameWithPgn);
+      queueChessApiResponses();
+      isBookMove.mockResolvedValue(false);
+
+      const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+      expect(analysis.whiteAccuracy).toBeLessThan(100);
+    });
+
+    it('are looked up by the position before the move, with the move in UCI', async () => {
+      getGame.mockResolvedValue(gameWithPgn);
+      queueChessApiResponses();
+
+      await POST(makeAnalyzeReq({ gameId: gameA.id }));
+
+      expect(isBookMove).toHaveBeenCalledTimes(2);
+      expect(isBookMove).toHaveBeenNthCalledWith(
+        1,
+        'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        'e2e4',
+      );
+      expect(isBookMove).toHaveBeenNthCalledWith(
+        2,
+        'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+        'e7e5',
+      );
+    });
   });
 });
 
@@ -274,6 +374,7 @@ describe('POST /api/games/analyze — local Stockfish path', () => {
   const saveGame     = vi.fn();
   const clearGameProgress = vi.fn();
   const setGameProgress   = vi.fn();
+  const isBookMove        = vi.fn();
 
   // Stockfish mock: constant score of 100cp regardless of position
   const mockAnalyze   = vi.fn();
@@ -292,6 +393,8 @@ describe('POST /api/games/analyze — local Stockfish path', () => {
       clearGameProgress, setGameProgress, getGameProgress: vi.fn(),
     }));
 
+    vi.doMock('@/lib/opening-book', () => ({ isBookMove }));
+
     vi.doMock('@se-oss/stockfish', () => ({
       Stockfish: vi.fn().mockImplementation(function () {
         return {
@@ -309,10 +412,12 @@ describe('POST /api/games/analyze — local Stockfish path', () => {
   afterAll(() => {
     vi.doUnmock('@/lib/db');
     vi.doUnmock('@se-oss/stockfish');
+    vi.doUnmock('@/lib/opening-book');
   });
 
   beforeEach(() => {
     vi.clearAllMocks();
+    isBookMove.mockResolvedValue(false); // out of book unless a test says otherwise
     saveAnalysis.mockResolvedValue(undefined);
     saveGame.mockResolvedValue(undefined);
     clearGameProgress.mockResolvedValue(undefined);
@@ -377,9 +482,43 @@ describe('POST /api/games/analyze — local Stockfish path', () => {
   it('each move has moveQuality derived from getMoveQuality', async () => {
     getGame.mockResolvedValue(gameWithPgn);
     const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+    // Out of book (isBookMove is mocked false), so every move is graded by loss.
     const validQualities = ['excellent', 'good', 'inaccuracy', 'mistake', 'blunder'];
     for (const move of analysis.moves) {
       expect(validQualities).toContain(move.moveQuality);
     }
+  });
+
+  it('labels book moves "book" with zero loss and leaves them out of accuracy', async () => {
+    getGame.mockResolvedValue(gameWithPgn);
+    isBookMove.mockResolvedValue(true);
+
+    const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+    expect(analysis.moves).toHaveLength(2);
+    for (const move of analysis.moves) {
+      expect(move.moveQuality).toBe('book');
+      expect(move.centipawnLoss).toBe(0);
+    }
+    // Nothing but book moves → no losses counted for either side.
+    expect(analysis.whiteAccuracy).toBe(100);
+    expect(analysis.blackAccuracy).toBe(100);
+  });
+
+  it('asks the book about the position before each move, with the move in UCI', async () => {
+    getGame.mockResolvedValue(gameWithPgn);
+
+    await POST(makeAnalyzeReq({ gameId: gameA.id }));
+
+    expect(isBookMove).toHaveBeenCalledTimes(2);
+    expect(isBookMove).toHaveBeenNthCalledWith(
+      1,
+      'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      'e2e4',
+    );
+    expect(isBookMove).toHaveBeenNthCalledWith(
+      2,
+      'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      'e7e5',
+    );
   });
 });
