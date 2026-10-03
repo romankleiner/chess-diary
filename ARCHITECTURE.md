@@ -169,6 +169,13 @@ On the public blog, a wrong guess is rated by the engine and set beside my move 
 - **Depth.** The blog-post route passes the stored analysis depth through as `engineEval.depth`, and the guess is evaluated at that depth (clamped to the engine API's maximum of 18) so the numbers are comparable.
 - **Caveat.** The stored evaluation and the live one can come from different engines or depths, so small differences (~0.1) are noise rather than signal. The top line inherits whatever cap `normalizeCpLoss` applied to the stored loss.
 
+### `lib/notation.ts` — Chess notation in prose
+`splitNotation(text)` splits commentary into ordinary text and chess notation, so the blog can set moves apart from the words around them (a monospaced, tinted chip; see `renderInline` in `components/blog-shared.tsx`). Pure and browser-safe.
+
+- **What counts as notation:** standard algebraic moves (`Nf3`, `exd5`, `Bxd2+`, `e8=Q#`, `O-O-O`) with an optional move number (`10.`, `9...`, a bare `...`) and annotation (`!?`). Moves written one after another are **one run**, so `9...Bxd2+ 10. Nxd2` is a single chip. It accepts both the author's `9...Bxd2+` and the AI's canonical `9... Bxd2+` (`formatSanLine`).
+- **It is a pattern match, not a legality check.** `a4` is marked whether it is a move or a square, and look-alikes are marked too; that suits commentary, where the author is nearly always talking about the board. Words and numbers that merely resemble moves (`B2`, `1-0`, `3.5`, `e2e4`, `abc4`) are left alone.
+- **No regex lookbehind.** Older Safari can't parse one, and a parse error would take down the whole public blog page; the character before a run is captured and handed back as plain text instead.
+
 ### `lib/opening-book.ts` — Opening Book Lookup
 Reads a Polyglot binary opening book from `data/opening-book.bin` using Zobrist hashing. Returns candidate moves for a position. Pure file I/O — no network calls. Used during analysis to tag book moves.
 
@@ -200,7 +207,7 @@ Generates local-timezone ISO timestamps and filters journal entries by date rang
 | `PostGameSummaryCard.tsx` | Collapsible card displaying a post-game reflection entry (stats grid + coloured reflection sections) |
 | `PostGameSummaryForm.tsx` | Form for writing post-game reflections: "What went well", "Mistakes", "Lessons Learned", "Next Steps" |
 | `BlogPostModal.tsx` | Modal for generating and viewing a game analysis as a formatted blog post |
-| `blog-shared.tsx` | Types and interactive pieces shared by the modal and the public `/blog/[gameId]` page: `GameWalkthrough` (guess-the-move cards), `ThinkingBlock`, `EvalCallout`, and `GuessEvalCard` (engine check of a reader's guess) |
+| `blog-shared.tsx` | Types and interactive pieces shared by the modal and the public `/blog/[gameId]` page: `GameWalkthrough` (guess-the-move cards), the commentary boxes (`ThinkingBlock`, `AiAnalysisBlock`, `PostGameBlock`), `EvalCallout`, and `GuessEvalCard` (engine check of a reader's guess). `renderProse` / `renderInline` render commentary text with `**bold**` and chess notation set apart. A move has three phases (`puzzle` → optionally `thinking_shown` → `complete`); solving it, by guessing or giving up, goes straight to `complete`, which shows the thinking, engine check, AI analysis and post-game review together |
 
 ---
 

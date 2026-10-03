@@ -49,3 +49,86 @@ describe('renderProse', () => {
     expect(html).toBe('<p class="foo bar">A</p><p class="foo bar">B</p>');
   });
 });
+
+// ─── chess notation ───────────────────────────────────────────────────────────
+
+/** The text inside each notation chip, in order. */
+const chips = (html: string) => [...html.matchAll(/<span data-notation="true"[^>]*>([^<]*)<\/span>/g)].map(m => m[1]);
+
+/** The visible text of rendered markup. */
+const textOf = (html: string) =>
+  html.replace(/<br\/>/g, '\n').replace(/<\/p><p[^>]*>/g, '\n\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&');
+
+describe('renderProse — chess notation', () => {
+  it('sets a variation apart from the words around it', () => {
+    const html = render('I should have played 9...Bxd2+ 10. Nxd2 here.');
+
+    expect(chips(html)).toEqual(['9...Bxd2+ 10. Nxd2']);
+    expect(html).toContain('I should have played <span');
+    expect(html).toContain('</span> here.');
+  });
+
+  it('sets a lone move apart', () => {
+    expect(chips(render('Then Nf3 and d4.'))).toEqual(['Nf3', 'd4']);
+  });
+
+  it('makes the chip monospaced and tinted, with a dark-mode treatment', () => {
+    const html = render('Nf3');
+
+    expect(html).toContain('font-mono');
+    expect(html).toContain('bg-slate-200');
+    expect(html).toContain('text-slate-900');
+    expect(html).toContain('dark:bg-slate-700/70');
+    expect(html).toContain('dark:text-slate-50');
+  });
+
+  it('keeps the chip upright inside italic text, and repainted when it wraps over two lines', () => {
+    const html = render('Nf3');
+
+    expect(html).toContain('not-italic');
+    expect(html).toContain('box-decoration-clone');
+  });
+
+  it('leaves ordinary text exactly as it was', () => {
+    expect(render('No moves here, just words.')).toBe('<p class="">No moves here, just words.</p>');
+    expect(chips(render('No moves here, just words.'))).toEqual([]);
+  });
+
+  it('works inside **bold**', () => {
+    const html = render('The **key move Nf3** wins');
+
+    expect(html).toContain('<strong>key move <span');
+    expect(chips(html)).toEqual(['Nf3']);
+  });
+
+  it('works when the whole bold phrase is notation', () => {
+    const html = render('**10. Nxd2** was forced');
+
+    expect(html).toContain('<strong><span');
+    expect(chips(html)).toEqual(['10. Nxd2']);
+  });
+
+  it('works on every line of a paragraph, without joining moves across a line break', () => {
+    const html = render('First Nf3\nthen d4');
+
+    expect(chips(html)).toEqual(['Nf3', 'd4']);
+    expect(html).toContain('<br/>');
+  });
+
+  it('works in every paragraph', () => {
+    expect(chips(render('One Nf3.\n\nTwo Bb5.'))).toEqual(['Nf3', 'Bb5']);
+  });
+
+  it('never changes the words: the visible text is the original text', () => {
+    const text = 'Protecting e4 before ...exd4 and 10. Nxd2 Qxd2+!\n\nThe **key** idea: O-O-O, then Rhe1.';
+    expect(textOf(render(text))).toBe(text.replace(/\*\*/g, ''));
+  });
+
+  it('escapes anything that is not text: markup in a comment stays text', () => {
+    const html = render('<b>Nf3</b> & <script>alert(1)</script>');
+
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('&amp;');
+  });
+});

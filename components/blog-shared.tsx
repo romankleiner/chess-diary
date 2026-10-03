@@ -9,6 +9,7 @@ import React, { useRef, useState, useMemo, useEffect, useCallback, useId } from 
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { Chess } from 'chess.js';
+import { splitNotation } from '@/lib/notation';
 import { formatPawns } from '@/lib/position-eval';
 import { playerPawns, rateGuess } from '@/lib/guess-eval';
 import type { GuessRating } from '@/lib/guess-eval';
@@ -46,9 +47,9 @@ export interface MoveSection {
 
 // 'puzzle'          — board shown; guess by dragging pieces
 // 'thinking_shown'  — thinking revealed; board still interactive
-// 'solved_blind'    — guessed correctly without peeking; post-game still hidden
-// 'complete'        — full reveal
-export type SectionPhase = 'puzzle' | 'thinking_shown' | 'solved_blind' | 'complete';
+// 'complete'        — the move is solved (guessed or given up): thinking, engine
+//                     check, AI commentary and post-game review are all shown
+export type SectionPhase = 'puzzle' | 'thinking_shown' | 'complete';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -58,6 +59,16 @@ export const QUALITY_STYLE: Record<string, { label: string; color: string }> = {
   inaccuracy: { label: '⚠ Inaccuracy', color: 'text-yellow-600 dark:text-yellow-400' },
   mistake:    { label: '✗ Mistake',    color: 'text-orange-600 dark:text-orange-400' },
   blunder:    { label: '✗✗ Blunder',   color: 'text-red-600 dark:text-red-400'       },
+};
+
+// Darker shades of QUALITY_STYLE's colours, for body-size text: the -600s are only
+// ~3:1 on a white or grey background, these reach 4.5:1 or better.
+const QUALITY_TEXT: Record<string, string> = {
+  excellent:  'text-green-700 dark:text-green-400',
+  good:       'text-blue-700 dark:text-blue-400',
+  inaccuracy: 'text-yellow-700 dark:text-yellow-400',
+  mistake:    'text-orange-700 dark:text-orange-400',
+  blunder:    'text-red-700 dark:text-red-400',
 };
 
 // Stored evaluations carry a forced mate as ±100, which reads better as "+Mate".
@@ -70,23 +81,43 @@ export function normSan(s: string): string {
   return s.replace(/[+#?!]/g, '').trim().toLowerCase();
 }
 
-// ─── Inline bold renderer ─────────────────────────────────────────────────────
-// Converts **text** markers to <strong> elements within a paragraph.
+// ─── Inline renderer ──────────────────────────────────────────────────────────
+// Within a paragraph: converts **text** markers to <strong>, and sets chess
+// notation ("9...Bxd2+ 10. Nxd2", "Nf3", "O-O") apart from the words around it
+// in a monospaced, tinted chip. Chips can wrap across lines (box-decoration-clone
+// repaints the tint on each line) and stay upright inside italic text.
 
-export function renderWithBold(text: string): React.ReactNode {
+function Notation({ children }: { children: string }) {
+  return (
+    <span
+      data-notation
+      className="not-italic rounded px-1 py-0.5 font-mono text-[0.9em] font-medium box-decoration-clone bg-slate-200 text-slate-900 dark:bg-slate-700/70 dark:text-slate-50"
+    >
+      {children}
+    </span>
+  );
+}
+
+function renderNotation(text: string): React.ReactNode {
+  return splitNotation(text).map((segment, i) =>
+    segment.notation ? <Notation key={i}>{segment.text}</Notation> : segment.text
+  );
+}
+
+export function renderInline(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, i) =>
     part.startsWith('**') && part.endsWith('**')
-      ? <strong key={i}>{part.slice(2, -2)}</strong>
-      : part
+      ? <strong key={i}>{renderNotation(part.slice(2, -2))}</strong>
+      : <React.Fragment key={i}>{renderNotation(part)}</React.Fragment>
   );
 }
 
 // ─── Prose renderer ───────────────────────────────────────────────────────────
 // Splits text into paragraphs on blank lines and preserves single line breaks
-// within a paragraph. Each segment also runs through renderWithBold so **foo**
-// markers still work. Use this anywhere a journal entry or AI summary is
-// rendered, so the author's intended formatting survives.
+// within a paragraph. Each segment also runs through renderInline so **foo**
+// markers and chess notation still work. Use this anywhere a journal entry or
+// AI summary is rendered, so the author's intended formatting survives.
 
 export function renderProse(text: string, paragraphClass?: string): React.ReactNode {
   const cls = paragraphClass ?? '';
@@ -97,7 +128,7 @@ export function renderProse(text: string, paragraphClass?: string): React.ReactN
       <p key={pi} className={cls}>
         {lines.map((line, li) => (
           <React.Fragment key={li}>
-            {renderWithBold(line)}
+            {renderInline(line)}
             {li < lines.length - 1 && <br />}
           </React.Fragment>
         ))}
@@ -106,25 +137,59 @@ export function renderProse(text: string, paragraphClass?: string): React.ReactN
   });
 }
 
-// ─── Thinking block ───────────────────────────────────────────────────────────
-// The author's own words, set apart from the surrounding commentary: a small
-// tinted label strip over a plain, larger, higher-contrast body so the text
-// stands out from its header. Purple is the author's colour in the walkthrough
-// (as in the overall-summary card); the AI commentary is cyan and the post-game
-// review amber. `footer` holds secondary facts such as the move that was played.
+// ─── Commentary boxes ─────────────────────────────────────────────────────────
+// Each voice in a move's write-up gets the same box: a small tinted label strip
+// over a plain, larger, higher-contrast body, so the text stands out from its
+// header. The colour tells the voices apart: purple for the author's thinking
+// (as in the overall-summary card), cyan for the AI, amber for the post-game
+// review. `footer` holds secondary facts such as the move that was played.
 
-export function ThinkingBlock({ children, footer, compact = false }: {
+type CommentaryTone = 'thinking' | 'ai' | 'postgame';
+
+// Written out in full so Tailwind sees every class.
+const TONES: Record<CommentaryTone, {
+  icon: string; label: string; box: string; header: string; title: string; footer: string;
+}> = {
+  thinking: {
+    icon: '💭', label: 'My thinking',
+    box:    'border-purple-200 dark:border-purple-800 border-l-purple-400 dark:border-l-purple-500',
+    header: 'bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-800',
+    title:  'text-purple-700 dark:text-purple-300',
+    footer: 'bg-purple-50/50 dark:bg-purple-900/20 border-purple-100 dark:border-purple-900/60',
+  },
+  ai: {
+    icon: '🤖', label: 'AI analysis',
+    box:    'border-cyan-200 dark:border-cyan-800 border-l-cyan-400 dark:border-l-cyan-500',
+    header: 'bg-cyan-50 dark:bg-cyan-900/30 border-cyan-200 dark:border-cyan-800',
+    title:  'text-cyan-800 dark:text-cyan-300',
+    footer: 'bg-cyan-50/50 dark:bg-cyan-900/20 border-cyan-100 dark:border-cyan-900/60',
+  },
+  postgame: {
+    icon: '📝', label: 'My post-game analysis',
+    box:    'border-amber-200 dark:border-amber-800 border-l-amber-400 dark:border-l-amber-500',
+    header: 'bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-800',
+    title:  'text-amber-800 dark:text-amber-300',
+    footer: 'bg-amber-50/50 dark:bg-amber-900/20 border-amber-100 dark:border-amber-900/60',
+  },
+};
+
+interface CommentaryBlockProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   /** Smaller type, for the older compact card. */
   compact?: boolean;
+}
+
+function CommentaryBlock({ tone, children, footer, compact = false }: CommentaryBlockProps & {
+  tone: CommentaryTone;
 }) {
+  const t = TONES[tone];
   return (
-    <div className="rounded-lg overflow-hidden shadow-sm border border-purple-200 dark:border-purple-800 border-l-4 border-l-purple-400 dark:border-l-purple-500">
-      <div className="flex items-center gap-2 px-4 py-2 bg-purple-50 dark:bg-purple-900/30 border-b border-purple-200 dark:border-purple-800">
-        <span aria-hidden="true">💭</span>
-        <span className="text-xs font-semibold uppercase tracking-wider text-purple-700 dark:text-purple-300">
-          My thinking
+    <div className={`rounded-lg overflow-hidden shadow-sm border border-l-4 ${t.box}`}>
+      <div className={`flex items-center gap-2 px-4 py-2 border-b ${t.header}`}>
+        <span aria-hidden="true">{t.icon}</span>
+        <span className={`text-xs font-semibold uppercase tracking-wider ${t.title}`}>
+          {t.label}
         </span>
       </div>
       <div
@@ -135,13 +200,17 @@ export function ThinkingBlock({ children, footer, compact = false }: {
         {children}
       </div>
       {footer && (
-        <div className="px-4 py-2 bg-purple-50/50 dark:bg-purple-900/20 border-t border-purple-100 dark:border-purple-900/60 text-sm text-gray-600 dark:text-gray-400">
+        <div className={`px-4 py-2 border-t text-sm text-gray-600 dark:text-gray-400 ${t.footer}`}>
           {footer}
         </div>
       )}
     </div>
   );
 }
+
+export const ThinkingBlock = (props: CommentaryBlockProps) => <CommentaryBlock tone="thinking" {...props} />;
+export const AiAnalysisBlock = (props: CommentaryBlockProps) => <CommentaryBlock tone="ai" {...props} />;
+export const PostGameBlock = (props: CommentaryBlockProps) => <CommentaryBlock tone="postgame" {...props} />;
 
 // ─── Inline PGN navigator ─────────────────────────────────────────────────────
 
@@ -353,7 +422,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
               [square]: { backgroundColor: 'rgba(80, 200, 100, 0.55)' },
             });
             setFeedback('correct');
-            setPhase(phase === 'puzzle' ? 'solved_blind' : 'complete');
+            setPhase('complete');
           } else {
             // ── Wrong — show result briefly then revert ─────────────
             setBoardFen(chess.fen());
@@ -397,7 +466,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
     if (!section.moveNotation || !guess.trim()) return;
     if (normSan(guess) === normSan(section.moveNotation)) {
       setFeedback('correct');
-      setPhase(phase === 'puzzle' ? 'solved_blind' : 'complete');
+      setPhase('complete');
     } else {
       setFeedback('wrong');
     }
@@ -405,7 +474,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
 
   // Hide move notation in the header until the move has been identified
   const displayHeader = (() => {
-    if (!hasPuzzle || phase === 'complete' || phase === 'solved_blind') return section.header;
+    if (!hasPuzzle || phase === 'complete') return section.header;
     const match = section.header.match(/^(Move \d+)/);
     return match ? match[1] : section.header;
   })();
@@ -535,11 +604,11 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
         )}
 
         {/* ── Thinking ─────────────────────────────────────────────── */}
-        {(phase === 'thinking_shown' || phase === 'solved_blind' || phase === 'complete') && (
+        {(phase === 'thinking_shown' || phase === 'complete') && (
           <ThinkingBlock
             compact
             footer={
-              section.moveNotation && (phase === 'thinking_shown' || phase === 'solved_blind') ? (
+              section.moveNotation && phase === 'thinking_shown' ? (
                 <>
                   Move played:{' '}
                   <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
@@ -549,60 +618,35 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
               ) : undefined
             }
           >
-            <p>{section.thinking}</p>
+            {renderProse(section.thinking)}
           </ThinkingBlock>
         )}
 
-        {/* ── solved_blind: show post-game analysis on demand ──────── */}
-        {phase === 'solved_blind' && (
-          <button
-            onClick={() => setPhase('complete')}
-            className="text-xs px-3 py-1.5 border border-amber-300 dark:border-amber-600 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/30 text-amber-700 dark:text-amber-300 transition-colors"
-          >
-            📊 Show post-game analysis
-          </button>
-        )}
-
-        {/* ── Full analysis ─────────────────────────────────────────── */}
+        {/* ── Full analysis, once the move is solved ───────────────── */}
         {phase === 'complete' && (
           <>
-            {/* AI analysis */}
             {section.aiReview && (
-              <div>
-                <p className="text-xs font-medium text-cyan-600 dark:text-cyan-400 mb-1">
-                  🤖 AI analysis
-                </p>
-                <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed italic">
-                  {section.aiReview}
-                </p>
-              </div>
+              <AiAnalysisBlock compact>{renderProse(section.aiReview)}</AiAnalysisBlock>
             )}
 
-            {/* Post-game analysis — eval shown in header, same style as journal */}
+            {/* Post-game analysis — the engine's verdict leads, then my own words */}
             {(section.postReview || section.engineEval) && (
-              <div>
-                <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-0.5">
-                  📝 My post-game analysis
-                </p>
+              <PostGameBlock compact>
                 {section.engineEval && (
-                  <p className="text-xs text-amber-600/70 dark:text-amber-400/70 mb-1">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
                     {formatEval(section.engineEval.evaluation)}
                     {quality && (
-                      <span className={`ml-1 ${quality.color}`}>· {section.engineEval.moveQuality}</span>
-                    )}
-                    {section.engineEval.centipawnLoss > 0 && (
-                      <span className="text-amber-600/70 dark:text-amber-400/70">
-                        {' '}· {section.engineEval.centipawnLoss} cp
+                      <span className={`ml-1 ${QUALITY_TEXT[section.engineEval.moveQuality] ?? ''}`}>
+                        · {section.engineEval.moveQuality}
                       </span>
                     )}
+                    {section.engineEval.centipawnLoss > 0 && (
+                      <span> · {section.engineEval.centipawnLoss} cp</span>
+                    )}
                   </p>
                 )}
-                {section.postReview && (
-                  <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-                    {section.postReview}
-                  </p>
-                )}
-              </div>
+                {section.postReview && renderProse(section.postReview)}
+              </PostGameBlock>
             )}
           </>
         )}
@@ -790,67 +834,27 @@ function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
   );
 }
 
-// Entry content blocks (thinking / analysis), gated by phase
-export function SectionBody({ section, phase, onShowAnalysis }: {
+// Entry content blocks (thinking / analysis), gated by phase. Once the move is
+// solved -- guessed, or given up on -- everything the author wrote is shown.
+export function SectionBody({ section, phase }: {
   section: MoveSection;
   phase: SectionPhase;
-  onShowAnalysis: () => void;
 }) {
   if (phase === 'puzzle') return null;
-  const resolved = phase === 'solved_blind' || phase === 'complete';
+  const solved = phase === 'complete';
   return (
     <>
-      <ThinkingBlock
-        footer={
-          section.moveNotation && phase === 'solved_blind' ? (
-            <>
-              Move played:{' '}
-              <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
-                {section.moveNotation}
-              </span>
-            </>
-          ) : undefined
-        }
-      >
-        {renderProse(section.thinking)}
-      </ThinkingBlock>
+      <ThinkingBlock>{renderProse(section.thinking)}</ThinkingBlock>
 
       {/* Engine eval + diff, shown as soon as the move is revealed */}
-      {resolved && section.engineEval && <EvalCallout engineEval={section.engineEval} />}
+      {solved && section.engineEval && <EvalCallout engineEval={section.engineEval} />}
 
-      {phase === 'solved_blind' && (
-        <button
-          onClick={onShowAnalysis}
-          className="text-sm px-3 py-1.5 border border-amber-300 dark:border-amber-600 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/30 text-amber-700 dark:text-amber-300 transition-colors"
-        >
-          📊 Show post-game analysis
-        </button>
+      {solved && section.aiReview && (
+        <AiAnalysisBlock>{renderProse(section.aiReview)}</AiAnalysisBlock>
       )}
 
-      {phase === 'complete' && (
-        <>
-          {section.aiReview && (
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-cyan-600 dark:text-cyan-400">
-                🤖 AI analysis
-              </p>
-              <div className="text-base text-gray-700 dark:text-gray-300 leading-relaxed italic space-y-3">
-                {renderProse(section.aiReview)}
-              </div>
-            </div>
-          )}
-
-          {section.postReview && (
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
-                📝 My post-game analysis
-              </p>
-              <div className="text-base text-gray-700 dark:text-gray-300 leading-relaxed space-y-4">
-                {renderProse(section.postReview)}
-              </div>
-            </div>
-          )}
-        </>
+      {solved && section.postReview && (
+        <PostGameBlock>{renderProse(section.postReview)}</PostGameBlock>
       )}
     </>
   );
@@ -901,20 +905,10 @@ export function GuessEvalCard({ state, color }: {
   );
 }
 
-// The verdict is body-size text on a grey card, so it needs the darker shades
-// (QUALITY_STYLE's -600s are only ~3:1 there). Labels are shared with QUALITY_STYLE.
-const GUESS_VERDICT_COLOR: Record<string, string> = {
-  excellent:  'text-green-700 dark:text-green-400',
-  good:       'text-blue-700 dark:text-blue-400',
-  inaccuracy: 'text-yellow-700 dark:text-yellow-400',
-  mistake:    'text-orange-700 dark:text-orange-400',
-  blunder:    'text-red-700 dark:text-red-400',
-};
-
 function GuessEvalResult({ rating, color }: { rating: GuessRating; color: 'white' | 'black' }) {
   const { comparison: c, guessEval } = rating;
   const label = QUALITY_STYLE[c.quality]?.label ?? null;
-  const verdictColor = GUESS_VERDICT_COLOR[c.quality] ?? 'text-gray-800 dark:text-gray-200';
+  const verdictColor = QUALITY_TEXT[c.quality] ?? 'text-gray-800 dark:text-gray-200';
   // The comparison works from the player's side; the numbers are shown White's
   // way up, like the engine check beside them (playerPawns flips either way).
   const rows: Array<[string, string, boolean]> = [
@@ -1033,10 +1027,10 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     setViewIdx(Math.max(startPly, Math.min(maxIdx, idx)));
   };
 
-  const resolve = (how: 'guessed' | 'guessed_best' | 'revealed', nextPhase: SectionPhase) => {
+  const resolve = (how: 'guessed' | 'guessed_best' | 'revealed') => {
     clearTransient();
     setResolvedHow(how);
-    setPhase(nextPhase);
+    setPhase('complete');
     setViewIdx(guessPly + 1);
     onResolved();
   };
@@ -1097,7 +1091,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       if (tried === normSan(expectedSan)) {
         setFeedback('correct');
         dropGuessEval();
-        resolve('guessed', phase === 'puzzle' ? 'solved_blind' : 'complete');
+        resolve('guessed');
         return 'correct';
       }
       // The engine preferred something different from what the author played,
@@ -1108,7 +1102,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       if (bestSan && tried === normSan(bestSan)) {
         setFeedback('best');
         checkGuess(move.san, chess.fen(), true);
-        resolve('guessed_best', phase === 'puzzle' ? 'solved_blind' : 'complete');
+        resolve('guessed_best');
         return 'correct';
       }
       // Wrong — show the attempted move briefly in red, then revert
@@ -1324,7 +1318,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
             )}
             {phase === 'thinking_shown' && (
               <button
-                onClick={() => resolve('revealed', 'complete')}
+                onClick={() => resolve('revealed')}
                 className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
               >
                 🏳 Give up — show the move
@@ -1338,11 +1332,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
             wrapper so the walkthrough's smooth scroll lands inside the
             current card rather than jumping past it. */}
         <div ref={contentRef} className="space-y-4 scroll-mt-4">
-          <SectionBody
-            section={section}
-            phase={phase}
-            onShowAnalysis={() => setPhase('complete')}
-          />
+          <SectionBody section={section} phase={phase} />
         </div>
       </div>
     </div>
@@ -1440,6 +1430,15 @@ function LockedSummaryCard({ onReveal }: { onReveal: () => void }) {
   );
 }
 
+// Where to glide after a move is solved. A reveal that fits on screen scrolls
+// only if it isn't already in view ('nearest': a card in view doesn't move, one
+// half off-screen pans in). With the thinking, engine check, AI and post-game
+// review all revealed at once it often won't fit, and 'nearest' would leave
+// just its top edge showing -- so scroll to its start and let the reader read down.
+export function revealScrollBlock(contentHeight: number, viewportHeight: number): 'start' | 'nearest' {
+  return contentHeight > viewportHeight * 0.85 ? 'start' : 'nearest';
+}
+
 // ─── Game walkthrough container ───────────────────────────────────────────────
 
 export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
@@ -1491,9 +1490,13 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '' }: {
       }
     }
     const el = resolvedIdx >= 0 ? contentRefs.current[resolvedIdx] : null;
-    // block:'nearest' = "only scroll if it isn't already visible" — so a card
-    // already in view doesn't move at all, and a card half-off-screen pans in.
-    const t = setTimeout(() => el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 350);
+    const t = setTimeout(() => {
+      if (!el) return;
+      el.scrollIntoView({
+        behavior: 'smooth',
+        block: revealScrollBlock(el.getBoundingClientRect().height, window.innerHeight),
+      });
+    }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneCount]);
