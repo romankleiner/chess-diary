@@ -101,6 +101,43 @@ export function renderProse(text: string, paragraphClass?: string): React.ReactN
   });
 }
 
+// ─── Thinking block ───────────────────────────────────────────────────────────
+// The author's own words, set apart from the surrounding commentary: a small
+// tinted label strip over a plain, larger, higher-contrast body so the text
+// stands out from its header. Purple is the author's colour in the walkthrough
+// (as in the overall-summary card); the AI commentary is cyan and the post-game
+// review amber. `footer` holds secondary facts such as the move that was played.
+
+export function ThinkingBlock({ children, footer, compact = false }: {
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  /** Smaller type, for the older compact card. */
+  compact?: boolean;
+}) {
+  return (
+    <div className="rounded-lg overflow-hidden shadow-sm border border-purple-200 dark:border-purple-800 border-l-4 border-l-purple-400 dark:border-l-purple-500">
+      <div className="flex items-center gap-2 px-4 py-2 bg-purple-50 dark:bg-purple-900/30 border-b border-purple-200 dark:border-purple-800">
+        <span aria-hidden="true">💭</span>
+        <span className="text-xs font-semibold uppercase tracking-wider text-purple-700 dark:text-purple-300">
+          My thinking
+        </span>
+      </div>
+      <div
+        className={`px-4 py-3 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-50 leading-relaxed space-y-4 ${
+          compact ? 'text-sm' : 'text-base'
+        }`}
+      >
+        {children}
+      </div>
+      {footer && (
+        <div className="px-4 py-2 bg-purple-50/50 dark:bg-purple-900/20 border-t border-purple-100 dark:border-purple-900/60 text-sm text-gray-600 dark:text-gray-400">
+          {footer}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Inline PGN navigator ─────────────────────────────────────────────────────
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKB1R w KQkq - 0 1';
@@ -378,7 +415,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
         </span>
         <span className="text-xs text-gray-400">
           {new Date(section.timestamp).toLocaleString([], {
-            month: 'short', day: 'numeric',
+            year: 'numeric', month: 'short', day: 'numeric',
             hour: '2-digit', minute: '2-digit',
           })}
         </span>
@@ -494,22 +531,21 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
 
         {/* ── Thinking ─────────────────────────────────────────────── */}
         {(phase === 'thinking_shown' || phase === 'solved_blind' || phase === 'complete') && (
-          <div>
-            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-              💭 My thinking
-            </p>
-            <p className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
-              {section.thinking}
-            </p>
-            {section.moveNotation && (phase === 'thinking_shown' || phase === 'solved_blind') && (
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Move played:{' '}
-                <span className="font-mono font-medium text-gray-700 dark:text-gray-300">
-                  {section.moveNotation}
-                </span>
-              </p>
-            )}
-          </div>
+          <ThinkingBlock
+            compact
+            footer={
+              section.moveNotation && (phase === 'thinking_shown' || phase === 'solved_blind') ? (
+                <>
+                  Move played:{' '}
+                  <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
+                    {section.moveNotation}
+                  </span>
+                </>
+              ) : undefined
+            }
+          >
+            <p>{section.thinking}</p>
+          </ThinkingBlock>
         )}
 
         {/* ── solved_blind: show post-game analysis on demand ──────── */}
@@ -750,7 +786,7 @@ function EvalCallout({ engineEval }: { engineEval: EngineEval }) {
 }
 
 // Entry content blocks (thinking / analysis), gated by phase
-function SectionBody({ section, phase, onShowAnalysis }: {
+export function SectionBody({ section, phase, onShowAnalysis }: {
   section: MoveSection;
   phase: SectionPhase;
   onShowAnalysis: () => void;
@@ -759,22 +795,20 @@ function SectionBody({ section, phase, onShowAnalysis }: {
   const resolved = phase === 'solved_blind' || phase === 'complete';
   return (
     <>
-      <div className="space-y-1.5">
-        <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-          💭 My thinking
-        </p>
-        <div className="text-base text-gray-800 dark:text-gray-200 leading-relaxed space-y-4">
-          {renderProse(section.thinking)}
-        </div>
-        {section.moveNotation && phase === 'solved_blind' && (
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            Move played:{' '}
-            <span className="font-mono font-medium text-gray-700 dark:text-gray-300">
-              {section.moveNotation}
-            </span>
-          </p>
-        )}
-      </div>
+      <ThinkingBlock
+        footer={
+          section.moveNotation && phase === 'solved_blind' ? (
+            <>
+              Move played:{' '}
+              <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
+                {section.moveNotation}
+              </span>
+            </>
+          ) : undefined
+        }
+      >
+        {renderProse(section.thinking)}
+      </ThinkingBlock>
 
       {/* Engine eval + diff, shown as soon as the move is revealed */}
       {resolved && section.engineEval && <EvalCallout engineEval={section.engineEval} />}
@@ -1047,7 +1081,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
         </span>
         <span className="text-sm text-gray-400">
           {new Date(section.timestamp).toLocaleString([], {
-            month: 'short', day: 'numeric',
+            year: 'numeric', month: 'short', day: 'numeric',
             hour: '2-digit', minute: '2-digit',
           })}
         </span>
@@ -1056,18 +1090,11 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       <div className="p-4 space-y-4">
 
         {/* ── Hints / prompt ───────────────────────────────────────── */}
-        {!resolved && viewIdx < guessPly && (() => {
-          const fullmove = Math.floor(guessPly / 2) + 1;
-          const target   = guessPly % 2 === 0 ? `${fullmove}.` : `${fullmove}...`;
-          return (
-            <p className="text-sm text-center text-gray-500 dark:text-gray-400">
-              ▶ Play through to my move at{' '}
-              <span className="font-mono font-medium text-gray-700 dark:text-gray-300">
-                {target}
-              </span>
-            </p>
-          );
-        })()}
+        {!resolved && viewIdx < guessPly && (
+          <p className="text-sm text-center text-gray-500 dark:text-gray-400">
+            ▶ Play through to my next commentated move
+          </p>
+        )}
         {atPuzzle && (
           <div className="text-center space-y-0.5">
             {section.opponentLastMove && (

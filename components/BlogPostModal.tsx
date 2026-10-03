@@ -78,7 +78,7 @@ function buildClipboardHtml(
 
   for (const s of sections) {
     const time = new Date(s.timestamp).toLocaleString([], {
-      month: 'short', day: 'numeric',
+      year: 'numeric', month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit',
     });
 
