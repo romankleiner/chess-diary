@@ -11,7 +11,17 @@ import path from 'path';
 // A response that needs a verification retry takes two model calls.
 export const maxDuration = 60;
 
+// Everything (journal read, model call(s), save) must finish inside maxDuration.
+// If the platform kills the function mid-call the client gets a non-JSON error
+// page, so we enforce our own deadline a few seconds earlier and always answer
+// with clean JSON the client can act on.
+const DEADLINE_MS = 55_000;
+const MIN_CALL_BUDGET_MS = 5_000;   // never start a call with less than this
+const MIN_RETRY_BUDGET_MS = 10_000; // skip the verification retry if less is left
+
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+type ClaudeResult = { text: string } | { error: string; retryable: boolean };
 
 // Sonnet 5, Fable 5 and Mythos 5 think adaptively by default (Fable/Mythos can't
 // turn it off) and thinking tokens count against max_tokens, so a small
@@ -23,47 +33,79 @@ function usesThinkingByDefault(model: string): boolean {
 }
 
 /**
- * One Messages API call. Returns the response text, or null if the API returned
- * an error. Joins all text blocks rather than reading content[0], because
- * thinking models can return a thinking block first.
+ * One Messages API call. Returns the response text, or why it failed and
+ * whether trying again could help (rate limit, overload, server error, timeout
+ * or network problem — as opposed to e.g. a bad model name or API key).
+ * Joins all text blocks rather than reading content[0], because thinking
+ * models can return a thinking block first.
  */
 async function callClaude(
   model: string,
   maxTokens: number,
   messages: ChatMessage[],
-  entryId: string | number
-): Promise<string | null> {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY || '',
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: usesThinkingByDefault(model) ? maxTokens + THINKING_HEADROOM_TOKENS : maxTokens,
-      messages,
-    }),
-  });
+  entryId: string | number,
+  timeoutMs: number
+): Promise<ClaudeResult> {
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: usesThinkingByDefault(model) ? maxTokens + THINKING_HEADROOM_TOKENS : maxTokens,
+        messages,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`[AI-ANALYSIS] API error for entry ${entryId}: ${response.status}`);
-    console.error(`[AI-ANALYSIS] Error details:`, errorText);
-    console.error(`[AI-ANALYSIS] Request was for model: ${model}`);
-    return null;
-  }
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[AI-ANALYSIS] API error for entry ${entryId}: ${response.status}`);
+      console.error(`[AI-ANALYSIS] Error details:`, errorText);
+      console.error(`[AI-ANALYSIS] Request was for model: ${model}`);
 
-  const data = await response.json();
-  const blocks: { type?: string; text?: unknown }[] = Array.isArray(data.content) ? data.content : [];
-  if (data.stop_reason === 'max_tokens') {
-    console.warn(`[AI-ANALYSIS] Entry ${entryId}: response hit max_tokens and may be truncated`);
+      let detail = '';
+      try {
+        detail = JSON.parse(errorText)?.error?.message ?? '';
+      } catch {
+        // not JSON — fall through with just the status
+      }
+      return {
+        error: `AI service returned ${response.status}${detail ? `: ${detail}` : ''}`,
+        retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+      };
+    }
+
+    const data = await response.json();
+    const blocks: { type?: string; text?: unknown }[] = Array.isArray(data.content) ? data.content : [];
+    if (data.stop_reason === 'max_tokens') {
+      console.warn(`[AI-ANALYSIS] Entry ${entryId}: response hit max_tokens and may be truncated`);
+    }
+    return {
+      text: blocks
+        .map(block => block?.text)
+        .filter((text): text is string => typeof text === 'string')
+        .join(''),
+    };
+  } catch (error) {
+    const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+    console.error(`[AI-ANALYSIS] ${timedOut ? 'Timed out' : 'Request failed'} for entry ${entryId}:`, error);
+    return {
+      error: timedOut
+        ? `The AI request timed out after ${Math.round(timeoutMs / 1000)}s`
+        : `Could not reach the AI service: ${error instanceof Error ? error.message : String(error)}`,
+      retryable: true,
+    };
   }
-  return blocks
-    .map(block => block?.text)
-    .filter((text): text is string => typeof text === 'string')
-    .join('');
+}
+
+/** Stable, chronological order so an entryIndex means the same entry on every request. */
+function byTimestampThenId(a: any, b: any): number {
+  return String(a.timestamp ?? '').localeCompare(String(b.timestamp ?? '')) || (a.id ?? 0) - (b.id ?? 0);
 }
 
 /**
@@ -103,6 +145,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now();
+  const timeLeft = () => startedAt + DEADLINE_MS - Date.now();
+
   try {
     const body = await request.json();
     const { gameId, reanalyzeEngine, entryIndex = 0 } = body;
@@ -125,8 +170,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    // Get all journal entries for this game
-    const gameEntries = journalEntries.filter(e => e.gameId === gameId);
+    // Get all journal entries for this game. The journal is re-read on every
+    // request and entryIndex is a position in this list, so the order must be
+    // identical each time (Redis doesn't promise one) or entries get skipped
+    // or analysed twice.
+    const gameEntries = journalEntries.filter(e => e.gameId === gameId).sort(byTimestampThenId);
     if (gameEntries.length === 0) {
       return NextResponse.json({ error: 'No journal entries found for this game' }, { status: 404 });
     }
@@ -165,8 +213,9 @@ export async function POST(request: NextRequest) {
     // Process the single entry at entryIndex
     const entry = gameEntries[entryIndex];
 
-    // Skip entries without content (advance index without doing work)
-    if (!entry.content || !entry.content.trim()) {
+    // Skip entries without content (advance index without doing work), and an
+    // index past the end (entries were deleted mid-run) — nothing left to do.
+    if (!entry || !entry.content || !entry.content.trim()) {
       const completed = entryIndex + 1 >= gameEntries.length;
       return NextResponse.json({
         success: true,
@@ -174,6 +223,7 @@ export async function POST(request: NextRequest) {
         nextEntryIndex: entryIndex + 1,
         entriesAnalyzed: entryIndex + 1,
         totalEntries: gameEntries.length,
+        entryStatus: 'skipped',
       });
     }
 
@@ -319,10 +369,24 @@ export async function POST(request: NextRequest) {
         ? 2000
         : 500;
 
-    try {
-      let aiResponse = await callClaude(modelVal, maxTokens, [{ role: 'user', content: prompt }], entry.id);
+    // What happened to this entry, reported to the client so a failed move is
+    // never silently passed over (it used to look identical to a success).
+    let failure: { error: string; retryable: boolean } | null = null;
 
-      if (aiResponse !== null) {
+    try {
+      const first = await callClaude(
+        modelVal,
+        maxTokens,
+        [{ role: 'user', content: prompt }],
+        entry.id,
+        Math.max(MIN_CALL_BUDGET_MS, timeLeft())
+      );
+
+      if ('error' in first) {
+        failure = first;
+      } else {
+        let aiResponse = first.text;
+
         // Layer 2 — verify. Replay every [[line: ...]] marker with chess.js. If any
         // line is illegal, show the model exactly what failed and let it rewrite
         // once; whatever is still illegal after that is replaced by a placeholder.
@@ -332,8 +396,10 @@ export async function POST(request: NextRequest) {
             `[AI-ANALYSIS] Entry ${entry.id}: checked ${verified.checks.length} line(s), ${verified.invalid.length} illegal`
           );
 
-          if (verified.invalid.length > 0) {
-            const retryText = await callClaude(
+          // Only attempt the correction if there is time left to finish it and
+          // still save; otherwise keep the first answer (placeholders and all).
+          if (verified.invalid.length > 0 && timeLeft() >= MIN_RETRY_BUDGET_MS) {
+            const retry = await callClaude(
               modelVal,
               maxTokens,
               [
@@ -341,16 +407,19 @@ export async function POST(request: NextRequest) {
                 { role: 'assistant', content: aiResponse },
                 { role: 'user', content: buildCorrectionPrompt(verified.invalid) },
               ],
-              entry.id
+              entry.id,
+              timeLeft()
             );
 
-            if (retryText !== null) {
-              const retried = verifyAndClean(retryText, entry.fen, entry.myMove);
+            if ('text' in retry) {
+              const retried = verifyAndClean(retry.text, entry.fen, entry.myMove);
               console.log(
                 `[AI-ANALYSIS] Entry ${entry.id}: retry checked ${retried.checks.length} line(s), ${retried.invalid.length} illegal`
               );
               if (retried.invalid.length <= verified.invalid.length) verified = retried;
             }
+          } else if (verified.invalid.length > 0) {
+            console.warn(`[AI-ANALYSIS] Entry ${entry.id}: not enough time left for a correction retry`);
           }
 
           aiResponse = verified.text;
@@ -371,7 +440,9 @@ export async function POST(request: NextRequest) {
         console.log(`[AI-ANALYSIS] Analyzed entry ${entry.id}`);
       }
     } catch (error) {
+      // Unexpected (a bug, not a flaky service) — retrying the same input won't help.
       console.error(`[AI-ANALYSIS] Error analyzing entry ${entry.id}:`, error);
+      failure = { error: error instanceof Error ? error.message : String(error), retryable: false };
     }
 
     // Save the updated entry (only aiReview was modified)
@@ -385,6 +456,8 @@ export async function POST(request: NextRequest) {
       nextEntryIndex: entryIndex + 1,
       entriesAnalyzed: entryIndex + 1,
       totalEntries: gameEntries.length,
+      entryStatus: failure ? 'failed' : 'analyzed',
+      ...(failure ? { error: failure.error, retryable: failure.retryable } : {}),
     });
   } catch (error) {
     console.error('[AI-ANALYSIS] Error:', error);

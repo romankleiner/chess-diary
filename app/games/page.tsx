@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import PostGameSummaryForm from '@/components/PostGameSummaryForm';
 import BlogPostModal from '@/components/BlogPostModal';
+import { mergeRetry, runThinkingAnalysis, summarizeRun } from '@/lib/thinking-analysis-client';
 
 interface Game {
   id: string;
@@ -235,25 +236,30 @@ export default function GamesPage() {
     setThinkingProgress(null);
 
     try {
-      let entryIndex = 0;
-      let completed = false;
-      while (!completed) {
-        const response = await fetch('/api/games/analyze-thinking', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gameId, reanalyzeEngine: false, entryIndex }),
-        });
-        const data = await response.json();
-        if (!data.success) {
-          alert(data.error || 'Analysis failed');
-          return;
+      // One request per entry. runThinkingAnalysis retries transient failures,
+      // keeps going past an entry it can't analyse, and reports which ones failed
+      // — a failed move used to be indistinguishable from a successful one.
+      const onProgress = (current: number, total: number) => setThinkingProgress({ current, total });
+      let result = await runThinkingAnalysis({ gameId, onProgress });
+
+      if (!result.fatal && result.failures.length > 0) {
+        const retryNow = confirm(
+          `${result.failures.length} of ${result.total} entries could not be analyzed:\n${result.failures[0].error}\n\nRetry those now?`
+        );
+        if (retryNow) {
+          setThinkingProgress(null);
+          const retry = await runThinkingAnalysis({
+            gameId,
+            indices: result.failures.map(f => f.index),
+            onProgress,
+          });
+          result = mergeRetry(result, retry);
         }
-        // Update progress directly from the POST response — no polling needed
-        setThinkingProgress({ current: data.entriesAnalyzed, total: data.totalEntries });
-        completed = data.completed;
-        entryIndex = data.nextEntryIndex ?? entryIndex + 1;
       }
-      showToast(`🧠 AI analysis complete!`);
+
+      const summary = summarizeRun(result);
+      if (summary.ok) showToast(summary.message);
+      else alert(summary.message);
     } catch (error) {
       alert(`Failed to analyze thinking: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
