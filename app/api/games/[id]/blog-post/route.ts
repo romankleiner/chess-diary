@@ -3,6 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { Chess } from 'chess.js';
 import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
 import { summarizeAnalysis } from '@/lib/analysis-utils';
+import { resolveGameDates } from '@/lib/game-dates';
 import { formatSanLine, uciLineToSan } from '@/lib/position-facts';
 
 // Resolve whose game this is without requiring the viewer to be logged in.
@@ -291,6 +292,9 @@ export async function POST(
         black:       game.black       || '',
         result:      game.result      ?? null,
         date:        game.date        || '',
+        // The day the game began (from its PGN) and the day it ended, called out
+        // separately: a daily game can run for days. `date` above is the end date.
+        ...resolveGameDates({ pgn: game.pgn, endDate: game.date, finished: !!game.result }),
         timeControl: game.timeControl || '',
       },
     });

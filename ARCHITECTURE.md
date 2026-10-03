@@ -77,7 +77,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 | POST | `/api/games/[id]/analysis/progress` | Read/write in-progress analysis state |
 | POST | `/api/games/analyze` | Run Stockfish or chess-api.com analysis on a game |
 | POST | `/api/games/analyze-thinking` | Run Claude AI analysis on the player's recorded thinking |
-| POST | `/api/games/[id]/blog-post` | Build the blog from analysis + journal: per-move `sections` (each with its engine check, including the engine's `topLine` in numbered SAN and the analysis `depth`), the written `summary`, the `pgn`, and `analysisSummary` (both players' accuracy and move-quality counts, for the end-of-game review). Readable without sign-in once the game is shared |
+| POST | `/api/games/[id]/blog-post` | Build the blog from analysis + journal: per-move `sections` (each with its engine check, including the engine's `topLine` in numbered SAN and the analysis `depth`), the written `summary`, the `pgn`, `analysisSummary` (both players' accuracy and move-quality counts, for the end-of-game review), and `gameMeta` with the game's `startDate` and `endDate` called out separately. Readable without sign-in once the game is shared |
 
 ### Journal
 
@@ -169,6 +169,9 @@ On the public blog, a wrong guess is rated by the engine and set beside my move 
 - **`rate-limit.ts`** (server): a small fixed-window limiter keyed by caller. State is per serverless instance, so the limit is approximate; it exists to stop one visitor from spending the free engine API's goodwill, not as a security boundary.
 - **Depth.** The blog-post route passes the stored analysis depth through as `engineEval.depth`, and the guess is evaluated at that depth (clamped to the engine API's maximum of 18) so the numbers are comparable.
 - **Caveat.** The stored evaluation and the live one can come from different engines or depths, so small differences (~0.1) are noise rather than signal. The top line inherits whatever cap `normalizeCpLoss` applied to the stored loss.
+
+### `lib/game-dates.ts` — When a game started and ended
+A stored game has a single `date`: the day of its last move (from Chess.com's `end_time`), or for a game still being played just the day it was fetched. A daily game can run for weeks, so the blog calls out the start and end separately (`GameDates` in `components/blog-shared.tsx`). `resolveGameDates` takes the **start** from the PGN's `[Date]` tag (falling back to `[UTCDate]`), which Chess.com sets to the day the game began — checked against real daily games, where the stored end date also equals `[EndDate]`. Tags are read from the PGN text directly (`pgnTag`), so a PGN whose moves can't be parsed still yields them. The placeholder `????.??.??` and impossible dates count as unknown, a start after the end is dropped, and an unfinished game reports no end date (its stored date isn't one). The blog shows whichever of the two is known, and nothing when neither is.
 
 ### `lib/notation.ts` — Chess notation in prose
 `splitNotation(text)` splits commentary into ordinary text and chess notation, so the blog can set moves apart from the words around them (a monospaced, tinted chip; see `renderInline` in `components/blog-shared.tsx`). Pure and browser-safe.

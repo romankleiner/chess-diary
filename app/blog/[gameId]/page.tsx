@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { MoveSection, GameWalkthrough } from '@/components/blog-shared';
+import { MoveSection, GameWalkthrough, GameDates } from '@/components/blog-shared';
 import type { AnalysisSummary } from '@/lib/analysis-utils';
 
 interface GameMeta {
   white: string;
   black: string;
   result: string | null;
-  date: string;
+  date: string;                // the end date, kept for older responses
+  startDate?: string | null;   // ISO date the game began, when known
+  endDate?: string | null;     // ISO date the game ended; null while it is still being played
   timeControl: string;
 }
 
@@ -63,9 +65,11 @@ export default function BlogPage() {
 
       // Set browser tab title once we have the game info
       if (json.gameMeta) {
-        const { white, black, date } = json.gameMeta as GameMeta;
+        const { white, black, startDate, endDate } = json.gameMeta as GameMeta;
+        // "2026-07-10 – 2026-07-24", or just the one date that is known
+        const dates = Array.from(new Set([startDate, endDate].filter(Boolean))).join(' – ');
         document.title = white && black
-          ? `${white} vs ${black}${date ? ` · ${date}` : ''} — Chess Diary`
+          ? `${white} vs ${black}${dates ? ` · ${dates}` : ''} — Chess Diary`
           : 'Chess Diary — Game Blog';
       }
     } catch (err) {
@@ -129,9 +133,7 @@ export default function BlogPage() {
                 </h1>
                 <ResultBadge result={data.gameMeta.result} />
               </div>
-              <p className="text-base text-gray-500 dark:text-gray-400">
-                {data.gameMeta.date}
-              </p>
+              <GameDates startDate={data.gameMeta.startDate} endDate={data.gameMeta.endDate} />
             </div>
 
             {/* Game walkthrough: the game is the backbone — the reader plays

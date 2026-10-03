@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   EngineSummaryCard,
+  GameDates,
   GameWalkthrough,
   MoveSectionCard,
   SectionBody,
@@ -57,6 +58,66 @@ const rowsOf = (html: string) => {
   }
   return rows;
 };
+
+// ─── the game's dates ─────────────────────────────────────────────────────────
+
+describe('GameDates', () => {
+  const render = (props: React.ComponentProps<typeof GameDates>) => renderToStaticMarkup(<GameDates {...props} />);
+  const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  it('calls out the start and end dates separately, labelled', () => {
+    const html = render({ startDate: '2026-07-10', endDate: '2026-07-24' });
+
+    expect(text(html)).toBe('Started 2026-07-10 Finished 2026-07-24');
+  });
+
+  it('shows the start before the end', () => {
+    const html = render({ startDate: '2026-07-10', endDate: '2026-07-24' });
+    expect(html.indexOf('Started')).toBeLessThan(html.indexOf('Finished'));
+  });
+
+  it('marks each date up as a date a machine can read', () => {
+    const html = render({ startDate: '2026-07-10', endDate: '2026-07-24' });
+
+    // (React's static renderer keeps the camelCase name; HTML attribute names are case-insensitive)
+    expect(html).toMatch(/<time dateTime="2026-07-10"[^>]*>2026-07-10<\/time>/);
+    expect(html).toMatch(/<time dateTime="2026-07-24"[^>]*>2026-07-24<\/time>/);
+  });
+
+  it('shows both even when the game began and ended on the same day', () => {
+    expect(text(render({ startDate: '2026-07-10', endDate: '2026-07-10' }))).toBe('Started 2026-07-10 Finished 2026-07-10');
+  });
+
+  it('shows only the end when the start is not known', () => {
+    const html = render({ startDate: null, endDate: '2026-07-24' });
+
+    expect(text(html)).toBe('Finished 2026-07-24');
+    expect(html).not.toContain('Started');
+  });
+
+  it('shows only the start for a game still being played', () => {
+    const html = render({ startDate: '2026-07-10', endDate: null });
+
+    expect(text(html)).toBe('Started 2026-07-10');
+    expect(html).not.toContain('Finished');
+  });
+
+  it('shows nothing, not an empty paragraph, when neither date is known', () => {
+    expect(render({ startDate: null, endDate: null })).toBe('');
+    expect(render({})).toBe('');
+  });
+
+  it('can be told apart from the labels by weight and colour, with a dark-mode treatment', () => {
+    const html = render({ startDate: '2026-07-10', endDate: '2026-07-24' });
+
+    expect(html).toContain('font-medium text-gray-700 dark:text-gray-300');
+    expect(html).toContain('text-gray-500 dark:text-gray-400');
+  });
+
+  it('wraps onto a second line on a narrow screen instead of overflowing', () => {
+    expect(render({ startDate: '2026-07-10', endDate: '2026-07-24' })).toContain('flex flex-wrap');
+  });
+});
 
 // ─── whole-move counting ──────────────────────────────────────────────────────
 

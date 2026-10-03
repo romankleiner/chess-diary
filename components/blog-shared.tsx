@@ -1432,6 +1432,34 @@ function TailCard({ game, startPly, userColor, locked, onReachedEnd }: {
   );
 }
 
+// ─── Game dates ───────────────────────────────────────────────────────────────
+// A daily game can run for days, so the day it began and the day it ended are
+// called out separately rather than as one date. Either may be unknown: older
+// games may have no start tag in their PGN, and a game still being played has
+// no end yet. Shows nothing when neither is known.
+
+export function GameDates({ startDate, endDate }: {
+  startDate?: string | null;
+  endDate?: string | null;
+}) {
+  const items = [
+    { label: 'Started', date: startDate },
+    { label: 'Finished', date: endDate },
+  ].filter((item): item is { label: string; date: string } => !!item.date);
+  if (items.length === 0) return null;
+
+  return (
+    <p className="flex flex-wrap gap-x-5 gap-y-1 text-base text-gray-500 dark:text-gray-400">
+      {items.map(({ label, date }) => (
+        <span key={label}>
+          {label}{' '}
+          <time dateTime={date} className="font-medium text-gray-700 dark:text-gray-300">{date}</time>
+        </span>
+      ))}
+    </p>
+  );
+}
+
 // ─── Overall summary card ─────────────────────────────────────────────────────
 
 function SummaryCard({ summary }: { summary: string }) {

@@ -516,6 +516,55 @@ describe('POST /api/games/[id]/blog-post — summary', () => {
 
 // ─── Response shape ───────────────────────────────────────────────────────────
 
+describe('POST /api/games/[id]/blog-post — game dates', () => {
+  const DAILY_PGN = '[Event "Let\'s Play!"]\n[Site "Chess.com"]\n[Date "2026.07.10"]\n[White "testuser"]\n[Black "opponent_a"]\n[EndDate "2026.07.24"]\n\n1. e4 e5 2. Nf3 Nc6';
+  const meta = async (game: object) => {
+    mockGetGame.mockResolvedValue({ ...gameA, ...game } as any);
+    return (await (await POST(makeReq(), params(gameA.id))).json()).gameMeta;
+  };
+
+  it('gives the start date from the PGN and the end date separately', async () => {
+    const m = await meta({ pgn: DAILY_PGN, date: '2026-07-24', result: 'win' });
+    expect(m.startDate).toBe('2026-07-10');
+    expect(m.endDate).toBe('2026-07-24');
+  });
+
+  it('keeps `date` as the end date, as before', async () => {
+    const m = await meta({ pgn: DAILY_PGN, date: '2026-07-24', result: 'win' });
+    expect(m.date).toBe('2026-07-24');
+  });
+
+  it('has no start date when the PGN has no date tag, but still the end date', async () => {
+    const m = await meta({ date: '2026-03-10' }); // gameA's PGN is moves only
+    expect(m.startDate).toBeNull();
+    expect(m.endDate).toBe('2026-03-10');
+  });
+
+  it('reports no end date for a game still being played, whose stored date is only the day it was fetched', async () => {
+    const m = await meta({ pgn: DAILY_PGN, date: '2026-07-18', result: null });
+    expect(m.startDate).toBe('2026-07-10');
+    expect(m.endDate).toBeNull();
+    expect(m.date).toBe('2026-07-18');
+  });
+
+  it('drops a start date that falls after the end date', async () => {
+    const m = await meta({ pgn: DAILY_PGN, date: '2026-07-05', result: 'win' });
+    expect(m.startDate).toBeNull();
+    expect(m.endDate).toBe('2026-07-05');
+  });
+
+  it('still reads the dates from a PGN whose moves cannot be parsed', async () => {
+    const m = await meta({ pgn: '[Date "2026.07.10"]\n\n1. e4 e5 2. Qxz9 nonsense', date: '2026-07-24', result: 'win' });
+    expect(m.startDate).toBe('2026-07-10');
+  });
+
+  it('gives no start for a game with no PGN at all', async () => {
+    const m = await meta({ pgn: '', date: '2026-07-24', result: 'win' });
+    expect(m.startDate).toBeNull();
+    expect(m.endDate).toBe('2026-07-24');
+  });
+});
+
 describe('POST /api/games/[id]/blog-post — analysisSummary', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);
