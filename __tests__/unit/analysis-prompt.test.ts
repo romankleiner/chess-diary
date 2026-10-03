@@ -218,3 +218,82 @@ describe('buildAnalysisPrompt — verbosity', () => {
     expect(prompts.size).toBe(4);
   });
 });
+
+// ─── grounding (verified position facts + line markers) ──────────────────────
+
+describe('buildAnalysisPrompt — grounding', () => {
+  const FACTS = 'Verified position facts (computed from the FEN): ...\n- Side to move: White';
+
+  it('is unchanged when no grounding is passed', () => {
+    const plain = buildAnalysisPrompt('thinking', 'Nf3', SAMPLE_FEN, null, 'detailed', '');
+    expect(plain).not.toContain('Verified position facts');
+    expect(plain).not.toContain('[[line:');
+  });
+
+  it('inserts the verified position facts right after the FEN', () => {
+    const prompt = buildAnalysisPrompt('thinking', null, SAMPLE_FEN, null, 'detailed', '', {
+      positionFacts: FACTS,
+    });
+    expect(prompt).toContain(FACTS);
+    expect(prompt.indexOf(SAMPLE_FEN)).toBeLessThan(prompt.indexOf('Verified position facts'));
+    expect(prompt.indexOf('Verified position facts')).toBeLessThan(prompt.indexOf('Player\'s thinking'));
+  });
+
+  it('asks for [[line: ...]] markers only when requested', () => {
+    const without = buildAnalysisPrompt('t', null, SAMPLE_FEN, null, 'detailed', '', { positionFacts: FACTS });
+    const withRules = buildAnalysisPrompt('t', null, SAMPLE_FEN, null, 'detailed', '', {
+      positionFacts: FACTS,
+      requestLineMarkers: true,
+    });
+    expect(without).not.toContain('[[line:');
+    expect(withRules).toContain('[[line: Nxe5 Nxe5 d4]]');
+    expect(withRules).toContain('ground truth');
+  });
+
+  it('puts the marker rules at the very end, after the verbosity instruction', () => {
+    const prompt = buildAnalysisPrompt('t', null, SAMPLE_FEN, null, 'brief', '', { requestLineMarkers: true });
+    expect(prompt.indexOf('Provide a brief analysis')).toBeLessThan(prompt.indexOf('Rules for concrete moves'));
+  });
+
+  it('asks for markers on opening-book moves too', () => {
+    const prompt = buildAnalysisPrompt('t', 'e4', SAMPLE_FEN, { moveQuality: 'book' }, 'detailed', '', {
+      requestLineMarkers: true,
+    });
+    expect(prompt).toContain('opening book move');
+    expect(prompt).toContain('Rules for concrete moves');
+  });
+
+  describe('engine lines in SAN', () => {
+    const analysis = {
+      evaluation_before: 0.3,
+      evaluation_after: 0.1,
+      bestMove: 'f3e5',
+      principalVariation: ['f3e5', 'c6e5', 'd2d4'],
+      moveQuality: 'good',
+    };
+
+    it('shows the raw engine strings without grounding', () => {
+      const prompt = buildAnalysisPrompt('t', 'Nf3', SAMPLE_FEN, analysis);
+      expect(prompt).toContain("Engine's best move: f3e5");
+      expect(prompt).toContain("Engine's main line: f3e5 c6e5 d2d4");
+    });
+
+    it('shows SAN instead when grounding provides it', () => {
+      const prompt = buildAnalysisPrompt('t', 'Nf3', SAMPLE_FEN, analysis, 'detailed', '', {
+        engineBestMoveSan: 'Nxe5',
+        engineLineSan: '13. Nxe5 Nxe5 14. d4',
+      });
+      expect(prompt).toContain("Engine's best move: Nxe5");
+      expect(prompt).toContain("Engine's main line: 13. Nxe5 Nxe5 14. d4");
+      expect(prompt).not.toContain('f3e5');
+    });
+
+    it('falls back to the raw strings for whichever SAN is missing', () => {
+      const prompt = buildAnalysisPrompt('t', 'Nf3', SAMPLE_FEN, analysis, 'detailed', '', {
+        engineBestMoveSan: 'Nxe5',
+      });
+      expect(prompt).toContain("Engine's best move: Nxe5");
+      expect(prompt).toContain("Engine's main line: f3e5 c6e5 d2d4");
+    });
+  });
+});

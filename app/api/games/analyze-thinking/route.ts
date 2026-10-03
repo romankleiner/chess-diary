@@ -1,9 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGame, getJournal, getAnalysis, getSetting, saveJournalEntry } from '@/lib/db';
 import { buildAnalysisPrompt } from '@/lib/analysis-prompt';
+import type { PromptGrounding } from '@/lib/analysis-prompt';
+import { describePosition, formatSanLine, historyFromPgn, uciLineToSan } from '@/lib/position-facts';
+import { buildCorrectionPrompt, verifyAndClean } from '@/lib/line-verifier';
 import { Chess } from 'chess.js';
 import fs from 'fs';
 import path from 'path';
+
+// A response that needs a verification retry takes two model calls.
+export const maxDuration = 60;
+
+type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+// Sonnet 5, Fable 5 and Mythos 5 think adaptively by default (Fable/Mythos can't
+// turn it off) and thinking tokens count against max_tokens, so a small
+// verbosity-based limit can be eaten entirely by thinking and leave a truncated
+// or empty answer. Give those models headroom on top of the verbosity limit.
+const THINKING_HEADROOM_TOKENS = 6000;
+function usesThinkingByDefault(model: string): boolean {
+  return /^claude-(sonnet-5|fable-5|mythos-5)/.test(model);
+}
+
+/**
+ * One Messages API call. Returns the response text, or null if the API returned
+ * an error. Joins all text blocks rather than reading content[0], because
+ * thinking models can return a thinking block first.
+ */
+async function callClaude(
+  model: string,
+  maxTokens: number,
+  messages: ChatMessage[],
+  entryId: string | number
+): Promise<string | null> {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: usesThinkingByDefault(model) ? maxTokens + THINKING_HEADROOM_TOKENS : maxTokens,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`[AI-ANALYSIS] API error for entry ${entryId}: ${response.status}`);
+    console.error(`[AI-ANALYSIS] Error details:`, errorText);
+    console.error(`[AI-ANALYSIS] Request was for model: ${model}`);
+    return null;
+  }
+
+  const data = await response.json();
+  const blocks: { type?: string; text?: unknown }[] = Array.isArray(data.content) ? data.content : [];
+  if (data.stop_reason === 'max_tokens') {
+    console.warn(`[AI-ANALYSIS] Entry ${entryId}: response hit max_tokens and may be truncated`);
+  }
+  return blocks
+    .map(block => block?.text)
+    .filter((text): text is string => typeof text === 'string')
+    .join('');
+}
 
 /**
  * Convert a SAN move to its UCI form (e.g. "g4" → "g2g4") using the position
@@ -204,7 +265,30 @@ export async function POST(request: NextRequest) {
       pgnMoves = pgnParts.join(' ');
     }
 
-    console.log(`[AI-ANALYSIS] PGN context: ${pgnMoves.substring(0, 100)}...`);
+    // Prefer the real move history replayed from the game's PGN. The journal-derived
+    // pgnMoves above only contains the player's own journaled moves (and nothing at
+    // all for entries without a moveNumber), so it is the fallback.
+    const historyText = historyFromPgn(game.pgn, entry.fen) ?? pgnMoves;
+
+    console.log(`[AI-ANALYSIS] PGN context: ${historyText.substring(0, 100)}...`);
+
+    // Layer 1 — ground the model. Instead of making it decode the board from the
+    // FEN, give it facts computed with chess.js, the engine line in SAN, and ask
+    // it to put every concrete variation in a [[line: ...]] marker we can verify.
+    // describePosition returns null for a missing/invalid FEN, in which case we
+    // fall back to the plain prompt and skip verification.
+    const positionFacts = describePosition(entry.fen);
+    let grounding: PromptGrounding | undefined;
+    if (positionFacts) {
+      const bestMove = uciLineToSan(entry.fen, moveAnalysis?.bestMove);
+      const mainLine = uciLineToSan(entry.fen, moveAnalysis?.principalVariation);
+      grounding = {
+        positionFacts,
+        engineBestMoveSan: bestMove.complete ? bestMove.sans[0] : undefined,
+        engineLineSan: mainLine.complete ? formatSanLine(entry.fen, mainLine.sans) : undefined,
+        requestLineMarkers: true,
+      };
+    }
 
     const prompt = buildAnalysisPrompt(
       entry.content,
@@ -212,7 +296,8 @@ export async function POST(request: NextRequest) {
       entry.fen,
       moveAnalysis,
       verbosityVal,
-      pgnMoves
+      historyText,
+      grounding
     );
 
     console.log(`\n========== AI ANALYSIS PROMPT - Entry ${entry.id} ==========`);
@@ -235,28 +320,41 @@ export async function POST(request: NextRequest) {
         : 500;
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY || '',
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: modelVal,
-          max_tokens: maxTokens,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-      });
+      let aiResponse = await callClaude(modelVal, maxTokens, [{ role: 'user', content: prompt }], entry.id);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`[AI-ANALYSIS] API error for entry ${entry.id}: ${response.status}`);
-        console.error(`[AI-ANALYSIS] Error details:`, errorText);
-        console.error(`[AI-ANALYSIS] Request was for model: ${modelVal}`);
-      } else {
-        const data = await response.json();
-        const aiResponse = data.content[0]?.text || '';
+      if (aiResponse !== null) {
+        // Layer 2 — verify. Replay every [[line: ...]] marker with chess.js. If any
+        // line is illegal, show the model exactly what failed and let it rewrite
+        // once; whatever is still illegal after that is replaced by a placeholder.
+        if (grounding) {
+          let verified = verifyAndClean(aiResponse, entry.fen, entry.myMove);
+          console.log(
+            `[AI-ANALYSIS] Entry ${entry.id}: checked ${verified.checks.length} line(s), ${verified.invalid.length} illegal`
+          );
+
+          if (verified.invalid.length > 0) {
+            const retryText = await callClaude(
+              modelVal,
+              maxTokens,
+              [
+                { role: 'user', content: prompt },
+                { role: 'assistant', content: aiResponse },
+                { role: 'user', content: buildCorrectionPrompt(verified.invalid) },
+              ],
+              entry.id
+            );
+
+            if (retryText !== null) {
+              const retried = verifyAndClean(retryText, entry.fen, entry.myMove);
+              console.log(
+                `[AI-ANALYSIS] Entry ${entry.id}: retry checked ${retried.checks.length} line(s), ${retried.invalid.length} illegal`
+              );
+              if (retried.invalid.length <= verified.invalid.length) verified = retried;
+            }
+          }
+
+          aiResponse = verified.text;
+        }
 
         console.log(`[AI-ANALYSIS] Response for entry ${entry.id}:`);
         console.log(aiResponse);

@@ -1,4 +1,26 @@
 /**
+ * Programmatically computed material that keeps the model from having to
+ * decode the board from a FEN in its head (see lib/position-facts.ts).
+ */
+export interface PromptGrounding {
+  /** Output of describePosition(fen): verified facts about the position. */
+  positionFacts?: string;
+  /** The engine's best move converted to SAN (replaces the raw UCI string). */
+  engineBestMoveSan?: string;
+  /** The engine's main line converted to numbered SAN (replaces the raw UCI line). */
+  engineLineSan?: string;
+  /** Ask the model to wrap every concrete move/variation in a [[line: ...]] marker so it can be verified. */
+  requestLineMarkers?: boolean;
+}
+
+const LINE_MARKER_RULES = `
+
+Rules for concrete moves (your analysis is checked against the rules of chess, and illegal moves are rejected):
+- The FEN above is the position BEFORE the player's move; the verified facts say whose turn it is. Treat the verified position facts as ground truth: do not place a piece on a square, or call a piece attacked, defended, hanging or pinned, unless that is consistent with them.
+- Wrap every specific move or variation you propose or discuss that has not already been played in the game in a marker. Write it in SAN, moves separated by spaces, starting from the position in the FEN above, for example [[line: Nxe5 Nxe5 d4]]. A single move is a marker too: [[line: Nf3]]. The [[line: ]] brackets are removed from the final text and only the moves remain, so write the surrounding sentence as if the moves were inline.
+- Before writing a marker, check its first move against the legal-move list and replay the position move by move. If you are not certain a line is legal, describe the idea in words instead of giving moves.`;
+
+/**
  * AI analysis prompt builder — pure string construction, no I/O.
  * Extracted from the analyze-thinking route so it can be unit-tested.
  */
@@ -8,11 +30,16 @@ export function buildAnalysisPrompt(
   fen: string | null | undefined,
   moveAnalysis: any,
   verbosity: string = 'detailed',
-  pgnMoves: string = ''
+  pgnMoves: string = '',
+  grounding?: PromptGrounding
 ): string {
   let prompt = `You are analyzing a chess player's thought process during a game.
 
 Position (FEN): ${fen || 'Not available'}`;
+
+  if (grounding?.positionFacts) {
+    prompt += `\n\n${grounding.positionFacts}`;
+  }
 
   if (pgnMoves.length > 0) {
     prompt += `\n\nGame moves so far:\n${pgnMoves}`;
@@ -44,10 +71,12 @@ Position (FEN): ${fen || 'Not available'}`;
         prompt += `\n- Position evaluation: ${evalBefore > 0 ? '+' : ''}${evalBefore.toFixed(2)} pawns`;
       }
       if (moveAnalysis.bestMove) {
-        prompt += `\n- Engine's best move: ${moveAnalysis.bestMove}`;
+        prompt += `\n- Engine's best move: ${grounding?.engineBestMoveSan ?? moveAnalysis.bestMove}`;
         if (moveAnalysis.principalVariation) {
           let pvMoves = '';
-          if (Array.isArray(moveAnalysis.principalVariation)) {
+          if (grounding?.engineLineSan) {
+            pvMoves = grounding.engineLineSan;
+          } else if (Array.isArray(moveAnalysis.principalVariation)) {
             pvMoves = moveAnalysis.principalVariation.join(' ');
           } else if (typeof moveAnalysis.principalVariation === 'string') {
             pvMoves = moveAnalysis.principalVariation;
@@ -91,6 +120,10 @@ Position (FEN): ${fen || 'Not available'}`;
   } else {
     // Default to 'concise' or unknown verbosity
     prompt += `\n\nProvide a concise analysis (2-3 sentences): Evaluate if their reasoning was sound, point out anything they overlooked, and note key patterns they should recognise. Be educational and encouraging.`;
+  }
+
+  if (grounding?.requestLineMarkers) {
+    prompt += LINE_MARKER_RULES;
   }
 
   return prompt;

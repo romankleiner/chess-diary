@@ -285,3 +285,211 @@ describe('POST /api/games/analyze-thinking — response shape', () => {
     expect((await res.json()).nextEntryIndex).toBe(1);
   });
 });
+
+// ─── Grounding and line verification ─────────────────────────────────────────
+
+// White to move after 1. e4 e5 2. Nf3 Nc6 — matches gameA.pgn.
+const RUY_FEN = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
+
+const textResponse = (text: string) => ({
+  ok: true,
+  json: async () => ({ content: [{ type: 'text', text }] }),
+  text: async () => '',
+});
+
+const requestBody = (callIndex = 0) => JSON.parse(fetchMock.mock.calls[callIndex][1].body);
+
+describe('POST /api/games/analyze-thinking — grounding and line verification', () => {
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue({ ...gameA });
+    mockGetJournal.mockResolvedValue([{ ...thoughtEntry, fen: RUY_FEN, myMove: 'Bb5' }]);
+    mockGetAnalysis.mockResolvedValue({ ...analysisA });
+  });
+
+  const run = () => POST(makeReq({ gameId: gameA.id, entryIndex: 0 }));
+  const savedContent = () => mockSaveEntry.mock.calls[0][0].aiReview.content;
+
+  describe('prompt', () => {
+    it('includes verified position facts, the real move history and the marker rules', async () => {
+      fetchMock.mockResolvedValue(textResponse('Fine.'));
+      await run();
+
+      const prompt = requestBody().messages[0].content;
+      expect(prompt).toContain('Verified position facts');
+      expect(prompt).toContain('Side to move: White');
+      expect(prompt).toContain('Game moves so far:\n1. e4 e5 2. Nf3 Nc6');
+      expect(prompt).toContain('[[line: Nxe5 Nxe5 d4]]');
+    });
+
+    it('skips grounding when the entry has no FEN', async () => {
+      mockGetJournal.mockResolvedValue([{ ...thoughtEntry }]);
+      fetchMock.mockResolvedValue(textResponse('Fine.'));
+      await run();
+
+      const prompt = requestBody().messages[0].content;
+      expect(prompt).not.toContain('Verified position facts');
+      expect(prompt).not.toContain('[[line:');
+    });
+
+    it('shows the engine best move and main line in SAN instead of UCI', async () => {
+      mockGetAnalysis.mockResolvedValue({
+        ...analysisA,
+        moves: [
+          {
+            moveNumber: 3,
+            color: 'white',
+            move: 'Bb5',
+            evaluation: 0.3,
+            centipawnLoss: 20,
+            moveQuality: 'good',
+            bestMove: 'f3e5',
+            principalVariation: ['f3e5', 'c6e5', 'd2d4'],
+          },
+        ],
+      });
+      fetchMock.mockResolvedValue(textResponse('Fine.'));
+      await run();
+
+      const prompt = requestBody().messages[0].content;
+      expect(prompt).toContain("Engine's best move: Nxe5");
+      expect(prompt).toContain("Engine's main line: 3. Nxe5 Nxe5 4. d4");
+      expect(prompt).not.toContain('f3e5');
+    });
+  });
+
+  describe('verification', () => {
+    it('resolves legal markers into canonical numbered SAN with a single API call', async () => {
+      fetchMock.mockResolvedValue(textResponse('Consider [[line: Bb5 a6 Ba4]] next.'));
+      await run();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(savedContent()).toBe('Consider 3. Bb5 a6 4. Ba4 next.');
+    });
+
+    it('leaves a response without markers exactly as written', async () => {
+      fetchMock.mockResolvedValue(textResponse('A plain analysis.\n\nWith two paragraphs.'));
+      await run();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(savedContent()).toBe('A plain analysis.\n\nWith two paragraphs.');
+    });
+
+    it('retries once with a correction when a line is illegal, and saves the corrected text', async () => {
+      // The knight on f3 blocks the queen, so Qh5 is illegal here.
+      fetchMock
+        .mockResolvedValueOnce(textResponse('Try [[line: Qh5]] to hit e5.'))
+        .mockResolvedValueOnce(textResponse('Try [[line: Nxe5]] to win a pawn.'));
+      await run();
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      const retry = requestBody(1);
+      expect(retry.messages.map((m: any) => m.role)).toEqual(['user', 'assistant', 'user']);
+      expect(retry.messages[0].content).toBe(requestBody(0).messages[0].content);
+      expect(retry.messages[1].content).toBe('Try [[line: Qh5]] to hit e5.');
+      expect(retry.messages[2].content).toContain('("Qh5") is not legal');
+      expect(retry.messages[2].content).toContain('Legal moves there:');
+
+      expect(savedContent()).toBe('Try Nxe5 to win a pawn.');
+    });
+
+    it('replaces lines that are still illegal after the retry, and never retries twice', async () => {
+      fetchMock
+        .mockResolvedValueOnce(textResponse('Try [[line: Qh5]].'))
+        .mockResolvedValueOnce(textResponse('Try [[line: Qh5]] again.'));
+      await run();
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(savedContent()).toBe('Try [illegal line removed] again.');
+    });
+
+    it('keeps the first result when the retry is worse', async () => {
+      fetchMock
+        .mockResolvedValueOnce(textResponse('First: [[line: Qh5]].'))
+        .mockResolvedValueOnce(textResponse('Second: [[line: Qh5]] and [[line: Qg4]].'));
+      await run();
+
+      expect(savedContent()).toBe('First: [illegal line removed].');
+    });
+
+    it('keeps the first result with placeholders when the retry call fails', async () => {
+      fetchMock
+        .mockResolvedValueOnce(textResponse('Try [[line: Qh5]].'))
+        .mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'boom' });
+      await run();
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(savedContent()).toBe('Try [illegal line removed].');
+    });
+
+    it('accepts a line that starts after the move the player made', async () => {
+      // Player played Bb5; the model starts its line with Black's reply.
+      fetchMock.mockResolvedValue(textResponse('Then [[line: a6 Ba4]] follows.'));
+      await run();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(savedContent()).toBe('Then 3... a6 4. Ba4 follows.');
+    });
+  });
+
+  describe('API response handling', () => {
+    it('extracts the text block when a thinking block comes first', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          content: [
+            { type: 'thinking', thinking: '' },
+            { type: 'text', text: 'The analysis.' },
+          ],
+        }),
+        text: async () => '',
+      });
+      await run();
+
+      expect(savedContent()).toBe('The analysis.');
+    });
+
+    it('joins multiple text blocks', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ content: [{ type: 'text', text: 'Part one. ' }, { type: 'text', text: 'Part two.' }] }),
+        text: async () => '',
+      });
+      await run();
+
+      expect(savedContent()).toBe('Part one. Part two.');
+    });
+  });
+
+  describe('max_tokens headroom for thinking models', () => {
+    async function maxTokensFor(model: string): Promise<number> {
+      vi.clearAllMocks();
+      fetchMock.mockReset();
+      mockGetGame.mockResolvedValue({ ...gameA });
+      mockGetJournal.mockResolvedValue([{ ...thoughtEntry }]);
+      mockGetAnalysis.mockResolvedValue({ ...analysisA });
+      mockSaveEntry.mockResolvedValue(undefined);
+      mockGetSetting.mockImplementation(async (key: string) => {
+        if (key === 'chesscom_username') return 'testuser';
+        if (key === 'ai_analysis_verbosity') return 'detailed';
+        if (key === 'ai_model') return model;
+        return null;
+      });
+      fetchMock.mockResolvedValue(textResponse('Fine.'));
+      await run();
+      return requestBody().max_tokens;
+    }
+
+    it('adds 6000 tokens for models that think by default', async () => {
+      expect(await maxTokensFor('claude-sonnet-5')).toBe(7200);
+      expect(await maxTokensFor('claude-fable-5')).toBe(7200);
+      expect(await maxTokensFor('claude-mythos-5')).toBe(7200);
+    });
+
+    it('leaves other models at the verbosity limit', async () => {
+      expect(await maxTokensFor('claude-opus-4-8')).toBe(1200);
+      expect(await maxTokensFor('claude-sonnet-4-6')).toBe(1200);
+      expect(await maxTokensFor('claude-haiku-4-5')).toBe(1200);
+    });
+  });
+});

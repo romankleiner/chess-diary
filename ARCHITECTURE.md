@@ -138,7 +138,15 @@ Pure functions for processing engine output:
 - `normalizeCpLoss(cp)` — handles mate-score ceiling artifacts
 
 ### `lib/analysis-prompt.ts` — Claude Prompt Builder
-Constructs the prompt sent to Claude for AI analysis of player thinking. Incorporates: position FEN, engine evaluation before/after, best move, principal variation, the player's recorded thought process, and game context. Adjusts wording when the move is in the opening book.
+Constructs the prompt sent to Claude for AI analysis of player thinking. Incorporates: position FEN, engine evaluation before/after, best move, principal variation, the player's recorded thought process, and game context. Adjusts wording when the move is in the opening book. An optional `PromptGrounding` argument adds the verified position facts, the engine line in SAN, and the `[[line: ...]]` marker rules described below.
+
+### `lib/position-facts.ts` and `lib/line-verifier.ts` — Keeping AI chess commentary legal
+LLMs decode a bare FEN badly, so the AI analyzer invents pieces, threats and moves. Two layers address that (both pure chess.js, no I/O):
+
+1. **Ground the prompt** (`position-facts.ts`): `describePosition(fen)` computes side to move, an ASCII board, every piece's square, check status, all legal moves (with the checks and captures among them), and loose / under-attacked pieces. `uciLineToSan` converts the engine's UCI best move and main line to numbered SAN, and `historyFromPgn` replays the game's PGN for the true move history (the journal-derived history is only a fallback).
+2. **Verify the answer** (`line-verifier.ts`): the prompt asks Claude to wrap every move or variation it proposes in `[[line: Nxe5 Nxe5 d4]]`. `verifyAndClean` replays each marker from the entry's FEN (also accepting a line that starts after the move the player made), rewrites legal lines as canonical SAN, and replaces illegal ones with `[illegal line removed]`. The route first sends Claude one correction message (`buildCorrectionPrompt`, listing the failed move and the legal alternatives); whichever attempt has fewer illegal lines is kept.
+
+This checks *legality* (impossible moves, misplaced pieces), not *soundness* — a legal line can still be a bad idea. Entries without a valid FEN skip both layers.
 
 ### `lib/opening-book.ts` — Opening Book Lookup
 Reads a Polyglot binary opening book from `data/opening-book.bin` using Zobrist hashing. Returns candidate moves for a position. Pure file I/O — no network calls. Used during analysis to tag book moves.
@@ -221,8 +229,10 @@ User clicks "Analyse Thinking"
 POST /api/games/analyze-thinking
   ├── Verify engine analysis exists (GET analysis from Redis)
   ├── Load journal entries for the game
+  ├── Ground the prompt: position facts, SAN engine line, PGN history (lib/position-facts.ts)
   ├── Build prompt (lib/analysis-prompt.ts)
-  ├── Call Anthropic Claude API (streaming)
+  ├── Call Anthropic Claude API
+  ├── Verify [[line: ...]] markers with chess.js; one correction retry if any are illegal (lib/line-verifier.ts)
   └── Save aiReview to journal entry → Redis HSET
 ```
 
