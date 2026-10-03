@@ -4,8 +4,10 @@
  * Tests:
  *  - Validation (missing endDate → 400)
  *  - JSON format: date-range filtering, game attachment, groupedByDate shape
- *  - DOCX format: correct headers, non-empty buffer, saveJournal caching call,
- *    duplicate-entry deduplication via processedEntryIds, FEN board-image fetch
+ *  - DOCX format: streamed NDJSON protocol (progress lines, then a final "done"
+ *    line carrying the .docx as base64, or an "error" line), selective
+ *    saveJournalEntry caching of generated board images, duplicate-entry
+ *    deduplication via processedEntryIds, FEN board-image fetch
  *  - Image magic-byte detection: PNG (0x89 0x50) and JPEG (0xFF 0xD8) helper
  *    functions; unknown format falls back to default dimensions gracefully
  *
@@ -20,7 +22,7 @@ import { gameA, thoughtEntry, moveEntry, summaryEntry } from '../helpers/fixture
 vi.mock('@/lib/db', () => ({
   getJournal:  vi.fn(),
   getGames:    vi.fn(),
-  saveJournal: vi.fn(),
+  saveJournalEntry: vi.fn(),
 }));
 
 // Stub global fetch to prevent real HTTP calls during DOCX generation.
@@ -31,11 +33,11 @@ const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
 
 import { GET } from '@/app/api/journal/export/route';
-import { getJournal, getGames, saveJournal } from '@/lib/db';
+import { getJournal, getGames, saveJournalEntry } from '@/lib/db';
 
 const mockGetJournal  = vi.mocked(getJournal);
 const mockGetGames    = vi.mocked(getGames);
-const mockSaveJournal = vi.mocked(saveJournal);
+const mockSaveEntry   = vi.mocked(saveJournalEntry);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -88,7 +90,7 @@ beforeEach(() => {
   fetchMock.mockResolvedValue({ ok: false, text: async () => 'not found' });
   mockGetJournal.mockResolvedValue([]);
   mockGetGames.mockResolvedValue({});
-  mockSaveJournal.mockResolvedValue(undefined);
+  mockSaveEntry.mockResolvedValue(undefined);
 });
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -153,60 +155,108 @@ describe('GET /api/journal/export — JSON format', () => {
 });
 
 // ─── DOCX format ──────────────────────────────────────────────────────────────
+//
+// The docx branch streams newline-delimited JSON: one {type:'progress'} line
+// per entry, then a single {type:'done'} line carrying the finished file as
+// base64 — or {type:'error'}. The generator keeps running after GET() returns,
+// so every test must read the stream to the end before asserting anything.
+
+type ExportMessage =
+  | { type: 'progress'; current: number; total: number }
+  | { type: 'done'; filename: string; data: string }
+  | { type: 'error'; message: string };
+
+async function readExport(res: Response): Promise<ExportMessage[]> {
+  const text = await res.text();
+  return text
+    .split('\n')
+    .filter(line => line.trim())
+    .map(line => JSON.parse(line) as ExportMessage);
+}
+
+const progressOf = (msgs: ExportMessage[]) =>
+  msgs.filter((m): m is Extract<ExportMessage, { type: 'progress' }> => m.type === 'progress');
+const doneOf = (msgs: ExportMessage[]) =>
+  msgs.find((m): m is Extract<ExportMessage, { type: 'done' }> => m.type === 'done');
+
+/** A .docx is a zip archive, so a real one starts with the "PK" signature. */
+const isZip = (base64: string) => {
+  const bytes = Buffer.from(base64, 'base64');
+  return bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+};
 
 describe('GET /api/journal/export — DOCX format', () => {
-  it('returns the correct DOCX Content-Type', async () => {
+  it('streams NDJSON rather than sending a binary download', async () => {
     mockGetJournal.mockResolvedValue([thoughtEntry]);
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
     const res = await GET(makeReq(DOCX_PARAMS));
     expect(res.status).toBe(200);
-    expect(res.headers.get('Content-Type')).toContain('wordprocessingml.document');
+    expect(res.headers.get('Content-Type')).toContain('application/x-ndjson');
+    expect(res.headers.get('Content-Disposition')).toBeNull();
+    await readExport(res);
   });
 
-  it('Content-Disposition filename includes the date range', async () => {
+  it('finishes with a done message whose filename includes the date range', async () => {
     mockGetJournal.mockResolvedValue([]);
-    const res = await GET(makeReq(DOCX_PARAMS));
-    const disposition = res.headers.get('Content-Disposition') ?? '';
-    expect(disposition).toContain('2026-03-10');
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(msgs[msgs.length - 1].type).toBe('done');
+    expect(doneOf(msgs)!.filename).toBe('chess-journal-2026-03-10-to-2026-03-10.docx');
   });
 
-  it('response body is a non-empty buffer', async () => {
+  it('the done message carries a valid .docx (zip) archive as base64', async () => {
     mockGetJournal.mockResolvedValue([thoughtEntry]);
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
-    const res = await GET(makeReq(DOCX_PARAMS));
-    const buf = await res.arrayBuffer();
-    expect(buf.byteLength).toBeGreaterThan(0);
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(isZip(doneOf(msgs)!.data)).toBe(true);
   });
 
-  it('calls saveJournal once after document generation (image caching step)', async () => {
-    mockGetJournal.mockResolvedValue([thoughtEntry]);
+  // ── Progress ──────────────────────────────────────────────────────────────
+
+  it('emits one progress message per entry, counting up to the total, before done', async () => {
+    const second = { ...thoughtEntry, id: 1003, timestamp: '2026-03-10T10:30:00.000Z' };
+    mockGetJournal.mockResolvedValue([thoughtEntry, second]);
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
-    await GET(makeReq(DOCX_PARAMS));
-    expect(mockSaveJournal).toHaveBeenCalledOnce();
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+
+    expect(progressOf(msgs).map(m => [m.current, m.total])).toEqual([[1, 2], [2, 2]]);
+    expect(msgs.map(m => m.type)).toEqual(['progress', 'progress', 'done']);
+  });
+
+  it('emits only a done message when there are no entries in range', async () => {
+    mockGetJournal.mockResolvedValue([]);
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(msgs.map(m => m.type)).toEqual(['done']);
+  });
+
+  it('only counts entries in the requested date range', async () => {
+    const outside = { ...thoughtEntry, id: 1004, date: '2026-01-01' };
+    mockGetJournal.mockResolvedValue([thoughtEntry, outside]);
+    mockGetGames.mockResolvedValue({ 'game-111': gameA });
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(progressOf(msgs)).toEqual([{ type: 'progress', current: 1, total: 1 }]);
   });
 
   // ── Duplicate-entry deduplication ─────────────────────────────────────────
 
-  it('deduplicates entries with the same id (processedEntryIds Set)', async () => {
-    // Provide the same entry object twice; the second occurrence must be
-    // silently skipped — the export should still succeed without any crash.
+  it('deduplicates entries with the same id, and the progress bar still reaches 100%', async () => {
+    // The second occurrence of an id is skipped, so total must count unique ids
+    // or the bar would stop at 50%.
     const dup = { ...thoughtEntry }; // identical id
     mockGetJournal.mockResolvedValue([thoughtEntry, dup]);
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
-    const res = await GET(makeReq(DOCX_PARAMS));
-    expect(res.status).toBe(200);
-    expect(res.headers.get('Content-Type')).toContain('wordprocessingml.document');
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+
+    expect(progressOf(msgs)).toEqual([{ type: 'progress', current: 1, total: 1 }]);
+    expect(isZip(doneOf(msgs)!.data)).toBe(true);
   });
 
-  // ── FEN board-image fetching ───────────────────────────────────────────────
+  // ── FEN board-image fetching and caching ──────────────────────────────────
 
   it('fetches a board image when entry has a FEN but no cached image', async () => {
     mockGetJournal.mockResolvedValue([{ ...moveEntry }]); // moveEntry has a FEN
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
-    await GET(makeReq(DOCX_PARAMS));
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/api/board-image')
-    );
+    await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/board-image'));
   });
 
   it('skips the board-image fetch when a cached image is present at images[0]', async () => {
@@ -214,9 +264,65 @@ describe('GET /api/journal/export — DOCX format', () => {
     const cachedEntry = { ...moveEntry, images: [cachedPng] };
     mockGetJournal.mockResolvedValue([cachedEntry]);
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
-    await GET(makeReq(DOCX_PARAMS));
+    await readExport(await GET(makeReq(DOCX_PARAMS)));
     // No board-image HTTP call needed when the cache hit exists
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('caches a generated board image by saving only that entry — never the whole journal', async () => {
+    const other = { ...thoughtEntry, id: 1003, timestamp: '2026-03-10T10:30:00.000Z' };
+    mockGetJournal.mockResolvedValue([{ ...moveEntry }, other]);
+    mockGetGames.mockResolvedValue({ 'game-111': gameA });
+    const png = new Uint8Array(makePngBuffer(240, 240)).buffer;
+    fetchMock.mockResolvedValue({ ok: true, arrayBuffer: async () => png });
+
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+
+    // Exactly one entry — the one that gained an image — is written back.
+    // (The db mock has no saveJournal, so a whole-journal write would throw.)
+    expect(mockSaveEntry).toHaveBeenCalledTimes(1);
+    const saved = mockSaveEntry.mock.calls[0][0];
+    expect(saved.id).toBe(moveEntry.id);
+    expect(saved.images[0]).toMatch(/^data:image\/png;base64,/);
+    expect(isZip(doneOf(msgs)!.data)).toBe(true);
+  });
+
+  it('writes nothing back when no board image was generated', async () => {
+    // Default fetch mock returns { ok: false }, so no image is produced.
+    mockGetJournal.mockResolvedValue([{ ...moveEntry }, { ...thoughtEntry }]);
+    mockGetGames.mockResolvedValue({ 'game-111': gameA });
+    await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(mockSaveEntry).not.toHaveBeenCalled();
+  });
+
+  it('still delivers the document when caching an image back fails', async () => {
+    mockGetJournal.mockResolvedValue([{ ...moveEntry }]);
+    mockGetGames.mockResolvedValue({ 'game-111': gameA });
+    const png = new Uint8Array(makePngBuffer(240, 240)).buffer;
+    fetchMock.mockResolvedValue({ ok: true, arrayBuffer: async () => png });
+    mockSaveEntry.mockRejectedValue(new Error('Redis is full'));
+
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(doneOf(msgs)).toBeDefined();
+    expect(msgs.some(m => m.type === 'error')).toBe(false);
+  });
+
+  // ── Failure ────────────────────────────────────────────────────────────────
+
+  it('reports a mid-stream failure as an error message instead of a done message', async () => {
+    // An AI review with no content makes document generation throw partway through.
+    const broken = {
+      ...thoughtEntry,
+      aiReview: { content: undefined, model: 'claude-sonnet-5', timestamp: '2026-03-10T11:00:00.000Z' },
+    };
+    mockGetJournal.mockResolvedValue([broken]);
+    mockGetGames.mockResolvedValue({ 'game-111': gameA });
+
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(doneOf(msgs)).toBeUndefined();
+    const last = msgs[msgs.length - 1];
+    expect(last.type).toBe('error');
+    expect((last as Extract<ExportMessage, { type: 'error' }>).message).toBeTruthy();
   });
 });
 
@@ -235,9 +341,8 @@ describe('GET /api/journal/export — image magic-byte detection', () => {
     };
     mockGetJournal.mockResolvedValue([entry]);
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
-    const res = await GET(makeReq(DOCX_PARAMS));
-    expect(res.status).toBe(200);
-    expect(res.headers.get('Content-Type')).toContain('wordprocessingml.document');
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(isZip(doneOf(msgs)!.data)).toBe(true);
   });
 
   it('exports successfully with a JPEG image (magic: 0xFF 0xD8)', async () => {
@@ -248,9 +353,8 @@ describe('GET /api/journal/export — image magic-byte detection', () => {
     };
     mockGetJournal.mockResolvedValue([entry]);
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
-    const res = await GET(makeReq(DOCX_PARAMS));
-    expect(res.status).toBe(200);
-    expect(res.headers.get('Content-Type')).toContain('wordprocessingml.document');
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(isZip(doneOf(msgs)!.data)).toBe(true);
   });
 
   it('falls back to default 400×300 for an unrecognised image format', async () => {
@@ -264,7 +368,9 @@ describe('GET /api/journal/export — image magic-byte detection', () => {
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
     // The route uses default width=400 height=300 when format is unknown;
     // the export must still complete successfully.
-    const res = await GET(makeReq(DOCX_PARAMS));
-    expect(res.status).toBe(200);
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(doneOf(msgs)).toBeDefined();
+    expect(msgs.some(m => m.type === 'error')).toBe(false);
   });
 });
+

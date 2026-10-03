@@ -58,12 +58,20 @@ export async function GET(request: NextRequest) {
       // rate-limiting it — so for a large journal this can take a while.
       // Streaming progress lets the client show real feedback without a second
       // polling endpoint.
+      type ExportMessage =
+        | { type: 'progress'; current: number; total: number }
+        | { type: 'done'; filename: string; data: string }
+        | { type: 'error'; message: string };
+
       const encoder = new TextEncoder();
-      const totalEntries = entries.length;
+      // Unique ids, to match the dedup guard in the loop below — otherwise a
+      // skipped duplicate would leave the progress bar short of 100%.
+      const totalEntries = new Set(entries.map(e => e.id)).size;
 
       const stream = new ReadableStream({
         async start(controller) {
-          const send = (obj: any) => controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
+          const send = (message: ExportMessage) =>
+            controller.enqueue(encoder.encode(JSON.stringify(message) + '\n'));
 
           try {
             const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink, BorderStyle, ImageRun } = await import('docx');
