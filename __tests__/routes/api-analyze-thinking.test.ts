@@ -799,3 +799,114 @@ describe('analyze-thinking — real client driving the real route', () => {
     expect(savedEntries().get(4)!.aiReview.content).toBe('A comment.');
   });
 });
+
+// ─── Replies cut off at the token limit ──────────────────────────────────────
+//
+// The model list now updates itself, so a model released tomorrow may think by
+// default (and spend max_tokens on thinking) without being named in the route.
+// The route reacts to a truncated reply instead of trying to predict it.
+
+describe('POST /api/games/analyze-thinking — cut-off replies', () => {
+  const RUY_FEN = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
+  const FUTURE_MODEL = 'claude-sonnet-9'; // not known to the route
+
+  const cutOff = (text: string) => ({
+    ok: true,
+    json: async () => ({ content: [{ type: 'text', text }], stop_reason: 'max_tokens' }),
+    text: async () => '',
+  });
+
+  const useModel = (model: string) =>
+    mockGetSetting.mockImplementation(async (key: string) => {
+      if (key === 'chesscom_username') return 'testuser';
+      if (key === 'ai_analysis_verbosity') return 'detailed';
+      if (key === 'ai_model') return model;
+      return null;
+    });
+
+  const run = () => POST(makeReq({ gameId: gameA.id, entryIndex: 0 }));
+
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue({ ...gameA });
+    mockGetJournal.mockResolvedValue([{ ...thoughtEntry }]);
+    mockGetAnalysis.mockResolvedValue({ ...analysisA });
+    useModel(FUTURE_MODEL);
+  });
+
+  it('asks again once with extra room when a reply is cut off', async () => {
+    fetchMock
+      .mockResolvedValueOnce(cutOff('The player considered e4 and'))
+      .mockResolvedValueOnce(textResponse('The player considered e4 and rightly played it.'));
+
+    const body = await (await run()).json();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestBody(0).max_tokens).toBe(1200);
+    expect(requestBody(1).max_tokens).toBe(7200); // 1200 + 6000 of room to think
+    expect(body.entryStatus).toBe('analyzed');
+    expect(mockSaveEntry.mock.calls[0][0].aiReview.content).toBe('The player considered e4 and rightly played it.');
+  });
+
+  it('does not ask again when the reply finished normally', async () => {
+    fetchMock.mockResolvedValue(textResponse('A complete analysis.'));
+    await run();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not ask again for models that already get the extra room', async () => {
+    useModel('claude-sonnet-5');
+    fetchMock.mockResolvedValue(cutOff('Still cut off'));
+
+    await run();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestBody(0).max_tokens).toBe(7200);
+    expect(mockSaveEntry.mock.calls[0][0].aiReview.content).toBe('Still cut off');
+  });
+
+  it('keeps the cut-off reply, still counted as analysed, if the bigger request fails', async () => {
+    fetchMock
+      .mockResolvedValueOnce(cutOff('Half an analysis'))
+      .mockResolvedValueOnce({ ok: false, status: 529, text: async () => 'overloaded' });
+
+    const body = await (await run()).json();
+
+    expect(body.entryStatus).toBe('analyzed');
+    expect(mockSaveEntry.mock.calls[0][0].aiReview.content).toBe('Half an analysis');
+  });
+
+  it('does not ask again when too little time is left', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => {
+          now += 50_000;
+          return { content: [{ type: 'text', text: 'Cut off' }], stop_reason: 'max_tokens' };
+        },
+        text: async () => '',
+      });
+
+      await run();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('carries the larger budget into the move-correction retry that follows', async () => {
+    mockGetJournal.mockResolvedValue([{ ...thoughtEntry, fen: RUY_FEN, myMove: 'Bb5' }]);
+    fetchMock
+      .mockResolvedValueOnce(cutOff('Try [[line: Qh5]]')) // cut off…
+      .mockResolvedValueOnce(textResponse('Try [[line: Qh5]] now.')) // …complete, but Qh5 is illegal here
+      .mockResolvedValueOnce(textResponse('Try [[line: Nxe5]] now.')); // the correction
+
+    await run();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(requestBody(2).max_tokens).toBe(7200);
+    expect(mockSaveEntry.mock.calls[0][0].aiReview.content).toBe('Try Nxe5 now.');
+  });
+});

@@ -4,6 +4,7 @@ import { buildAnalysisPrompt } from '@/lib/analysis-prompt';
 import type { PromptGrounding } from '@/lib/analysis-prompt';
 import { describePosition, formatSanLine, historyFromPgn, uciLineToSan } from '@/lib/position-facts';
 import { buildCorrectionPrompt, verifyAndClean } from '@/lib/line-verifier';
+import { DEFAULT_AI_MODEL } from '@/lib/model-catalog';
 import { Chess } from 'chess.js';
 import fs from 'fs';
 import path from 'path';
@@ -21,12 +22,19 @@ const MIN_RETRY_BUDGET_MS = 10_000; // skip the verification retry if less is le
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
-type ClaudeResult = { text: string } | { error: string; retryable: boolean };
+// `truncated` means the model stopped because it ran out of max_tokens, not because it was done.
+type ClaudeResult = { text: string; truncated: boolean } | { error: string; retryable: boolean };
 
 // Sonnet 5, Fable 5 and Mythos 5 think adaptively by default (Fable/Mythos can't
 // turn it off) and thinking tokens count against max_tokens, so a small
 // verbosity-based limit can be eaten entirely by thinking and leave a truncated
 // or empty answer. Give those models headroom on top of the verbosity limit.
+//
+// The model list now updates itself, so a model released tomorrow may think by
+// default without being named here. The Models API reports what a model
+// supports, not whether it thinks unprompted, so instead of guessing we also
+// react: if a reply is cut off at the token limit, it is asked again once with
+// the same headroom (see the POST handler).
 const THINKING_HEADROOM_TOKENS = 6000;
 function usesThinkingByDefault(model: string): boolean {
   return /^claude-(sonnet-5|fable-5|mythos-5)/.test(model);
@@ -56,7 +64,7 @@ async function callClaude(
       },
       body: JSON.stringify({
         model,
-        max_tokens: usesThinkingByDefault(model) ? maxTokens + THINKING_HEADROOM_TOKENS : maxTokens,
+        max_tokens: maxTokens,
         messages,
       }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -82,7 +90,8 @@ async function callClaude(
 
     const data = await response.json();
     const blocks: { type?: string; text?: unknown }[] = Array.isArray(data.content) ? data.content : [];
-    if (data.stop_reason === 'max_tokens') {
+    const truncated = data.stop_reason === 'max_tokens';
+    if (truncated) {
       console.warn(`[AI-ANALYSIS] Entry ${entryId}: response hit max_tokens and may be truncated`);
     }
     return {
@@ -90,6 +99,7 @@ async function callClaude(
         .map(block => block?.text)
         .filter((text): text is string => typeof text === 'string')
         .join(''),
+      truncated,
     };
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
@@ -206,7 +216,7 @@ export async function POST(request: NextRequest) {
     console.log(`[AI-ANALYSIS] User is playing ${userColor}`);
 
     const verbosityVal = verbosity || 'detailed';
-    const modelVal = model || 'claude-sonnet-5';
+    const modelVal = model || DEFAULT_AI_MODEL;
 
     console.log(`[AI-ANALYSIS] Using verbosity: ${verbosityVal}, model: ${modelVal}`);
 
@@ -374,13 +384,36 @@ export async function POST(request: NextRequest) {
     let failure: { error: string; retryable: boolean } | null = null;
 
     try {
-      const first = await callClaude(
+      // Models known to think by default get headroom up front (thinking tokens
+      // count against max_tokens).
+      let tokenBudget = maxTokens + (usesThinkingByDefault(modelVal) ? THINKING_HEADROOM_TOKENS : 0);
+
+      let first = await callClaude(
         modelVal,
-        maxTokens,
+        tokenBudget,
         [{ role: 'user', content: prompt }],
         entry.id,
         Math.max(MIN_CALL_BUDGET_MS, timeLeft())
       );
+
+      // A reply cut off at the limit from a model we did not expect to need
+      // headroom (a newer model that thinks by default): ask again, once, with
+      // room to think. If that fails or there is no time, keep what we have.
+      const headroomBudget = maxTokens + THINKING_HEADROOM_TOKENS;
+      if ('text' in first && first.truncated && tokenBudget < headroomBudget && timeLeft() >= MIN_RETRY_BUDGET_MS) {
+        console.warn(`[AI-ANALYSIS] Entry ${entry.id}: cut off at ${tokenBudget} tokens — retrying with ${headroomBudget}`);
+        const bigger = await callClaude(
+          modelVal,
+          headroomBudget,
+          [{ role: 'user', content: prompt }],
+          entry.id,
+          timeLeft()
+        );
+        if ('text' in bigger) {
+          first = bigger;
+          tokenBudget = headroomBudget;
+        }
+      }
 
       if ('error' in first) {
         failure = first;
@@ -401,7 +434,7 @@ export async function POST(request: NextRequest) {
           if (verified.invalid.length > 0 && timeLeft() >= MIN_RETRY_BUDGET_MS) {
             const retry = await callClaude(
               modelVal,
-              maxTokens,
+              tokenBudget,
               [
                 { role: 'user', content: prompt },
                 { role: 'assistant', content: aiResponse },

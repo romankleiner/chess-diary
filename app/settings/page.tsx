@@ -1,6 +1,20 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  DEFAULT_AI_MODEL,
+  FALLBACK_MODELS,
+  buildModelGroups,
+  newerModelHint,
+  type ModelInfo,
+} from '@/lib/model-catalog';
+
+// Mirrors the response of GET /api/models.
+interface ModelCatalog {
+  models: ModelInfo[];
+  source: 'api' | 'stale' | 'fallback';
+  fetchedAt: string | null;
+}
 
 interface Settings {
   chesscom_username?: string;
@@ -16,10 +30,45 @@ export default function SettingsPage() {
   const [saveMessage, setSaveMessage] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
 
+  // The dropdown starts on the built-in list so it is usable immediately, then
+  // switches to the list fetched from Anthropic.
+  const [catalog, setCatalog] = useState<ModelCatalog>({ models: FALLBACK_MODELS, source: 'fallback', fetchedAt: null });
+  const [catalogLoading, setCatalogLoading] = useState(true);
+
   useEffect(() => {
     loadSettings();
+    loadCatalog(false);
     fetch('/api/admin/check').then(r => r.json()).then(d => setIsAdmin(d.isAdmin)).catch(() => {});
   }, []);
+
+  const loadCatalog = async (refresh: boolean) => {
+    setCatalogLoading(true);
+    try {
+      const response = await fetch(refresh ? '/api/models?refresh=1' : '/api/models');
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      setCatalog(await response.json());
+    } catch (error) {
+      // Keep whatever list is already showing; the status line says it may be out of date.
+      console.error('Error loading model list:', error);
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  const selectedModel = settings.ai_model || DEFAULT_AI_MODEL;
+  const modelGroups = useMemo(
+    () => buildModelGroups(catalog.models, selectedModel, { authoritative: catalog.source !== 'fallback' }),
+    [catalog, selectedModel]
+  );
+  const newerModel = useMemo(() => newerModelHint(selectedModel, catalog.models), [catalog, selectedModel]);
+
+  const catalogStatus = catalogLoading
+    ? 'Checking Anthropic for the latest models…'
+    : catalog.source === 'api'
+      ? `Fetched from Anthropic${catalog.fetchedAt ? ` on ${new Date(catalog.fetchedAt).toLocaleString()}` : ''} and refreshed automatically.`
+      : catalog.source === 'stale'
+        ? `Couldn't reach Anthropic just now — showing the list fetched on ${catalog.fetchedAt ? new Date(catalog.fetchedAt).toLocaleString() : 'an earlier visit'}.`
+        : "Couldn't reach Anthropic — showing a built-in list that may be out of date.";
 
   const loadSettings = async () => {
     try {
@@ -184,40 +233,60 @@ export default function SettingsPage() {
             AI Model
           </label>
           <select
-            value={settings.ai_model || 'claude-sonnet-5'}
+            value={modelGroups.selectedValue ?? ''}
             onChange={(e) => updateSetting('ai_model', e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
           >
-            <optgroup label="Most capable">
-              <option value="claude-fable-5">Claude Fable 5 - Anthropic's most capable</option>
-              <option value="claude-opus-4-8">Claude Opus 4.8 - Most capable Opus-tier</option>
-            </optgroup>
-            <optgroup label="Balanced (recommended)">
-              <option value="claude-sonnet-5">Claude Sonnet 5 - Best balance</option>
-            </optgroup>
-            <optgroup label="Fast & cheap">
-              <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
-            </optgroup>
-            <optgroup label="Previous generation">
-              <option value="claude-opus-4-7">Claude Opus 4.7</option>
-              <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-              <option value="claude-opus-4-6">Claude Opus 4.6</option>
-            </optgroup>
+            {modelGroups.groups.map(group => (
+              <optgroup key={group.label} label={group.label}>
+                {group.options.map(option => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </optgroup>
+            ))}
           </select>
           <p className="text-xs text-gray-500 mt-1">
-            Choose the AI model for analyzing your chess thinking. Claude Sonnet 5 offers the best balance of speed, cost, and quality.
+            Choose the AI model for analyzing your chess thinking. The recommended model offers the best balance of speed, cost, and quality.
           </p>
-          <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs">
-            <strong>📚 Latest models:</strong> Check{' '}
-            <a 
-              href="https://platform.claude.com/docs/en/about-claude/models/overview" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+
+          {/* A newer model in the same family: suggested, never switched automatically */}
+          {newerModel && (
+            <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-xs flex items-center justify-between gap-3">
+              <span>
+                💡 A newer model in this family is available: <strong>{newerModel.displayName}</strong>.
+                Your selection is never changed automatically — newer models can differ in cost and behaviour.
+              </span>
+              <button
+                type="button"
+                onClick={() => updateSetting('ai_model', newerModel.id)}
+                className="shrink-0 px-2 py-1 bg-amber-600 text-white rounded hover:bg-amber-700"
+              >
+                Select it
+              </button>
+            </div>
+          )}
+
+          <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs flex items-center justify-between gap-3">
+            <span>
+              <strong>📚 Model list:</strong> {catalogStatus}{' '}
+              <a
+                href="https://platform.claude.com/docs/en/about-claude/models/overview"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                Anthropic&apos;s Models Page
+              </a>{' '}
+              has pricing and details.
+            </span>
+            <button
+              type="button"
+              onClick={() => loadCatalog(true)}
+              disabled={catalogLoading}
+              className="shrink-0 px-2 py-1 border border-blue-300 dark:border-blue-700 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 disabled:opacity-50"
             >
-              Anthropic's Models Page
-            </a>
-            {' '}for updates and pricing.
+              {catalogLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
           </div>
         </div>
 

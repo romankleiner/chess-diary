@@ -103,6 +103,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 |---|---|---|
 | GET | `/api/board-image` | Serve a cached board diagram PNG for a FEN string |
 | GET/POST | `/api/settings` | Read / save user settings |
+| GET | `/api/models` | Claude models available for AI analysis, fetched from Anthropic and cached (`?refresh=1` bypasses the cache) |
 | GET | `/api/admin/check` | Check if current user has admin access |
 | GET | `/api/cron/daily` | Daily maintenance: backup + prune + image cleanup (Vercel Cron) |
 
@@ -147,6 +148,14 @@ LLMs decode a bare FEN badly, so the AI analyzer invents pieces, threats and mov
 2. **Verify the answer** (`line-verifier.ts`): the prompt asks Claude to wrap every move or variation it proposes in `[[line: Nxe5 Nxe5 d4]]`. `verifyAndClean` replays each marker from the entry's FEN (also accepting a line that starts after the move the player made), rewrites legal lines as canonical SAN, and replaces illegal ones with `[illegal line removed]`. The route first sends Claude one correction message (`buildCorrectionPrompt`, listing the failed move and the legal alternatives); whichever attempt has fewer illegal lines is kept.
 
 This checks *legality* (impossible moves, misplaced pieces), not *soundness* — a legal line can still be a bad idea. Entries without a valid FEN skip both layers.
+
+### `lib/model-catalog.ts` and `lib/model-catalog-server.ts` — The AI model list
+The Settings dropdown is built from Anthropic's Models API (`GET /v1/models`) instead of a hand-edited list, so a newly released model appears without a code change.
+
+- **Server** (`model-catalog-server.ts`, behind `/api/models`): fetches every page of the list and caches it in memory for 6 hours (re-fetched on the first request after that; the Settings page's Refresh button forces it). If Anthropic can't be reached it serves the last good list marked `stale`, and only falls back to the built-in `FALLBACK_MODELS` if there has never been a successful fetch. Simultaneous requests share one fetch.
+- **Shared logic** (`model-catalog.ts`): orders models newest-first by version (then release date), shows the newest of each family plus two older ones, and keeps a saved choice selectable even if it has since disappeared from the list (a saved `claude-haiku-4-5` still matches the listed `claude-haiku-4-5-20251001`).
+- **The list refreshes; the selection never does.** A newer model can change cost and behaviour (e.g. a different tokenizer), so Settings only *suggests* one in the same family, and `DEFAULT_AI_MODEL` is a fixed constant rather than "latest Sonnet".
+- **Thinking-token headroom.** The Models API doesn't say which models think unprompted, so the analyzer route gives known ones extra `max_tokens` up front and, for any other model, retries once with that headroom if a reply is cut off at the limit — so a model released tomorrow works without being named in the code.
 
 ### `lib/opening-book.ts` — Opening Book Lookup
 Reads a Polyglot binary opening book from `data/opening-book.bin` using Zobrist hashing. Returns candidate moves for a position. Pure file I/O — no network calls. Used during analysis to tag book moves.
