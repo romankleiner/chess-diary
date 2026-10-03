@@ -104,6 +104,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 | GET | `/api/board-image` | Serve a cached board diagram PNG for a FEN string |
 | GET/POST | `/api/settings` | Read / save user settings |
 | GET | `/api/models` | Claude models available for AI analysis, fetched from Anthropic and cached (`?refresh=1` bypasses the cache) |
+| GET | `/api/eval` | Engine evaluation of one position (`?fen=&depth=`), used by the public blog to rate a reader's guess. **Public** (listed in `middleware.ts`), so it validates the FEN, clamps depth to 6–18, caches, and rate-limits (30 / minute / IP → `429` + `Retry-After`) |
 | GET | `/api/admin/check` | Check if current user has admin access |
 | GET | `/api/cron/daily` | Daily maintenance: backup + prune + image cleanup (Vercel Cron) |
 
@@ -157,6 +158,17 @@ The Settings dropdown is built from Anthropic's Models API (`GET /v1/models`) in
 - **The list refreshes; the selection never does.** A newer model can change cost and behaviour (e.g. a different tokenizer), so Settings only *suggests* one in the same family, and `DEFAULT_AI_MODEL` is a fixed constant rather than "latest Sonnet".
 - **Thinking-token headroom.** The Models API doesn't say which models think unprompted, so the analyzer route gives known ones extra `max_tokens` up front and, for any other model, retries once with that headroom if a reply is cut off at the limit — so a model released tomorrow works without being named in the code.
 
+### `lib/guess-eval.ts`, `lib/position-eval.ts`, `lib/position-eval-server.ts`, `lib/rate-limit.ts` — Rating a reader's guess
+On the public blog, a wrong guess is rated by the engine and set beside my move and the engine's top line (`GuessEvalCard` in `components/blog-shared.tsx`). The pure logic is split from the I/O so it can be unit-tested:
+
+- **`position-eval.ts`** (pure, browser-safe): the `PositionEval` shape (`pawns` White's point of view, `mate`, `depth`), `parseChessApiEval` (chess-api.com signals a forced mate as `eval ±100` plus a signed `mate`, which may be a string, and reports errors as HTTP 200 with `type: "error"`), `terminalEval` (a checkmated or drawn position is answered locally — the engine API returns an error for those), `formatPawns` (`+0.3`, `-M2`, `+Mate`, `Checkmate`) and `roundPawns`.
+- **`guess-eval.ts`** (pure, browser-safe): `compareGuess` and `rateGuess`. Where each number comes from: the guess is evaluated live; my move's evaluation is the one stored with the blog section; the **top line is reconstructed** as my move's evaluation plus (for White) or minus (for Black) its recorded centipawn loss — the same reconstruction the AI analysis uses. If the reader plays the engine's top move the answer is that reconstructed value and no request is made. The shortfall is graded with the same `getMoveQuality` bands as my own moves, and a difference of 0.1 or less counts as "about the same" because engines wobble that much between runs.
+- **Rounding must match the screen.** Comparisons are made on `roundPawns` values (`toFixed`-style), the same rounding `formatPawns` prints, so a sentence can't contradict the number beside it. (`Math.round(x * 10) / 10` does not agree at values like 0.35.)
+- **`position-eval-server.ts`** (server): `getPositionEval` — terminal shortcut, then a 24 h in-memory cache (500 entries, oldest dropped first) keyed by position + depth and ignoring the move counters, with simultaneous requests for one position sharing a single engine call. Failures are never cached.
+- **`rate-limit.ts`** (server): a small fixed-window limiter keyed by caller. State is per serverless instance, so the limit is approximate; it exists to stop one visitor from spending the free engine API's goodwill, not as a security boundary.
+- **Depth.** The blog-post route passes the stored analysis depth through as `engineEval.depth`, and the guess is evaluated at that depth (clamped to the engine API's maximum of 18) so the numbers are comparable.
+- **Caveat.** The stored evaluation and the live one can come from different engines or depths, so small differences (~0.1) are noise rather than signal. The top line inherits whatever cap `normalizeCpLoss` applied to the stored loss.
+
 ### `lib/opening-book.ts` — Opening Book Lookup
 Reads a Polyglot binary opening book from `data/opening-book.bin` using Zobrist hashing. Returns candidate moves for a position. Pure file I/O — no network calls. Used during analysis to tag book moves.
 
@@ -188,6 +200,7 @@ Generates local-timezone ISO timestamps and filters journal entries by date rang
 | `PostGameSummaryCard.tsx` | Collapsible card displaying a post-game reflection entry (stats grid + coloured reflection sections) |
 | `PostGameSummaryForm.tsx` | Form for writing post-game reflections: "What went well", "Mistakes", "Lessons Learned", "Next Steps" |
 | `BlogPostModal.tsx` | Modal for generating and viewing a game analysis as a formatted blog post |
+| `blog-shared.tsx` | Types and interactive pieces shared by the modal and the public `/blog/[gameId]` page: `GameWalkthrough` (guess-the-move cards), `ThinkingBlock`, `EvalCallout`, and `GuessEvalCard` (engine check of a reader's guess) |
 
 ---
 

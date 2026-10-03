@@ -262,6 +262,34 @@ describe('POST /api/games/[id]/blog-post — engineEval', () => {
     expect(sections[0].engineEval.bestMoveSan).toBeNull();
   });
 
+  it('passes on the depth the analysis was run at, so a reader’s guess can be checked as deeply', async () => {
+    const customAnalysis = {
+      ...analysisA,
+      depth: 14,
+      moves: [
+        { moveNumber: 2, color: 'white', move: 'Nf3', centipawnLoss: 10, moveQuality: 'excellent', evaluation: 0.3 },
+      ],
+    };
+    mockGetAnalysis.mockResolvedValue(customAnalysis);
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval.depth).toBe(14);
+  });
+
+  it('leaves depth null when the analysis does not record one', async () => {
+    const { depth: _omit, ...withoutDepth } = analysisA;
+    const customAnalysis = {
+      ...withoutDepth,
+      moves: [
+        { moveNumber: 2, color: 'white', move: 'Nf3', centipawnLoss: 10, moveQuality: 'excellent', evaluation: 0.3 },
+      ],
+    };
+    mockGetAnalysis.mockResolvedValue(customAnalysis);
+    mockGetJournal.mockResolvedValue([moveEntry]);
+    const { sections } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(sections[0].engineEval.depth).toBeNull();
+  });
+
   it('leaves bestMoveSan null when analysis omits a bestMove', async () => {
     const customAnalysis = {
       ...analysisA,

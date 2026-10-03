@@ -8,6 +8,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/cron/(.*)',              // Cron endpoints are authenticated via CRON_SECRET, not Clerk
   '/blog/(.*)',                  // Public shareable blog pages
   '/api/games/(.*)/blog-post',  // Blog post generation API used by public pages
+  '/api/eval(.*)',              // Engine eval of a reader's guess on public blog pages (rate limited)
 ])
 
 export default clerkMiddleware(async (auth, request) => {

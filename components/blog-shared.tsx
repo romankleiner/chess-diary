@@ -9,6 +9,9 @@ import React, { useRef, useState, useMemo, useEffect, useCallback, useId } from 
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { Chess } from 'chess.js';
+import { formatPawns } from '@/lib/position-eval';
+import { playerPawns, rateGuess } from '@/lib/guess-eval';
+import type { GuessRating } from '@/lib/guess-eval';
 
 // react-chessboard uses browser drag APIs — must be client-only.
 const Chessboard = dynamic(
@@ -23,6 +26,7 @@ export interface EngineEval {
   centipawnLoss: number;
   evaluation: number;          // white-POV, pawn units
   bestMoveSan?: string | null; // engine's preferred move, when different from played
+  depth?: number | null;       // search depth of the stored analysis; a guess is checked as deeply
 }
 
 export interface MoveSection {
@@ -56,8 +60,9 @@ export const QUALITY_STYLE: Record<string, { label: string; color: string }> = {
   blunder:    { label: '✗✗ Blunder',   color: 'text-red-600 dark:text-red-400'       },
 };
 
+// Stored evaluations carry a forced mate as ±100, which reads better as "+Mate".
 export function formatEval(v: number): string {
-  return (v > 0 ? '+' : '') + v.toFixed(1);
+  return formatPawns(v);
 }
 
 // Normalise SAN for comparison: strip check/mate symbols, trim, lower-case.
@@ -851,6 +856,95 @@ export function SectionBody({ section, phase, onShowAnalysis }: {
   );
 }
 
+// ─── Engine check of a reader's guess ─────────────────────────────────────────
+// Shown under the board after each guess that isn't my move: the position after
+// their move, next to the position after mine and the engine's top line. Only
+// numbers and a verdict -- no move names -- so it doesn't give my move away.
+
+export type GuessEvalState =
+  | { san: string; status: 'loading' }
+  | { san: string; status: 'error'; message: string }
+  | { san: string; status: 'done'; rating: GuessRating };
+
+export function GuessEvalCard({ state, color }: {
+  state: GuessEvalState;
+  color: 'white' | 'black';
+}) {
+  return (
+    <div
+      role="status"
+      aria-label="Engine check of your guess"
+      className="rounded-lg border border-gray-200 dark:border-gray-700 border-l-4 border-l-blue-400 dark:border-l-blue-500 bg-gray-50 dark:bg-gray-800/50 p-3 space-y-2.5"
+    >
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="font-medium text-gray-700 dark:text-gray-300">
+          Engine check of your guess{' '}
+          <span className="font-mono font-semibold text-gray-900 dark:text-gray-100">{state.san}</span>
+        </span>
+        {color === 'black' && (
+          <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">White&apos;s point of view</span>
+        )}
+      </div>
+
+      {state.status === 'loading' && (
+        <p className="text-base text-gray-600 dark:text-gray-400 animate-pulse">
+          Checking your move with the engine…
+        </p>
+      )}
+
+      {state.status === 'error' && (
+        <p className="text-base text-amber-700 dark:text-amber-400">{state.message}</p>
+      )}
+
+      {state.status === 'done' && <GuessEvalResult rating={state.rating} color={color} />}
+    </div>
+  );
+}
+
+// The verdict is body-size text on a grey card, so it needs the darker shades
+// (QUALITY_STYLE's -600s are only ~3:1 there). Labels are shared with QUALITY_STYLE.
+const GUESS_VERDICT_COLOR: Record<string, string> = {
+  excellent:  'text-green-700 dark:text-green-400',
+  good:       'text-blue-700 dark:text-blue-400',
+  inaccuracy: 'text-yellow-700 dark:text-yellow-400',
+  mistake:    'text-orange-700 dark:text-orange-400',
+  blunder:    'text-red-700 dark:text-red-400',
+};
+
+function GuessEvalResult({ rating, color }: { rating: GuessRating; color: 'white' | 'black' }) {
+  const { comparison: c, guessEval } = rating;
+  const label = QUALITY_STYLE[c.quality]?.label ?? null;
+  const verdictColor = GUESS_VERDICT_COLOR[c.quality] ?? 'text-gray-800 dark:text-gray-200';
+  // The comparison works from the player's side; the numbers are shown White's
+  // way up, like the engine check beside them (playerPawns flips either way).
+  const rows: Array<[string, string, boolean]> = [
+    ['After your move',  formatPawns(playerPawns(c.guess, color), guessEval.mate), true],
+    ['After my move',    formatPawns(playerPawns(c.mine, color)),                  false],
+    ["Engine's top line", formatPawns(playerPawns(c.top, color)),                  false],
+  ];
+  return (
+    <>
+      <dl className="space-y-1.5">
+        {rows.map(([label, value, emphasis]) => (
+          <div key={label} className="flex items-baseline justify-between gap-3 text-base">
+            <dt className="text-gray-600 dark:text-gray-400">{label}</dt>
+            <dd className={`font-mono font-semibold ${emphasis ? 'text-gray-900 dark:text-gray-50' : 'text-gray-800 dark:text-gray-200'}`}>
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div className="border-t border-gray-200 dark:border-gray-700 pt-2.5 space-y-0.5">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className={`text-base font-semibold ${verdictColor}`}>{c.headline}</p>
+          {label && <span className={`text-sm font-medium shrink-0 ${verdictColor}`}>{label}</span>}
+        </div>
+        <p className="text-base text-gray-700 dark:text-gray-300">{c.versusMine}</p>
+      </div>
+    </>
+  );
+}
+
 // ─── Walkthrough move card ────────────────────────────────────────────────────
 // One journal entry anchored to a ply. The reader steps through the moves since
 // the previous entry (startPly … guessPly-1), then guesses the author's move at
@@ -878,6 +972,11 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   // 'revealed'      — reader gave up
   const [resolvedHow, setResolvedHow] = useState<'guessed' | 'guessed_best' | 'revealed' | null>(null);
 
+  // Engine check of the reader's latest guess. guessSeq numbers the checks so a
+  // slow answer to an earlier guess can't overwrite the card for a later one.
+  const [guessEval, setGuessEval] = useState<GuessEvalState | null>(null);
+  const guessSeq = useRef(0);
+
   const [selectedSquare, setSelectedSquare]   = useState<string | null>(null);
   const [selHighlights, setSelHighlights]     = useState<Record<string, React.CSSProperties>>({});
   const [flashHighlights, setFlashHighlights] = useState<Record<string, React.CSSProperties>>({});
@@ -888,9 +987,10 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   // multiple mounted boards don't interfere (jerky animation otherwise).
   const boardId = `wt-${useId().replace(/:/g, '')}`;
 
-  // Clear the wrong-move revert timer on unmount
+  // Clear the wrong-move revert timer on unmount, and drop any engine check still in flight
   useEffect(() => () => {
     if (wrongMoveTimerRef.current) clearTimeout(wrongMoveTimerRef.current);
+    guessSeq.current++;
   }, []);
 
   const resolved    = resolvedHow !== null;
@@ -941,6 +1041,35 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     onResolved();
   };
 
+  // Check a guess that wasn't my move against my move and the engine's top line.
+  // Nothing to compare with when the section has no engine check.
+  const checkGuess = (san: string, fenAfterGuess: string, isEngineBest: boolean) => {
+    const engine = section.engineEval;
+    const seq = ++guessSeq.current;
+    if (!engine) {
+      setGuessEval(null);
+      return;
+    }
+    setGuessEval({ san, status: 'loading' });
+    rateGuess({ fenAfterGuess, isEngineBest, engine, color: section.userColor })
+      .then(rating => {
+        if (seq === guessSeq.current) setGuessEval({ san, status: 'done', rating });
+      })
+      .catch(error => {
+        if (seq !== guessSeq.current) return;
+        const message = error instanceof Error && error.message
+          ? error.message
+          : 'Could not check that move right now.';
+        setGuessEval({ san, status: 'error', message });
+      });
+  };
+
+  // Playing my own move needs no comparison with itself
+  const dropGuessEval = () => {
+    guessSeq.current++;
+    setGuessEval(null);
+  };
+
   const isOwnColor = (pieceType: string) =>
     section.userColor === 'white' ? pieceType.startsWith('w') : pieceType.startsWith('b');
 
@@ -967,6 +1096,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
 
       if (tried === normSan(expectedSan)) {
         setFeedback('correct');
+        dropGuessEval();
         resolve('guessed', phase === 'puzzle' ? 'solved_blind' : 'complete');
         return 'correct';
       }
@@ -977,10 +1107,12 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       // the game can continue from the actual line.
       if (bestSan && tried === normSan(bestSan)) {
         setFeedback('best');
+        checkGuess(move.san, chess.fen(), true);
         resolve('guessed_best', phase === 'puzzle' ? 'solved_blind' : 'complete');
         return 'correct';
       }
       // Wrong — show the attempted move briefly in red, then revert
+      checkGuess(move.san, chess.fen(), false);
       setTempFen(chess.fen());
       setFlashHighlights({
         [from]: { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
@@ -1167,6 +1299,11 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
           <p className="text-sm text-red-600 dark:text-red-400">
             ✗ Not quite — try a different move.
           </p>
+        )}
+
+        {/* ── Engine check of the latest guess ─────────────────────── */}
+        {guessEval && (atPuzzle || resolved) && (
+          <GuessEvalCard state={guessEval} color={section.userColor} />
         )}
 
         {/* ── Puzzle controls ──────────────────────────────────────── */}

@@ -21,6 +21,7 @@ interface EngineEval {
   centipawnLoss: number;
   evaluation: number;        // white-POV, pawn units
   bestMoveSan: string | null; // engine's preferred move at the position, when different
+  depth: number | null;      // search depth of the stored analysis, so a reader's guess can be checked as deeply
 }
 
 interface MoveSection {
@@ -202,6 +203,7 @@ export async function POST(
               centipawnLoss: hit.centipawnLoss,
               evaluation:    hit.evaluation,
               bestMoveSan,
+              depth:         typeof analysis?.depth === 'number' ? analysis.depth : null,
             };
           }
         }
