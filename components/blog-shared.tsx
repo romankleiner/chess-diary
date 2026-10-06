@@ -1578,18 +1578,18 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
                       setSelectedSquare(null);
                       setSelHighlights({});
                     }}
-                    title="Show what I was thinking. Finding my move afterwards scores half."
+                    title="Show what I was thinking before you guess"
                     className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
                   >
-                    💭 Reveal thinking <span className="text-gray-500 dark:text-gray-400">(halves a match)</span>
+                    💭 Reveal thinking
                   </button>
                 )}
                 <button
                   onClick={skip}
-                  title="Show my move and move on. Scores nothing."
+                  title="Show my move and move on"
                   className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
                 >
-                  ⏭ Skip — show my move <span className="text-gray-500 dark:text-gray-400">(0 points)</span>
+                  ⏭ Skip — show my move
                 </button>
               </div>
             )}
