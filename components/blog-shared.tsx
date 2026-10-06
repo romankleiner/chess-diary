@@ -12,8 +12,15 @@ import { Chess } from 'chess.js';
 import { splitNotation } from '@/lib/notation';
 import { splitLinks } from '@/lib/linkify';
 import { formatPawns } from '@/lib/position-eval';
-import { earnsMoveOn, playerPawns, rateGuess, topLinePawns } from '@/lib/guess-eval';
+import { earnsMoveOn, playerPawns, rateEngineBest, rateGuess, topLinePawns } from '@/lib/guess-eval';
 import type { GuessRating } from '@/lib/guess-eval';
+import {
+  MY_MOVE, addAttempt, emptyLedger, failAttempt, giveUp, hasPending, hasTried, isOutOfTries, judgeGuess,
+  rateAttempt, scorePosition, solve, summarizeScores, triesLeft,
+} from '@/lib/guess-score';
+import type { Ledger, PositionScore } from '@/lib/guess-score';
+import { ScoreBreakdown, ScoreCard, ScoreLegend, TriesLeft, formatPoints } from '@/components/blog-score';
+import type { ScoreRow } from '@/components/blog-score';
 import { MOVE_QUALITIES } from '@/lib/analysis-utils';
 import type { AnalysisSummary, MoveQualityKey, SideSummary } from '@/lib/analysis-utils';
 
@@ -1027,13 +1034,17 @@ function GuessEvalResult({ rating, color }: { rating: GuessRating; color: 'white
 // guessPly. Resolving (correct guess or give-up) reveals the entry content and
 // unlocks the next card via onResolved.
 
-function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResolved, contentRef }: {
+type Resolution = 'guessed' | 'guessed_best' | 'guessed_better' | 'guessed_equal' | 'revealed' | 'out_of_tries';
+
+function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResolved, onScore, contentRef }: {
   section: MoveSection;
   game: ParsedGame;
   startPly: number;
   guessPly: number;
   state: 'locked' | 'active' | 'done';
   onResolved: () => void;
+  /** Told the move's score whenever it changes (a guess, a rating that arrives late, a skip). */
+  onScore?: (score: PositionScore) => void;
   /** Container holding the engine eval / thinking / analysis blocks — the
    *  walkthrough scrolls here after a guess resolves so the just-revealed
    *  content is visible (rather than jumping past it to the next card). */
@@ -1042,14 +1053,49 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   const [phase, setPhase]             = useState<SectionPhase>('puzzle');
   const [viewIdx, setViewIdx]         = useState(startPly);
   const [tempFen, setTempFen]         = useState<string | null>(null);
-  const [feedback, setFeedback]       = useState<'correct' | 'best' | 'better' | 'wrong' | null>(null);
+  // 'repeat' and 'no_tries' are guesses that were not played: a move already tried,
+  // and a move when every try is spent and the last answer is still awaited
+  const [feedback, setFeedback]       = useState<'correct' | 'best' | 'better' | 'equal' | 'wrong' | 'repeat' | 'no_tries' | null>(null);
   // 'guessed'        — reader played the author's actual move
   // 'guessed_best'   — reader played the engine's top move (the author didn't)
   // 'guessed_better' — reader played another move the engine rates above the author's
-  // 'revealed'       — reader gave up
-  const [resolvedHow, setResolvedHow] = useState<'guessed' | 'guessed_best' | 'guessed_better' | 'revealed' | null>(null);
-  // The reader's move that out-scored mine (the guess that earned the move on)
-  const [betterSan, setBetterSan] = useState<string | null>(null);
+  // 'guessed_equal'  — reader played another move the engine rates the same as the author's
+  // 'revealed'       — reader skipped the move
+  // 'out_of_tries'   — reader used every try without solving it
+  const [resolvedHow, setResolvedHow] = useState<Resolution | null>(null);
+  // The reader's move that earned the move on, by being better than or as good as mine
+  const [earnedSan, setEarnedSan] = useState<string | null>(null);
+
+  // Everything the reader has tried here, which is what the move is scored from.
+  // The ref is always the latest ledger, for handlers (and answers from the engine
+  // that arrive later) that would otherwise see the one from the render they were
+  // made in; the state is what renders. Every change goes through updateLedger.
+  const [ledger, setLedger] = useState<Ledger>(emptyLedger);
+  const ledgerRef = useRef<Ledger>(ledger);
+  const nextAttemptId = useRef(1);
+  const updateLedger = (change: (current: Ledger) => Ledger) => {
+    const next = change(ledgerRef.current);
+    if (next === ledgerRef.current) return;
+    ledgerRef.current = next;
+    setLedger(next);
+    // Every try spent and every answer in: nothing left could solve the move, so it
+    // is over. (While an answer is outstanding the last guess may yet prove good
+    // enough, and a guess that does is solved in the same change as its rating.)
+    if (!resolvedRef.current && isOutOfTries(next)) {
+      ledgerRef.current = giveUp(next, 'out_of_tries');
+      setLedger(ledgerRef.current);
+      resolve('out_of_tries');
+    }
+  };
+  const score = useMemo(() => scorePosition(ledger), [ledger]);
+  const onScoreRef = useRef(onScore);
+  useEffect(() => {
+    onScoreRef.current = onScore;
+  });
+  useEffect(() => {
+    // Nothing to tell the walkthrough until the reader has done something here
+    if (ledger.attempts.length > 0 || ledger.ending) onScoreRef.current?.(score);
+  }, [score, ledger]);
 
   // Engine check of the reader's latest guess. guessSeq numbers the checks so a
   // slow answer to an earlier guess can't overwrite the card for a later one.
@@ -1093,16 +1139,16 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
   const boardFen    = tempFen ?? game.fens[viewIdx];
 
   // Resolved-move highlight on the squares of the author's move:
-  //   green  — reader played the same move
+  //   green  — reader played the same move, or one as good
   //   blue   — reader played a move better than mine (the engine's top move, or
   //            any other the engine scores higher than what I played)
-  //   amber  — reader gave up
+  //   amber  — reader skipped the move or ran out of tries
   // Shown only while the board is at the position right after the move.
   const resolvedHl: Record<string, React.CSSProperties> = {};
   if (resolved && viewIdx === guessPly + 1 && !tempFen) {
     const { from, to } = game.moves[guessPly];
     const color =
-      resolvedHow === 'guessed'                                     ? 'rgba(80, 200, 100, 0.55)' :
+      resolvedHow === 'guessed' || resolvedHow === 'guessed_equal'  ? 'rgba(80, 200, 100, 0.55)' :
       resolvedHow === 'guessed_best' || resolvedHow === 'guessed_better' ? 'rgba(96, 165, 250, 0.55)' :
                                                                       'rgba(255, 200, 60, 0.50)';
     resolvedHl[from] = { backgroundColor: color };
@@ -1126,7 +1172,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     setViewIdx(Math.max(startPly, Math.min(maxIdx, idx)));
   };
 
-  const resolve = (how: 'guessed' | 'guessed_best' | 'guessed_better' | 'revealed') => {
+  const resolve = (how: Resolution) => {
     // Solving a card unlocks the next one, so it must happen exactly once
     if (resolvedRef.current) return;
     resolvedRef.current = true;
@@ -1137,9 +1183,18 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     onResolved();
   };
 
-  // Check a guess that wasn't my move against my move and the engine's top line.
-  // Nothing to compare with when the section has no engine check.
-  const checkGuess = (san: string, fenAfterGuess: string, isEngineBest: boolean) => {
+  // Skipping gives the move up for no points, from the first moment
+  const skip = () => {
+    updateLedger(l => giveUp(l, 'skipped'));
+    resolve('revealed');
+  };
+
+  // Rate a guess that wasn't my move or the engine's top move: how the position
+  // after it evaluates, against my move and the engine's top line. The answer
+  // scores it, and a guess at least as good as mine earns the move on. Where the
+  // section has no engine check there is nothing to rate it by (the caller has
+  // recorded it as unrated), but it still used a try.
+  const checkGuess = (id: number, san: string, fenAfterGuess: string) => {
     const engine = section.engineEval;
     const seq = ++guessSeq.current;
     if (!engine) {
@@ -1147,32 +1202,46 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       return;
     }
     setGuessEval({ san, status: 'loading' });
-    rateGuess({ fenAfterGuess, isEngineBest, engine, color: section.userColor })
+    rateGuess({ fenAfterGuess, isEngineBest: false, engine, color: section.userColor })
       .then(rating => {
-        // A guess the engine scores above my move earns the move on, as if the
-        // reader had found mine. This applies even if they have since tried
-        // another move: the better one still counts, and the card then shows it.
-        if (earnsMoveOn({
+        const judgement = judgeGuess(rating.comparison);
+        // A guess the engine scores as well as my move, or better, earns the move
+        // on, as if the reader had found mine. This applies even if they have since
+        // tried another move: the good one still counts, and the card then shows it.
+        const earns = earnsMoveOn({
           comparison: rating.comparison,
-          isEngineBest,
+          isEngineBest: false,
           alreadySolved: resolvedRef.current,
           stillOnPage: aliveRef.current,
-        })) {
+        });
+        // Scored whenever the answer comes, even after the move is over: a poor
+        // move still costs what it costs. Rated and solved in one change, so a last
+        // try that turns out good enough is not taken for one that ran out.
+        if (aliveRef.current) {
+          updateLedger(l => {
+            const rated = rateAttempt(l, id, judgement);
+            return earns ? solve(rated, id) : rated;
+          });
+        }
+        if (earns) {
+          const better = judgement.kind === 'better';
           guessSeq.current++;
           setGuessEval({ san, status: 'done', rating });
-          setBetterSan(san);
-          setFeedback('better');
-          resolve('guessed_better');
+          setEarnedSan(san);
+          setFeedback(better ? 'better' : 'equal');
+          resolve(better ? 'guessed_better' : 'guessed_equal');
           return;
         }
         if (seq === guessSeq.current) setGuessEval({ san, status: 'done', rating });
       })
       .catch(error => {
+        // Not the reader's fault, so the try is given back -- whatever they have done since
+        if (aliveRef.current) updateLedger(l => failAttempt(l, id));
         if (seq !== guessSeq.current) return;
-        const message = error instanceof Error && error.message
+        const reason = error instanceof Error && error.message
           ? error.message
           : 'Could not check that move right now.';
-        setGuessEval({ san, status: 'error', message });
+        setGuessEval({ san, status: 'error', message: `${reason} That guess didn’t use up a try.` });
       });
   };
 
@@ -1195,6 +1264,22 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
     }
   };
 
+  // Show the attempted move briefly in red, then revert
+  const flashRejected = (from: string, to: string, fenAfter: string, why: 'wrong' | 'repeat' | 'no_tries') => {
+    setTempFen(fenAfter);
+    setFlashHighlights({
+      [from]: { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
+      [to]:   { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
+    });
+    setFeedback(why);
+    if (wrongMoveTimerRef.current) clearTimeout(wrongMoveTimerRef.current);
+    wrongMoveTimerRef.current = setTimeout(() => {
+      setTempFen(null);
+      setFlashHighlights({});
+      wrongMoveTimerRef.current = null;
+    }, 900);
+  };
+
   // Try from→to as the puzzle answer. Shared by click-to-move and drag-and-drop.
   const attemptMove = (from: string, to: string): 'correct' | 'wrong' | 'illegal' => {
     let move;
@@ -1203,10 +1288,28 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       move = chess.move({ from, to, promotion: 'q' });
       if (!move) return 'illegal';
 
-      const tried   = normSan(move.san);
-      const bestSan = section.engineEval?.bestMoveSan ?? null;
+      const san     = move.san;
+      const tried   = normSan(san);
+      const engine  = section.engineEval;
+      const bestSan = engine?.bestMoveSan ?? null;
+
+      // A move already tried costs nothing: it is not played again. And once
+      // every try is spent there is nothing to play, only an answer to wait for.
+      if (hasTried(ledgerRef.current, san)) {
+        flashRejected(from, to, chess.fen(), 'repeat');
+        return 'wrong';
+      }
+      if (triesLeft(ledgerRef.current) === 0) {
+        flashRejected(from, to, chess.fen(), 'no_tries');
+        return 'wrong';
+      }
+
+      // Each guess is scored as it was played: with my thinking open or not
+      const id = nextAttemptId.current++;
+      const revealed = phase === 'thinking_shown';
 
       if (tried === normSan(expectedSan)) {
+        updateLedger(l => solve(addAttempt(l, { id, san, revealed, status: 'rated', judgement: MY_MOVE }), id));
         setFeedback('correct');
         dropGuessEval();
         resolve('guessed');
@@ -1217,26 +1320,21 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
       // correct guess for unlocking, but the banner explains they out-played
       // the author. The board still snaps to the author's move position so
       // the game can continue from the actual line.
-      if (bestSan && tried === normSan(bestSan)) {
+      if (engine && bestSan && tried === normSan(bestSan)) {
+        const rating = rateEngineBest({ engine, color: section.userColor });
+        const judgement = judgeGuess(rating.comparison);
+        updateLedger(l => solve(addAttempt(l, { id, san, revealed, status: 'rated', judgement }), id));
+        guessSeq.current++;
+        setGuessEval({ san, status: 'done', rating });
         setFeedback('best');
-        checkGuess(move.san, chess.fen(), true);
         resolve('guessed_best');
         return 'correct';
       }
-      // Wrong — show the attempted move briefly in red, then revert
-      checkGuess(move.san, chess.fen(), false);
-      setTempFen(chess.fen());
-      setFlashHighlights({
-        [from]: { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
-        [to]:   { backgroundColor: 'rgba(220, 60, 60, 0.45)' },
-      });
-      setFeedback('wrong');
-      if (wrongMoveTimerRef.current) clearTimeout(wrongMoveTimerRef.current);
-      wrongMoveTimerRef.current = setTimeout(() => {
-        setTempFen(null);
-        setFlashHighlights({});
-        wrongMoveTimerRef.current = null;
-      }, 900);
+      // Wrong — it uses a try, and is rated by the engine when it can be. (Where it
+      // can't, a last try that misses ends the move here and now.)
+      flashRejected(from, to, chess.fen(), 'wrong');
+      updateLedger(l => addAttempt(l, { id, san, revealed, status: engine ? 'pending' : 'unrated' }));
+      checkGuess(id, san, chess.fen());
       return 'wrong';
     } catch {
       return 'illegal';
@@ -1357,6 +1455,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
                 <p className="text-base font-medium text-purple-700 dark:text-purple-300">
                   🎯 Find my move on the board
                 </p>
+                <TriesLeft left={triesLeft(ledger)} />
               </div>
             )}
           </div>
@@ -1393,7 +1492,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
               viewIdx={viewIdx}
               goTo={goTo}
               guessPly={guessPly}
-              guessColor={resolvedHow === 'revealed' ? 'amber' : 'green'}
+              guessColor={resolvedHow === 'revealed' || resolvedHow === 'out_of_tries' ? 'amber' : 'green'}
             />
           </div>
 
@@ -1423,7 +1522,19 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
             {feedback === 'better' && (
               <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">
                 ⭐ Better than mine — the engine rates{' '}
-                {betterSan ? <span className="font-mono">{betterSan}</span> : 'your move'} above the move I played, so it counts.
+                {earnedSan ? <span className="font-mono">{earnedSan}</span> : 'your move'} above the move I played, so it counts.
+                {section.moveNotation && (
+                  <span className="font-normal text-gray-600 dark:text-gray-400">
+                    {' '}I played{' '}
+                    <span className="font-mono">{section.moveNotation}</span> here.
+                  </span>
+                )}
+              </p>
+            )}
+            {feedback === 'equal' && (
+              <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                ✓ As good as mine — the engine rates{' '}
+                {earnedSan ? <span className="font-mono">{earnedSan}</span> : 'your move'} the same as the move I played, so it counts.
                 {section.moveNotation && (
                   <span className="font-normal text-gray-600 dark:text-gray-400">
                     {' '}I played{' '}
@@ -1437,11 +1548,24 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
                 ✗ Not quite — try a different move.
               </p>
             )}
+            {feedback === 'repeat' && atPuzzle && (
+              <p className="text-sm text-amber-700 dark:text-amber-400">
+                You already tried that move — it doesn&apos;t cost another try.
+              </p>
+            )}
+            {feedback === 'no_tries' && atPuzzle && (
+              <p className="text-sm text-amber-700 dark:text-amber-400">
+                That was your last try — waiting for the engine to rate it.
+              </p>
+            )}
 
             {/* ── Engine check of the latest guess ─────────────────────── */}
             {guessEval && (atPuzzle || resolved) && (
               <GuessEvalCard state={guessEval} color={section.userColor} />
             )}
+
+            {/* ── How the move scored ──────────────────────────────────── */}
+            {resolved && <ScoreBreakdown score={score} pending={hasPending(ledger)} />}
 
             {/* ── Puzzle controls ──────────────────────────────────────── */}
             {atPuzzle && (
@@ -1454,19 +1578,19 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
                       setSelectedSquare(null);
                       setSelHighlights({});
                     }}
+                    title="Show what I was thinking. Finding my move afterwards scores half."
                     className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
                   >
-                    💭 Reveal thinking
+                    💭 Reveal thinking <span className="text-gray-500 dark:text-gray-400">(halves a match)</span>
                   </button>
                 )}
-                {phase === 'thinking_shown' && (
-                  <button
-                    onClick={() => resolve('revealed')}
-                    className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
-                  >
-                    🏳 Give up — show the move
-                  </button>
-                )}
+                <button
+                  onClick={skip}
+                  title="Show my move and move on. Scores nothing."
+                  className="text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+                >
+                  ⏭ Skip — show my move <span className="text-gray-500 dark:text-gray-400">(0 points)</span>
+                </button>
               </div>
             )}
 
@@ -1767,6 +1891,16 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
   const [revealEnd, setRevealEnd] = useState(false); // fast-forward past the puzzles
   const [tailDone, setTailDone]   = useState(false); // tail stepped to the final move
 
+  // Each guessed move's score, by item, as the cards report them
+  const [scores, setScores] = useState<Record<number, PositionScore>>({});
+  const recordScore = useCallback((index: number, score: PositionScore) => {
+    setScores(prev => ({ ...prev, [index]: score }));
+  }, []);
+  const scoreSummary = useMemo(
+    () => summarizeScores(Object.values(scores), totalPuzzles),
+    [scores, totalPuzzles],
+  );
+
   // After a guess resolves, glide to the just-revealed engine / commentary
   // block on the *current* card — not the next card — so AI comments, the
   // engine eval, and the post-game review aren't scrolled past.
@@ -1844,11 +1978,12 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
       <p className="max-w-3xl text-base text-left text-gray-600 dark:text-gray-300 leading-relaxed">
         This post follows my game move by move. Wherever I paused to record my thoughts,
         you can try to guess my move — which isn&apos;t necessarily the best one! If you find a move the
-        engine rates above mine, that counts too. Reveal what I was
-        thinking first, or guess straight away. Afterwards you&apos;ll see my own self-criticism or
+        engine rates as well as mine, or better, that counts too. Reveal what I was
+        thinking first, or guess straight away — or skip a move. Every move is scored. Afterwards you&apos;ll see my own self-criticism or
         praise from when I reviewed the moment with an engine — and sometimes AI commentary too,
         depending on whether it was any good.
       </p>
+      <ScoreLegend />
 
       {/* Sticky progress chip — at the top-right, or beside the main column on
           very wide screens, where the margin is wide enough to hold it without
@@ -1867,6 +2002,12 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
           <span className="text-base font-semibold tabular-nums text-purple-700 dark:text-purple-300">
             {doneCount}/{totalPuzzles}
           </span>
+          <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 border-l border-gray-300 dark:border-gray-600 pl-2">
+            Score
+          </span>
+          <span data-score-total className="text-base font-semibold tabular-nums text-purple-700 dark:text-purple-300">
+            {formatPoints(scoreSummary.total)}
+          </span>
         </div>
       )}
 
@@ -1883,6 +2024,7 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
               guessPly={it.guessPly}
               state={state}
               onResolved={() => setDoneCount(c => c + 1)}
+              onScore={score => recordScore(i, score)}
               contentRef={el => { contentRefs.current[i] = el; }}
             />
           );
@@ -1899,6 +2041,22 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
           userColor={userColor}
           locked={!allDone && !revealEnd}
           onReachedEnd={() => setTailDone(true)}
+        />
+      )}
+
+      {/* The score, once the game is played through (or skipped to the end). A move
+          still locked keeps its name masked, so the card doesn't give it away. */}
+      {summaryUnlocked && (
+        <ScoreCard
+          summary={scoreSummary}
+          rows={items.flatMap<ScoreRow>((it, i) => {
+            if (it.guessPly === null) return [];
+            const score = scores[i] ?? null;
+            return [{
+              header: score && score.outcome !== 'open' ? it.section.header : maskedHeader(it.section),
+              score,
+            }];
+          })}
         />
       )}
 

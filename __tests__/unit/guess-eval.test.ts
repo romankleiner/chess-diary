@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { compareGuess, earnsMoveOn, fetchGuessEval, playerPawns, rateGuess, topLinePawns } from '@/lib/guess-eval';
+import { compareGuess, earnsMoveOn, fetchGuessEval, playerPawns, rateEngineBest, rateGuess, topLinePawns } from '@/lib/guess-eval';
 import { formatPawns } from '@/lib/position-eval';
 import type { PositionEval } from '@/lib/position-eval';
 
@@ -342,8 +342,11 @@ describe('earnsMoveOn', () => {
     expect(earnsMoveOn({ ...rated('better'), ...open })).toBe(true);
   });
 
-  it('does not move on for a guess that only ties or loses to my move', () => {
-    expect(earnsMoveOn({ ...rated('same'), ...open })).toBe(false);
+  it('moves on for a guess as good as my move, which is as good as finding it', () => {
+    expect(earnsMoveOn({ ...rated('same'), ...open })).toBe(true);
+  });
+
+  it('does not move on for a guess worse than my move', () => {
     expect(earnsMoveOn({ ...rated('worse'), ...open })).toBe(false);
   });
 
@@ -361,18 +364,53 @@ describe('earnsMoveOn', () => {
   });
 
   it('needs every condition at once', () => {
-    const better = rated('better');
-    for (const flag of ['isEngineBest', 'alreadySolved'] as const) {
-      expect(earnsMoveOn({ ...better, ...open, [flag]: true })).toBe(false);
+    for (const result of [rated('better'), rated('same')]) {
+      for (const flag of ['isEngineBest', 'alreadySolved'] as const) {
+        expect(earnsMoveOn({ ...result, ...open, [flag]: true })).toBe(false);
+      }
+      expect(earnsMoveOn({ ...result, ...open, stillOnPage: false })).toBe(false);
+      expect(earnsMoveOn({ ...result, ...open })).toBe(true);
     }
-    expect(earnsMoveOn({ ...better, ...open, stillOnPage: false })).toBe(false);
-    expect(earnsMoveOn({ ...better, ...open })).toBe(true);
   });
 
   it('works with a real comparison', () => {
     const c = compareGuess({ guess: ev(0.9), mine: 0.3, top: 0.6, color: 'white' });
     expect(earnsMoveOn({ comparison: c, ...open })).toBe(true);
-    expect(earnsMoveOn({ comparison: compareGuess({ guess: ev(0.35), mine: 0.3, top: 0.6, color: 'white' }), ...open })).toBe(false);
+    // within a tenth of mine either way is the same move as far as the engine can tell
+    expect(earnsMoveOn({ comparison: compareGuess({ guess: ev(0.35), mine: 0.3, top: 0.6, color: 'white' }), ...open })).toBe(true);
+    expect(earnsMoveOn({ comparison: compareGuess({ guess: ev(0.25), mine: 0.3, top: 0.6, color: 'white' }), ...open })).toBe(true);
+    expect(earnsMoveOn({ comparison: compareGuess({ guess: ev(0.1), mine: 0.3, top: 0.6, color: 'white' }), ...open })).toBe(false);
+  });
+});
+
+// ─── the engine's own top move ────────────────────────────────────────────────
+
+describe('rateEngineBest', () => {
+  // I played a move worth +0.8 for White that fell 0.4 short of the top line (+1.2).
+  const engine = { evaluation: 0.8, centipawnLoss: 40, depth: 14 };
+
+  it('rates the top move at once, at the top line’s evaluation', () => {
+    const { guessEval, comparison } = rateEngineBest({ engine, color: 'white' });
+    expect(guessEval).toMatchObject({ mate: null, depth: null });
+    expect(guessEval.pawns).toBeCloseTo(1.2, 9);
+    expect(comparison).toMatchObject({ guess: 1.2, mine: 0.8, top: 1.2, lossVsTop: 0, vsMine: 'better' });
+  });
+
+  it('gives what rateGuess gives for the engine’s own move, without a request', async () => {
+    const fetchFn = okReply({});
+    const viaRateGuess = await rateGuess({ fenAfterGuess: START_FEN, isEngineBest: true, engine, color: 'white', fetchFn });
+    expect(viaRateGuess).toEqual(rateEngineBest({ engine, color: 'white' }));
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('works from Black’s side', () => {
+    const { comparison } = rateEngineBest({ engine: { evaluation: -0.8, centipawnLoss: 40 }, color: 'black' });
+    expect(comparison).toMatchObject({ guess: 1.2, mine: 0.8, top: 1.2, vsMine: 'better' });
+  });
+
+  it('is no better than mine when my move fell short by no more than the engine’s noise', () => {
+    const { comparison } = rateEngineBest({ engine: { evaluation: 0.8, centipawnLoss: 8 }, color: 'white' });
+    expect(comparison.vsMine).toBe('same');
   });
 });
 

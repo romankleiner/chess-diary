@@ -458,13 +458,20 @@ describe('the walkthrough card layout', () => {
     expect(html).not.toContain('lg:right-10');
   });
 
-  it('tells readers that a move the engine rates above mine counts too', () => {
+  it('tells readers that a move the engine rates as well as mine, or better, counts too', () => {
     const intro = html.match(/<p class="max-w-3xl[^"]*">(This post follows[\s\S]*?)<\/p>/)![1];
 
     expect(intro).toContain('If you find a move the');
-    expect(intro).toContain('engine rates above mine, that counts too.');
+    expect(intro).toContain('engine rates as well as mine, or better, that counts too.');
     // …and still says the original thing about guessing
     expect(intro).toContain('isn&#x27;t necessarily the best one');
+  });
+
+  it('tells readers they can skip a move, and that every move is scored', () => {
+    const intro = html.match(/<p class="max-w-3xl[^"]*">(This post follows[\s\S]*?)<\/p>/)![1];
+
+    expect(intro).toContain('or skip a move');
+    expect(intro).toContain('Every move is scored.');
   });
 
   it('keeps running text a readable width on a wide page', () => {

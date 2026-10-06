@@ -122,11 +122,13 @@ export function compareGuess({ guess, mine, top, color }: {
 
 /**
  * Whether a rated guess earns the move on, as if the reader had found mine: it
- * must beat my move beyond the engine's noise. A guess is rated when the engine
- * answers, which can be after the reader has done something else, so the answer
- * only counts while the move is still open (solving it unlocks the next one,
- * which must happen once) and its card is still on the page. The engine's own
- * top move is accepted separately, at once, so it is left out here.
+ * must be at least as good as my move, to within the engine's noise (a guess
+ * that only ties mine counts, one that beats it counts for more). A guess is
+ * rated when the engine answers, which can be after the reader has done
+ * something else, so the answer only counts while the move is still open
+ * (solving it unlocks the next one, which must happen once) and its card is
+ * still on the page. The engine's own top move is accepted separately, at once,
+ * so it is left out here.
  */
 export function earnsMoveOn({ comparison, isEngineBest, alreadySolved, stillOnPage }: {
   comparison: Pick<GuessComparison, 'vsMine'>;
@@ -134,7 +136,7 @@ export function earnsMoveOn({ comparison, isEngineBest, alreadySolved, stillOnPa
   alreadySolved: boolean;
   stillOnPage: boolean;
 }): boolean {
-  return comparison.vsMine === 'better' && !isEngineBest && !alreadySolved && stillOnPage;
+  return comparison.vsMine !== 'worse' && !isEngineBest && !alreadySolved && stillOnPage;
 }
 
 /** What the blog stores about my move's engine check, as far as rating a guess needs it. */
@@ -151,11 +153,25 @@ export interface GuessRating {
 }
 
 /**
+ * Rate a guess that IS the engine's top move. There is nothing to ask the
+ * engine: the evaluation after it is the top line's, worked out from my move's.
+ * So this answers at once, which lets the reader be scored on the spot.
+ */
+export function rateEngineBest({ engine, color }: {
+  engine: GuessBaseline;
+  color: PlayerColor;
+}): GuessRating {
+  const top = topLinePawns(engine, color);
+  const guessEval: PositionEval = { pawns: top, mate: null, depth: null };
+  return { guessEval, comparison: compareGuess({ guess: guessEval, mine: engine.evaluation, top, color }) };
+}
+
+/**
  * Rate one guess against my move and the engine's top line.
  *
- * When the guess IS the engine's top move there is nothing to ask: its
- * evaluation is the top line's. Anything else is evaluated live, as deeply as
- * the stored analysis was run so the numbers are comparable.
+ * When the guess IS the engine's top move there is nothing to ask (see
+ * rateEngineBest). Anything else is evaluated live, as deeply as the stored
+ * analysis was run so the numbers are comparable.
  */
 export async function rateGuess({ fenAfterGuess, isEngineBest, engine, color, fetchFn }: {
   fenAfterGuess: string;
@@ -164,10 +180,9 @@ export async function rateGuess({ fenAfterGuess, isEngineBest, engine, color, fe
   color: PlayerColor;
   fetchFn?: typeof fetch;
 }): Promise<GuessRating> {
+  if (isEngineBest) return rateEngineBest({ engine, color });
   const top = topLinePawns(engine, color);
-  const guessEval: PositionEval = isEngineBest
-    ? { pawns: top, mate: null, depth: null }
-    : await fetchGuessEval(fenAfterGuess, engine.depth, fetchFn);
+  const guessEval = await fetchGuessEval(fenAfterGuess, engine.depth, fetchFn);
   return { guessEval, comparison: compareGuess({ guess: guessEval, mine: engine.evaluation, top, color }) };
 }
 
