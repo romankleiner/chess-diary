@@ -3,24 +3,84 @@
  * Extracted from route files so they can be unit-tested without mocks.
  */
 
+// ─── Accuracy ─────────────────────────────────────────────────────────────────
+//
+// A move's accuracy falls from 100 as it gives away more centipawns, and a
+// game's accuracy is the plain average over the player's moves. Chess.com's own
+// formula is not published, so this one is fitted to its figures: the constants
+// below were chosen on 144 sides of 72 of the author's real games that have both
+// this app's analysis and the accuracy Chess.com published for them (its public
+// game archive carries it). On those games it lands within 2.1 points on
+// average and is unbiased overall (the old formula was 8.7 points too high on the
+// same games: 98.4% where Chess.com said 89.7%). Fitted on one half of the games
+// and tested on the other, the error was about 2.2 points. Three findings
+// shaped it:
+//
+//  - Chess.com tracks the average centipawn LOSS, not the drop in win
+//    probability (rank correlation -0.83 against -0.64). The loss already has
+//    the position built in: normalizeCpLoss caps it where a position is lopsided.
+//  - Small losses cost almost nothing and large ones a great deal, hence a shape
+//    steeper than a plain exponential (the exponent below is above 1).
+//  - Opening-book moves count as perfect rather than being left out of the
+//    average; leaving them out fitted worse.
+//
+// It was calibrated on analyses run at depth 15-18, so a much shallower
+// analysis, whose losses are noisier, will read somewhat lower.
+
+/** Centipawns a move can lose before its accuracy has fallen to 100/e (about 37%). */
+export const ACCURACY_SCALE_CP = 100;
+/** Above 1: the first few centipawns are nearly free, larger losses fall away fast. */
+export const ACCURACY_SHAPE = 1.3;
+
+/** One move's accuracy, 0-100, from the centipawns it gave away. */
+export function moveAccuracy(centipawnLoss: number): number {
+  if (!(centipawnLoss > 0)) return 100;
+  return 100 * Math.exp(-Math.pow(centipawnLoss / ACCURACY_SCALE_CP, ACCURACY_SHAPE));
+}
+
 /**
- * Calculate accuracy from an array of centipawn losses.
- * Uses the same win-percentage formula as chess.com.
- * Returns a value in [0, 100] rounded to 1 decimal place.
+ * A game's accuracy from the centipawn loss of each of one player's moves,
+ * opening-book moves included (they lose nothing). Returns a value in [0, 100]
+ * rounded to 1 decimal place; 100 when there are no moves.
  */
 export function calculateAccuracy(centipawnLosses: number[]): number {
-  if (centipawnLosses.length === 0) return 100;
+  const losses = centipawnLosses.filter(Number.isFinite);
+  if (losses.length === 0) return 100;
 
-  let totalAccuracy = 0;
+  const average = losses.reduce((sum, loss) => sum + moveAccuracy(loss), 0) / losses.length;
+  return Math.max(0, Math.min(100, Math.round(average * 10) / 10));
+}
 
-  for (const loss of centipawnLosses) {
-    const winPercentageLost = 50 * (2 / (1 + Math.exp(0.00368208 * loss)) - 1);
-    const moveAccuracy = 100 - Math.abs(winPercentageLost);
-    totalAccuracy += moveAccuracy;
-  }
+interface StoredMoveLoss {
+  color?: string;
+  centipawnLoss?: unknown;
+}
 
-  const accuracy = totalAccuracy / centipawnLosses.length;
-  return Math.max(0, Math.min(100, Math.round(accuracy * 10) / 10));
+/** One player's accuracy from the moves of a stored analysis, or null if none has a loss. */
+export function accuracyFromMoves(moves: unknown, color: 'white' | 'black'): number | null {
+  if (!Array.isArray(moves)) return null;
+  const losses = (moves as StoredMoveLoss[])
+    .filter(move => move?.color === color && typeof move.centipawnLoss === 'number')
+    .map(move => move.centipawnLoss as number);
+  return losses.length > 0 ? calculateAccuracy(losses) : null;
+}
+
+/**
+ * The analysis with its accuracy worked out from its moves by the current
+ * formula, whatever formula it was saved under. Accuracy is derived data: the
+ * moves are what was measured, so a stored figure can only go stale. A side with
+ * no usable moves keeps whatever was stored. Returns a copy; the input is not
+ * changed.
+ */
+export function withCurrentAccuracy<T extends { moves?: unknown; whiteAccuracy?: unknown; blackAccuracy?: unknown }>(
+  analysis: T | null | undefined,
+): (T & { whiteAccuracy: unknown; blackAccuracy: unknown }) | null {
+  if (!analysis) return null;
+  return {
+    ...analysis,
+    whiteAccuracy: accuracyFromMoves(analysis.moves, 'white') ?? analysis.whiteAccuracy,
+    blackAccuracy: accuracyFromMoves(analysis.moves, 'black') ?? analysis.blackAccuracy,
+  };
 }
 
 /**

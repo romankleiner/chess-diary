@@ -1,6 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { thoughtEntry, moveEntry } from '../helpers/fixtures';
+import { thoughtEntry, moveEntry, summaryEntry } from '../helpers/fixtures';
 
 vi.mock('@/lib/db', () => ({
   getJournal: vi.fn(),
@@ -16,9 +16,16 @@ vi.mock('@/lib/review-eval', async importOriginal => {
   return { ...actual, addMissingReviewEvals: vi.fn(actual.addMissingReviewEvals) };
 });
 
+// The real function, wrapped so one test can make it throw
+vi.mock('@/lib/summary-accuracy', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/summary-accuracy')>();
+  return { ...actual, refreshSummaryAccuracy: vi.fn(actual.refreshSummaryAccuracy) };
+});
+
 import { GET, POST, DELETE } from '@/app/api/journal/route';
 import { getJournal, saveJournalEntry, deleteJournalEntry, getGame, getAnalysis } from '@/lib/db';
 import { addMissingReviewEvals } from '@/lib/review-eval';
+import { refreshSummaryAccuracy } from '@/lib/summary-accuracy';
 import { Chess } from 'chess.js';
 
 const mockGetJournal = vi.mocked(getJournal);
@@ -221,6 +228,121 @@ describe('GET /api/journal — post-game review evals', () => {
 
     expect(mockSaveEntry).not.toHaveBeenCalled();
     expect(mockDeleteEntry).not.toHaveBeenCalled();
+  });
+});
+
+// ─── GET — the accuracy on post-game summaries ────────────────────────────────
+//
+// A summary saved its accuracy when it was written, under whatever formula was in
+// use then. The journal shows the analysis's current figure for the author's side.
+// (summaryEntry: the author had White, saved 87.5%.)
+
+describe('GET /api/journal — accuracy on post-game summaries', () => {
+  const get = async (url = 'http://localhost/api/journal') => (await (await GET(new NextRequest(url))).json()).entries;
+  const accuracyOf = (e: any) => e.postGameSummary.statistics.accuracy;
+
+  it('shows the analysis’s current accuracy for the author’s side, not the one saved', async () => {
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetGame.mockResolvedValue({ id: 'game-111', pgn: '1. e4 e5' });
+    mockGetAnalysis.mockResolvedValue({ whiteAccuracy: 91.2, blackAccuracy: 70.1, moves: [] });
+
+    const [entry] = await get();
+
+    expect(accuracyOf(entry)).toBe(91.2);
+  });
+
+  it('keeps the other statistics and the rest of the summary as saved', async () => {
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetGame.mockResolvedValue({ id: 'game-111', pgn: '1. e4 e5' });
+    mockGetAnalysis.mockResolvedValue({ whiteAccuracy: 91.2, blackAccuracy: 70.1, moves: [] });
+
+    const [entry] = await get();
+
+    expect(entry.postGameSummary.statistics).toEqual({ ...summaryEntry.postGameSummary!.statistics, accuracy: 91.2 });
+    expect(entry.postGameSummary.reflections).toEqual(summaryEntry.postGameSummary!.reflections);
+    expect(entry.gameSnapshot).toEqual(summaryEntry.gameSnapshot);
+  });
+
+  it('still refreshes it when the game record itself is missing but its analysis is there', async () => {
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetGame.mockResolvedValue(null);
+    mockGetAnalysis.mockResolvedValue({ whiteAccuracy: 91.2, blackAccuracy: 70.1, moves: [] });
+
+    expect(accuracyOf((await get())[0])).toBe(91.2);
+  });
+
+  it('keeps the saved accuracy when the game has not been analysed', async () => {
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+
+    expect(accuracyOf((await get())[0])).toBe(87.5);
+  });
+
+  it('reads the game once when it has both a review needing an eval and a summary', async () => {
+    const PGN = '1. e4 e5 2. Nf3 Nc6';
+    const c = new Chess(); c.loadPgn(PGN);
+    const plies = c.history({ verbose: true });
+    const review = {
+      id: 5, date: '2026-03-10', gameId: 'game-111', entryType: 'move', content: 'x', timestamp: '2026-03-10T10:00:00.000Z',
+      fen: plies[2].before, postReview: { content: 'Looking back', timestamp: 't', type: 'manual' },
+    };
+    mockGetJournal.mockResolvedValue([review, summaryEntry]);
+    mockGetGame.mockResolvedValue({ id: 'game-111', pgn: PGN });
+    mockGetAnalysis.mockResolvedValue({
+      whiteAccuracy: 91.2, blackAccuracy: 70.1,
+      moves: plies.map((m, i) => ({ moveNumber: Math.floor(i / 2) + 1, color: i % 2 ? 'black' : 'white', move: m.san, evaluation: i / 4 })),
+    });
+
+    const entries = await get();
+
+    expect(mockGetGame).toHaveBeenCalledTimes(1);
+    expect(mockGetAnalysis).toHaveBeenCalledTimes(1);
+    expect(entries[0].postReview.evalAfter).toBe(0.5); // the review got its eval…
+    expect(accuracyOf(entries[1])).toBe(91.2);          // …and the summary its accuracy
+  });
+
+  it('does not read any game when no summary or review on the page needs one', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry, moveEntry]);
+
+    await get();
+
+    expect(mockGetGame).not.toHaveBeenCalled();
+    expect(mockGetAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('still returns the journal, as saved, if refreshing the accuracy goes wrong', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(refreshSummaryAccuracy).mockRejectedValueOnce(new Error('something unforeseen'));
+    mockGetJournal.mockResolvedValue([summaryEntry, thoughtEntry]);
+
+    const res = await GET(new NextRequest('http://localhost/api/journal'));
+    const { entries } = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(entries).toHaveLength(2);
+    expect(accuracyOf(entries[0])).toBe(87.5);
+    expect(quiet).toHaveBeenCalledWith('[JOURNAL] Could not refresh summary accuracy:', 'something unforeseen');
+    quiet.mockRestore();
+  });
+
+  it('does not let a failure in the review evals stop the accuracy being refreshed', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(addMissingReviewEvals).mockRejectedValueOnce(new Error('evals broke'));
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetGame.mockResolvedValue({ id: 'game-111', pgn: '1. e4 e5' });
+    mockGetAnalysis.mockResolvedValue({ whiteAccuracy: 91.2, blackAccuracy: 70.1, moves: [] });
+
+    expect(accuracyOf((await get())[0])).toBe(91.2);
+    quiet.mockRestore();
+  });
+
+  it('never writes anything back to the journal', async () => {
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetGame.mockResolvedValue({ id: 'game-111', pgn: '1. e4 e5' });
+    mockGetAnalysis.mockResolvedValue({ whiteAccuracy: 91.2, blackAccuracy: 70.1, moves: [] });
+
+    await get();
+
+    expect(mockSaveEntry).not.toHaveBeenCalled();
   });
 });
 

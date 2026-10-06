@@ -1,5 +1,6 @@
 import Redis from 'ioredis';
 import { auth } from '@clerk/nextjs/server';
+import { withCurrentAccuracy } from './analysis-utils';
 
 export interface DatabaseData {
   games: Record<string, any>;
@@ -149,7 +150,9 @@ export async function getAnalysis(gameId: string, userId?: string): Promise<any 
   const uid = userId || await getUserId();
   const client = getRedisClient();
   const data = await client.hget(`chess-diary:${uid}:analyses`, gameId);
-  return data ? JSON.parse(data) : null;
+  // Accuracy is derived from the moves, so it is worked out here rather than trusted from
+  // storage: an analysis saved under an older formula reads as the current one.
+  return data ? withCurrentAccuracy(JSON.parse(data)) : null;
 }
 
 export async function saveAnalysis(gameId: string, analysis: any, userId?: string): Promise<void> {
@@ -164,6 +167,8 @@ export async function deleteAnalysis(gameId: string, userId?: string): Promise<v
   await client.hdel(`chess-diary:${uid}:analyses`, gameId);
 }
 
+// Raw, as stored: this feeds getDb, and so backups, which should hold what is saved.
+// getAnalysis (one game) is the one that works the accuracy out.
 export async function getAnalyses(userId?: string): Promise<Record<string, any>> {
   const uid = userId || await getUserId();
   const client = getRedisClient();

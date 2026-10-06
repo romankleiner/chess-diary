@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getJournal, getGames, saveJournalEntry } from '@/lib/db';
+import { getJournal, getGames, getAnalysis, saveJournalEntry } from '@/lib/db';
+import { refreshSummaryAccuracy } from '@/lib/summary-accuracy';
 
 export const maxDuration = 60; // Vercel Pro allows up to 60s — large exports need the room
 
@@ -25,13 +26,22 @@ export async function GET(request: NextRequest) {
     ]);
 
     // Get all entries within date range, sorted chronologically (oldest first)
-    const entries = journalEntries
+    const inRange = journalEntries
       .filter(e => e.date >= startDate && e.date <= endDate)
       .sort((a, b) => {
         const dateCompare = a.date.localeCompare(b.date);
         if (dateCompare !== 0) return dateCompare;
         return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
       });
+
+    // A post-game summary saved its accuracy when it was written, under whatever formula
+    // was in use then. Show the analysis's current figure, as the journal page does.
+    let entries = inRange;
+    try {
+      entries = await refreshSummaryAccuracy(inRange, gameId => getAnalysis(gameId));
+    } catch (error) {
+      console.error('[EXPORT] Could not refresh summary accuracy:', error instanceof Error ? error.message : error);
+    }
 
     // Group by date
     const groupedByDate: Record<string, any[]> = {};

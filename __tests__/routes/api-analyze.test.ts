@@ -316,7 +316,7 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
   // ── Opening book ────────────────────────────────────────────────────────────
 
   describe('opening book moves', () => {
-    it('are labelled "book" with zero loss, keep their evaluation, and are left out of accuracy', async () => {
+    it('are labelled "book" with zero loss, keep their evaluation, and count as perfect moves in accuracy', async () => {
       getGame.mockResolvedValue(gameWithPgn);
       queueChessApiResponses(); // White's e4 would be a 200 cp mistake if it counted
       isBookMove.mockImplementation(async (_fen: string, uci: string) => uci === 'e2e4');
@@ -332,6 +332,30 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
 
       // White's only move is a book move → nothing counts against White's accuracy.
       expect(analysis.whiteAccuracy).toBe(100);
+    });
+
+    it('count in the average as perfect moves: a book move softens a later slip rather than being ignored', async () => {
+      // 1. e4 e5 2. Nf3 Nc6. White: e4 (book, would have been a 200 cp loss) then Nf3 losing 100 cp.
+      getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' });
+      fetchMock
+        .mockResolvedValueOnce(makeEval(0.0, 'd2d4'))    // before e4
+        .mockResolvedValueOnce(makeEval(-2.0, 'e7e5'))   // after e4
+        .mockResolvedValueOnce(makeEval(-2.0, 'g8f6'))   // before e5
+        .mockResolvedValueOnce(makeEval(-2.0, 'd2d4'))   // after e5   (Black loses nothing)
+        .mockResolvedValueOnce(makeEval(-2.0, 'd2d4'))   // before Nf3
+        .mockResolvedValueOnce(makeEval(-3.0, 'b8c6'))   // after Nf3  (White loses 100 cp)
+        .mockResolvedValueOnce(makeEval(-3.0, 'g8f6'))   // before Nc6
+        .mockResolvedValueOnce(makeEval(-3.0, 'd2d4'));  // after Nc6
+      isBookMove.mockImplementation(async (_fen: string, uci: string) => uci === 'e2e4');
+
+      const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+      const [book, slip] = analysis.moves.filter((m: { color: string }) => m.color === 'white');
+
+      expect(book.moveQuality).toBe('book');
+      expect(slip.centipawnLoss).toBe(100);
+      // mean of a perfect move (100) and a 100 cp slip (36.8), not the slip on its own
+      expect(analysis.whiteAccuracy).toBe(68.4);
+      expect(analysis.blackAccuracy).toBe(100);
     });
 
     it('do not shield later moves: a non-book mistake still lowers accuracy', async () => {
@@ -489,7 +513,7 @@ describe('POST /api/games/analyze — local Stockfish path', () => {
     }
   });
 
-  it('labels book moves "book" with zero loss and leaves them out of accuracy', async () => {
+  it('labels book moves "book" with zero loss and counts them as perfect moves in accuracy', async () => {
     getGame.mockResolvedValue(gameWithPgn);
     isBookMove.mockResolvedValue(true);
 
@@ -499,8 +523,34 @@ describe('POST /api/games/analyze — local Stockfish path', () => {
       expect(move.moveQuality).toBe('book');
       expect(move.centipawnLoss).toBe(0);
     }
-    // Nothing but book moves → no losses counted for either side.
+    // Nothing but book moves → every move is perfect.
     expect(analysis.whiteAccuracy).toBe(100);
+    expect(analysis.blackAccuracy).toBe(100);
+  });
+
+  it('counts a book move in the average as a perfect move, softening a later slip', async () => {
+    // 1. e4 e5 2. Nf3 Nc6, scores as the engine reports them (side to move's point of view).
+    // White: e4 (book, would have been a 200 cp loss), then Nf3 losing 100 cp.
+    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' });
+    isBookMove.mockImplementation(async (_fen: string, uci: string) => uci === 'e2e4');
+    const score = (value: number) => ({ lines: [{ score: { type: 'cp', value }, pv: 'd2d4' }], bestmove: 'd2d4' });
+    mockAnalyze.mockReset();
+    mockAnalyze
+      .mockResolvedValueOnce(score(0))      // before e4        (White to move)
+      .mockResolvedValueOnce(score(200))    // after e4         (Black to move: Black +200)
+      .mockResolvedValueOnce(score(200))    // before e5        (Black to move)
+      .mockResolvedValueOnce(score(-200))   // after e5         (White to move: White -200)
+      .mockResolvedValueOnce(score(-200))   // before Nf3
+      .mockResolvedValueOnce(score(300))    // after Nf3        (Black +300: White lost 100 cp)
+      .mockResolvedValueOnce(score(300))    // before Nc6
+      .mockResolvedValueOnce(score(-300));  // after Nc6
+
+    const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+    const [book, slip] = analysis.moves.filter((m: { color: string }) => m.color === 'white');
+
+    expect(book.moveQuality).toBe('book');
+    expect(slip.centipawnLoss).toBe(100);
+    expect(analysis.whiteAccuracy).toBe(68.4);
     expect(analysis.blackAccuracy).toBe(100);
   });
 

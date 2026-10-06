@@ -83,7 +83,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 
 | Method | Route | Description |
 |---|---|---|
-| GET/POST | `/api/journal` | List entries (filtered by date or game) / create entry. A post-game review saved without an eval gets one worked out from the game's analysis on the way out (see `lib/review-eval.ts`); nothing is written back |
+| GET/POST | `/api/journal` | List entries (filtered by date or game) / create entry. On the way out, a post-game review saved without an eval gets one worked out from the game's analysis (`lib/review-eval.ts`), and a post-game summary shows the analysis's current accuracy rather than the figure it saved (`lib/summary-accuracy.ts`); nothing is written back |
 | GET/PUT/DELETE | `/api/journal/[id]` | Read, update, or delete a single entry |
 | GET | `/api/journal/export` | Export entries as JSON or .docx Word document |
 | POST | `/api/journal/post-game-summary` | Create a post-game reflection entry |
@@ -135,10 +135,20 @@ Key exports: `fetchPlayerGames(username, year, month)`, `fetchActiveGames(userna
 
 ### `lib/analysis-utils.ts` — Engine Analysis Utilities
 Pure functions for processing engine output:
-- `calculateAccuracy(winPercentageLoss)` — chess.com win-percentage accuracy formula
+- `calculateAccuracy(centipawnLosses)` / `moveAccuracy(loss)` — a game's accuracy as the plain average of its moves' accuracies, each `100·exp(−(loss/100)^1.3)`, **book moves counted as perfect**. Fitted to Chess.com's own figures (see *Accuracy* below)
+- `accuracyFromMoves(moves, color)` / `withCurrentAccuracy(analysis)` — work an analysis's accuracy out from its moves, whatever formula it was saved under
 - `getMoveQuality(centipawnLoss, isBookMove)` — classifies moves as book / excellent / good / inaccuracy / mistake / blunder
 - `normalizeCpLoss(cp)` — handles mate-score ceiling artifacts
-- `summarizeAnalysis(analysis)` — both players' accuracy, average centipawn loss (book moves excluded, as in accuracy) and how many moves fall in each of `MOVE_QUALITIES` (book, excellent, good, inaccuracy, mistake, blunder — the legend on the game's analysis page). Feeds the blog's end-of-game engine review. There is no "brilliant" category: nothing in the analysis produces one
+- `summarizeAnalysis(analysis)` — both players' accuracy, average centipawn loss (book moves excluded) and how many moves fall in each of `MOVE_QUALITIES` (book, excellent, good, inaccuracy, mistake, blunder — the legend on the game's analysis page). Feeds the blog's end-of-game engine review. There is no "brilliant" category: nothing in the analysis produces one
+
+### Accuracy — how the percentage is worked out and kept current
+**The formula.** The old one (`100 − |win%(loss) − 50|`) ran a centipawn loss through a win-probability curve as if it were an evaluation, which made almost any loss look cheap: on the author's games it averaged 98.4% where Chess.com said 89.7%, and a 60-move game with a few inaccuracies read 99%. Chess.com's formula is not published, so the current one is **fitted to its figures**: its public game archive carries an `accuracies` field for reviewed games, and 74 of the author's analysed daily games had one (148 sides; 144 after setting aside two analyses from an older version with a units bug). Findings: Chess.com tracks the average centipawn **loss** (rank correlation −0.83), not the drop in win probability (−0.64; the loss already carries the position, because `normalizeCpLoss` caps it where a position is lopsided); small losses cost almost nothing and large ones a lot (exponent above 1); and opening-book moves count as perfect rather than being left out. With `ACCURACY_SCALE_CP = 100` and `ACCURACY_SHAPE = 1.3` the average miss is about 2.1 points (8.7 before), unbiased, with 89 of 144 sides within 2 points; fitted on half the games and tested on the other half it was about 2.2. A move losing 10 / 25 / 50 / 100 / 200 cp scores about 95 / 85 / 67 / 37 / 9. It was calibrated on depth 15–18 analyses, so a much shallower analysis (noisier losses) will read somewhat lower.
+
+**Kept current, not stored.** Accuracy is derived from an analysis's moves, so a saved figure can only go stale. `getAnalysis` (one game) works it out with `withCurrentAccuracy`, so the analysis page, the blog's engine review, new post-game summaries and the debug route all show the current formula even for games analysed long ago — nothing is rewritten and no re-analysis is needed. `getAnalyses` (the whole table, which feeds backups) stays raw. New analyses save the same figure, counting book moves as perfect in both the Vercel (batched) and local-Stockfish paths.
+
+**Saved summaries.** A post-game summary also copies the accuracy into its own statistics when written. `lib/summary-accuracy.ts` replaces that copy with the analysis's current figure for the author's side (the side the opponent didn't play, read from the summary's game snapshot — which also corrects the few summaries that had saved the opponent's figure) wherever summaries are read: `GET /api/journal` and the Word export. Nothing is written back; a summary whose side or analysis can't be determined keeps what it has.
+
+**Caveat.** Analyses made by an old version that stored pawns where centipawns belong (two of the 74 games turned up, with losses of 0–5 cp throughout) read as near-perfect whatever the formula; re-analysing such a game fixes it.
 
 ### `lib/analysis-prompt.ts` — Claude Prompt Builder
 Constructs the prompt sent to Claude for AI analysis of player thinking. Incorporates: position FEN, engine evaluation before/after, best move, principal variation, the player's recorded thought process, and game context. Adjusts wording when the move is in the opening book. An optional `PromptGrounding` argument adds the verified position facts, the engine line in SAN, and the `[[line: ...]]` marker rules described below.

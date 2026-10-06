@@ -219,23 +219,21 @@ async function analyzeGameChessApiBatched(
       const playerEvalAfter  = isWhiteMove ? evalAfterWhite  : -evalAfterWhite;
       cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter, playerEvalBefore);
 
-      // Book moves: force cpLoss = 0 and exclude from accuracy calculation.
-      // Evaluation is still stored normally so the eval chart has no gaps.
+      // Book moves: force cpLoss = 0. They still count in the accuracy, as moves that
+      // lost nothing. Evaluation is stored normally so the eval chart has no gaps.
       if (isBook) {
         cpLoss = 0;
-        console.log(`[CHESS-API] Move ${i + 1} (${move.san}) is a book move — eval stored, excluded from accuracy`);
+        console.log(`[CHESS-API] Move ${i + 1} (${move.san}) is a book move — eval stored, counted as a perfect move`);
       }
 
       // Store evaluation in pawn units for display
       const evalAfterPawns = Math.round(evalAfterWhite) / 100;
 
-      // Accuracy: only count non-book moves
-      if (!isBook) {
-        if (isWhiteMove) {
-          whiteLosses.push(cpLoss);
-        } else {
-          blackLosses.push(cpLoss);
-        }
+      // Accuracy counts every move, book moves as perfect ones (see calculateAccuracy)
+      if (isWhiteMove) {
+        whiteLosses.push(cpLoss);
+      } else {
+        blackLosses.push(cpLoss);
       }
 
       const moveNumber = Math.floor(i / 2) + 1;
@@ -380,22 +378,20 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
         const playerEvalAfter  = isWhiteMove ? evalAfter  : -evalAfter;
         cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter, playerEvalBefore);
 
-        // Book moves: force cpLoss = 0 and exclude from accuracy calculation.
-        // Evaluation is still stored normally so the eval chart has no gaps.
+        // Book moves: force cpLoss = 0. They still count in the accuracy, as moves that
+        // lost nothing. Evaluation is stored normally so the eval chart has no gaps.
         if (isBook) {
           cpLoss = 0;
-          console.log(`[STOCKFISH] Move ${i + 1} (${move.san}) is a book move — eval stored, excluded from accuracy`);
+          console.log(`[STOCKFISH] Move ${i + 1} (${move.san}) is a book move — eval stored, counted as a perfect move`);
         }
 
         const moveNumber = Math.floor(i / 2) + 1;
 
-        // Accuracy: only count non-book moves
-        if (!isBook) {
-          if (isWhiteMove) {
-            whiteLosses.push(cpLoss);
-          } else {
-            blackLosses.push(cpLoss);
-          }
+        // Accuracy counts every move, book moves as perfect ones (see calculateAccuracy)
+        if (isWhiteMove) {
+          whiteLosses.push(cpLoss);
+        } else {
+          blackLosses.push(cpLoss);
         }
 
         analyses.push({

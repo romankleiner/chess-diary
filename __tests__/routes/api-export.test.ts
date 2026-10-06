@@ -22,6 +22,7 @@ import { gameA, thoughtEntry, moveEntry, summaryEntry } from '../helpers/fixture
 vi.mock('@/lib/db', () => ({
   getJournal:  vi.fn(),
   getGames:    vi.fn(),
+  getAnalysis: vi.fn(),
   saveJournalEntry: vi.fn(),
 }));
 
@@ -33,10 +34,11 @@ const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
 
 import { GET } from '@/app/api/journal/export/route';
-import { getJournal, getGames, saveJournalEntry } from '@/lib/db';
+import { getJournal, getGames, getAnalysis, saveJournalEntry } from '@/lib/db';
 
 const mockGetJournal  = vi.mocked(getJournal);
 const mockGetGames    = vi.mocked(getGames);
+const mockGetAnalysis = vi.mocked(getAnalysis);
 const mockSaveEntry   = vi.mocked(saveJournalEntry);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -90,6 +92,7 @@ beforeEach(() => {
   fetchMock.mockResolvedValue({ ok: false, text: async () => 'not found' });
   mockGetJournal.mockResolvedValue([]);
   mockGetGames.mockResolvedValue({});
+  mockGetAnalysis.mockResolvedValue(null);
   mockSaveEntry.mockResolvedValue(undefined);
 });
 
@@ -151,6 +154,73 @@ describe('GET /api/journal/export — JSON format', () => {
     expect(groupedByDate).toHaveLength(1);
     expect(groupedByDate[0].date).toBe('2026-03-10');
     expect(groupedByDate[0].entries).toHaveLength(2);
+  });
+});
+
+// ─── Accuracy on post-game summaries ──────────────────────────────────────────
+//
+// A summary saved its accuracy under whatever formula was in use when it was written;
+// the export shows the analysis's current figure for the author's side instead.
+// (summaryEntry: the author had White, saved 87.5%.)
+
+describe('GET /api/journal/export — accuracy on post-game summaries', () => {
+  const range = { startDate: '2026-03-10', endDate: '2026-03-10' };
+  const statsOf = async () => {
+    const { entries } = await (await GET(makeReq(range))).json();
+    return entries.find((e: any) => e.entryType === 'post_game_summary').postGameSummary.statistics;
+  };
+
+  it('shows the analysis’s current accuracy for the author’s side, not the saved one', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry, summaryEntry]);
+    mockGetAnalysis.mockResolvedValue({ whiteAccuracy: 91.2, blackAccuracy: 70.1 });
+
+    expect((await statsOf()).accuracy).toBe(91.2);
+    expect(mockGetAnalysis).toHaveBeenCalledWith('game-111');
+  });
+
+  it('keeps the other statistics as they were saved', async () => {
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetAnalysis.mockResolvedValue({ whiteAccuracy: 91.2, blackAccuracy: 70.1 });
+
+    expect(await statsOf()).toEqual({ ...summaryEntry.postGameSummary!.statistics, accuracy: 91.2 });
+  });
+
+  it('keeps the saved accuracy when the game has no analysis', async () => {
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetAnalysis.mockResolvedValue(null);
+
+    expect((await statsOf()).accuracy).toBe(87.5);
+  });
+
+  it('keeps the saved accuracy, and still exports, when the analysis cannot be read', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetAnalysis.mockRejectedValue(new Error('redis went away'));
+
+    const res = await GET(makeReq(range));
+
+    expect(res.status).toBe(200);
+    expect((await statsOf()).accuracy).toBe(87.5);
+    quiet.mockRestore();
+  });
+
+  it('does not read any analysis when no summary is in the export', async () => {
+    mockGetJournal.mockResolvedValue([thoughtEntry, moveEntry]);
+
+    await GET(makeReq(range));
+
+    expect(mockGetAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('still produces a Word document when the analysis cannot be read', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    mockGetAnalysis.mockRejectedValue(new Error('redis went away'));
+
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+
+    expect(doneOf(msgs)).toBeDefined();
+    quiet.mockRestore();
   });
 });
 
