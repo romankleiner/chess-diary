@@ -103,9 +103,37 @@ function Notation({ children }: { children: string }) {
   );
 }
 
-function renderNotation(text: string): React.ReactNode {
-  return splitNotation(text).map((segment, i) =>
-    segment.notation ? <Notation key={i}>{segment.text}</Notation> : segment.text
+// The name of a line being calculated -- "(a)", "(a3)", "(iii)" -- is not a move,
+// so it is not set like one: indigo rather than slate, in the text's own face rather
+// than monospace, so the two read differently at a glance.
+function BranchLabel({ children }: { children: string }) {
+  return (
+    <span
+      data-branch-label
+      className="not-italic whitespace-nowrap rounded px-1.5 py-0.5 text-[0.85em] font-semibold bg-indigo-100 text-indigo-800 ring-1 ring-inset ring-indigo-300 dark:bg-indigo-900/60 dark:text-indigo-100 dark:ring-indigo-700"
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * How a stretch of text is read. `branchLabels` is for the author's own words only:
+ * there `(a3)` names the third sub-variation of variation a, while in the AI's text
+ * a lone `(e4)` really is the pawn.
+ */
+export interface ProseOptions {
+  branchLabels?: boolean;
+}
+
+/** The author's own words (their thinking, post-game review and summary), where branch labels are theirs. */
+export const AUTHOR_WORDS: ProseOptions = { branchLabels: true };
+
+function renderNotation(text: string, options: ProseOptions, startsLine: boolean): React.ReactNode {
+  return splitNotation(text, { ...options, startsLine }).map((segment, i) =>
+    segment.kind === 'move' ? <Notation key={i}>{segment.text}</Notation> :
+    segment.kind === 'branch' ? <BranchLabel key={i}>{segment.text}</BranchLabel> :
+    segment.text
   );
 }
 
@@ -114,7 +142,7 @@ function renderNotation(text: string): React.ReactNode {
 // inside one is never mistaken for chess notation. Only http(s) addresses are
 // ever linked (see lib/linkify.ts), and long ones wrap rather than push the
 // card wider than a phone.
-function renderTextSegments(text: string): React.ReactNode {
+function renderTextSegments(text: string, options: ProseOptions, startsLine: boolean): React.ReactNode {
   return splitLinks(text).map((segment, i) =>
     segment.href ? (
       <a
@@ -127,17 +155,19 @@ function renderTextSegments(text: string): React.ReactNode {
         {segment.text}
       </a>
     ) : (
-      <React.Fragment key={i}>{renderNotation(segment.text)}</React.Fragment>
+      // Only the piece that opens the text can open a line
+      <React.Fragment key={i}>{renderNotation(segment.text, options, startsLine && i === 0)}</React.Fragment>
     )
   );
 }
 
-export function renderInline(text: string): React.ReactNode {
+export function renderInline(text: string, options: ProseOptions = {}): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, i) =>
     part.startsWith('**') && part.endsWith('**')
-      ? <strong key={i}>{renderTextSegments(part.slice(2, -2))}</strong>
-      : <React.Fragment key={i}>{renderTextSegments(part)}</React.Fragment>
+      ? <strong key={i}>{renderTextSegments(part.slice(2, -2), options, false)}</strong>
+      // Only the first piece of a line starts it; what follows a bold phrase carries on
+      : <React.Fragment key={i}>{renderTextSegments(part, options, i === 0)}</React.Fragment>
   );
 }
 
@@ -147,7 +177,7 @@ export function renderInline(text: string): React.ReactNode {
 // markers and chess notation still work. Use this anywhere a journal entry or
 // AI summary is rendered, so the author's intended formatting survives.
 
-export function renderProse(text: string, paragraphClass?: string): React.ReactNode {
+export function renderProse(text: string, paragraphClass?: string, options: ProseOptions = {}): React.ReactNode {
   const cls = paragraphClass ?? '';
   const paragraphs = text.split(/\n{2,}/);
   return paragraphs.map((para, pi) => {
@@ -156,7 +186,7 @@ export function renderProse(text: string, paragraphClass?: string): React.ReactN
       <p key={pi} className={cls}>
         {lines.map((line, li) => (
           <React.Fragment key={li}>
-            {renderInline(line)}
+            {renderInline(line, options)}
             {li < lines.length - 1 && <br />}
           </React.Fragment>
         ))}
@@ -646,7 +676,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
               ) : undefined
             }
           >
-            {renderProse(section.thinking)}
+            {renderProse(section.thinking, undefined, AUTHOR_WORDS)}
           </ThinkingBlock>
         )}
 
@@ -681,7 +711,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
                     )}
                   </div>
                 )}
-                {section.postReview && renderProse(section.postReview)}
+                {section.postReview && renderProse(section.postReview, undefined, AUTHOR_WORDS)}
               </PostGameBlock>
             )}
           </>
@@ -894,7 +924,7 @@ export function SectionBody({ section, phase }: {
   const solved = phase === 'complete';
   return (
     <>
-      <ThinkingBlock>{renderProse(section.thinking)}</ThinkingBlock>
+      <ThinkingBlock>{renderProse(section.thinking, undefined, AUTHOR_WORDS)}</ThinkingBlock>
 
       {/* Engine eval + diff, shown as soon as the move is revealed */}
       {solved && section.engineEval && (
@@ -906,7 +936,7 @@ export function SectionBody({ section, phase }: {
       )}
 
       {solved && section.postReview && (
-        <PostGameBlock>{renderProse(section.postReview)}</PostGameBlock>
+        <PostGameBlock>{renderProse(section.postReview, undefined, AUTHOR_WORDS)}</PostGameBlock>
       )}
     </>
   );
@@ -1535,7 +1565,7 @@ export function GameDates({ startDate, endDate }: {
 
 // ─── Overall summary card ─────────────────────────────────────────────────────
 
-function SummaryCard({ summary }: { summary: string }) {
+export function SummaryCard({ summary }: { summary: string }) {
   return (
     <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
       <div className="bg-purple-50 dark:bg-purple-900/30 px-4 py-3 border-b border-purple-200 dark:border-purple-800">
@@ -1545,7 +1575,7 @@ function SummaryCard({ summary }: { summary: string }) {
       </div>
       {/* Capped so lines stay readable when the page is wide */}
       <div className="p-4 space-y-4 max-w-3xl text-base text-gray-800 dark:text-gray-200 leading-relaxed">
-        {renderProse(summary)}
+        {renderProse(summary, undefined, AUTHOR_WORDS)}
       </div>
     </div>
   );

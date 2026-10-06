@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { splitNotation } from '@/lib/notation';
 
 /** Just the pieces that were recognised as notation, in order. */
-const found = (text: string) => splitNotation(text).filter(s => s.notation).map(s => s.text);
+const found = (text: string) => splitNotation(text).filter(s => s.kind === 'move').map(s => s.text);
 
 describe('splitNotation — what it finds', () => {
   it("finds the author's own style: a Black move with its number, then White's reply", () => {
@@ -143,9 +143,9 @@ describe('splitNotation — the segments', () => {
 
   it('marks notation and words alternately', () => {
     expect(splitNotation('Try Nf3 now')).toEqual([
-      { text: 'Try ', notation: false },
-      { text: 'Nf3', notation: true },
-      { text: ' now', notation: false },
+      { text: 'Try ', kind: 'text' },
+      { text: 'Nf3', kind: 'move' },
+      { text: ' now', kind: 'text' },
     ]);
   });
 
@@ -160,7 +160,7 @@ describe('splitNotation — the segments', () => {
   });
 
   it('returns one plain segment when there is no notation', () => {
-    expect(splitNotation('just words')).toEqual([{ text: 'just words', notation: false }]);
+    expect(splitNotation('just words')).toEqual([{ text: 'just words', kind: 'text' }]);
   });
 
   it('can be called repeatedly with the same results (no state carried between calls)', () => {
