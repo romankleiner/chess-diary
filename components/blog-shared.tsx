@@ -1681,6 +1681,23 @@ function TailCard({ game, startPly, userColor, locked, onReachedEnd }: {
   );
 }
 
+// ─── Result badge ─────────────────────────────────────────────────────────────
+
+export function ResultBadge({ result }: { result: string | null }) {
+  if (!result) return null;
+  const styles: Record<string, string> = {
+    win:  'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300',
+    loss: 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300',
+    draw: 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300',
+  };
+  const style = styles[result] ?? styles.draw;
+  return (
+    <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${style}`}>
+      {result.charAt(0).toUpperCase() + result.slice(1)}
+    </span>
+  );
+}
+
 // ─── Game dates ───────────────────────────────────────────────────────────────
 // A daily game can run for days, so the day it began and the day it ended are
 // called out separately rather than as one date. Either may be unknown: older

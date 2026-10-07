@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { MoveSection, GameWalkthrough, GameDates } from '@/components/blog-shared';
+import { MoveSection, GameWalkthrough, GameDates, ResultBadge } from '@/components/blog-shared';
 import type { AnalysisSummary } from '@/lib/analysis-utils';
 
 interface GameMeta {
@@ -25,23 +26,6 @@ interface BlogData {
 }
 
 type Status = 'loading' | 'done' | 'error';
-
-// ─── Result badge ─────────────────────────────────────────────────────────────
-
-function ResultBadge({ result }: { result: string | null }) {
-  if (!result) return null;
-  const styles: Record<string, string> = {
-    win:  'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300',
-    loss: 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300',
-    draw: 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300',
-  };
-  const style = styles[result] ?? styles.draw;
-  return (
-    <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${style}`}>
-      {result.charAt(0).toUpperCase() + result.slice(1)}
-    </span>
-  );
-}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -96,6 +80,12 @@ export default function BlogPage() {
           >
             ♟ Chess Diary
           </a>
+          <Link
+            href="/blog"
+            className="text-sm font-medium text-purple-700 dark:text-purple-300 hover:underline"
+          >
+            ← All games
+          </Link>
         </div>
       </header>
 

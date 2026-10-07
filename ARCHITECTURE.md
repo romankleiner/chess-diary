@@ -4,7 +4,7 @@
 
 Chess Diary is a **Next.js 15 (App Router)** web application for daily-chess players. It lets users record their thinking during correspondence games on Chess.com, attach notes to specific positions, get AI-powered analysis of their thought process, and export their journal to a Word document.
 
-All data is private per authenticated user. There is no shared or public data.
+All data is private per authenticated user, with one exception: a game's blog the author has shared ("Share link"). A shared game's blog can be opened by anyone, and is listed in the public directory at `/blog`.
 
 ---
 
@@ -43,7 +43,7 @@ Next.js (Vercel)
   └── lib/*.ts                 ← Shared server-side modules
 ```
 
-Pages are React Client Components (`'use client'`) that call API routes via `fetch()`. No server-side props or server actions are used — the pattern is a classic SPA backed by JSON API routes.
+Pages are React Client Components (`'use client'`) that call API routes via `fetch()`. No server-side props or server actions are used — the pattern is a classic SPA backed by JSON API routes. The one exception is the public directory `/blog`, an async server component that reads Redis directly (see below).
 
 ---
 
@@ -56,6 +56,8 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 | `/games` | `app/games/page.tsx` | Game list with analysis status and post-game summary forms |
 | `/games/[id]` | `app/games/[id]/page.tsx` | Individual game detail and journal entries for that game |
 | `/games/[id]/analysis` | `app/games/[id]/analysis/page.tsx` | Move-by-move engine analysis viewer |
+| `/blog` | `app/blog/page.tsx` | **Public** directory of every shared game, newest first by month, each linking to its blog; searchable and filterable by result. A server component, read per visit |
+| `/blog/[gameId]` | `app/blog/[gameId]/page.tsx` | **Public** blog of one shared game: the walkthrough where readers guess the author's moves. "← All games" returns to `/blog` |
 | `/settings` | `app/settings/page.tsx` | Chess.com username, AI model, analysis depth |
 | `/backups` | `app/backups/page.tsx` | Backup history, download, restore, and prune |
 | `/sign-in` | `app/sign-in/[[...sign-in]]/page.tsx` | Clerk sign-in |
@@ -78,6 +80,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 | POST | `/api/games/analyze` | Run Stockfish or chess-api.com analysis on a game |
 | POST | `/api/games/analyze-thinking` | Run Claude AI analysis on the player's recorded thinking |
 | POST | `/api/games/[id]/blog-post` | Build the blog from analysis + journal: per-move `sections` (each with its engine check, including the engine's `topLine` in numbered SAN and the analysis `depth`), the written `summary`, the `pgn`, `analysisSummary` (both players' accuracy and move-quality counts, for the end-of-game review), and `gameMeta` with the game's `startDate` and `endDate` called out separately. Readable without sign-in once the game is shared |
+| POST / DELETE | `/api/games/[id]/share` | Share the game's blog (adds it to the public index, and so to the `/blog` directory) / un-share it. Signed-in owner only; either way the directory is read afresh on its next visit |
 
 ### Journal
 
@@ -104,7 +107,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 | GET | `/api/board-image` | Serve a cached board diagram PNG for a FEN string |
 | GET/POST | `/api/settings` | Read / save user settings |
 | GET | `/api/models` | Claude models available for AI analysis, fetched from Anthropic and cached (`?refresh=1` bypasses the cache) |
-| GET | `/api/eval` | Engine evaluation of one position (`?fen=&depth=`), used by the public blog to rate a reader's guess. **Public** (listed in `middleware.ts`), so it validates the FEN, clamps depth to 6–18, caches, and rate-limits (30 / minute / IP → `429` + `Retry-After`) |
+| GET | `/api/eval` | Engine evaluation of one position (`?fen=&depth=`), used by the public blog to rate a reader's guess. **Public** (listed in `lib/public-routes.ts`), so it validates the FEN, clamps depth to 6–18, caches, and rate-limits (30 / minute / IP → `429` + `Retry-After`) |
 | GET | `/api/admin/check` | Check if current user has admin access |
 | GET | `/api/cron/daily` | Daily maintenance: backup + prune + image cleanup (Vercel Cron) |
 
@@ -198,6 +201,15 @@ Every move the reader is asked to guess is scored. The rules are constants at th
 - **Display.** `blog-score.tsx` is presentational: `TriesLeft` (dots), `ScoreBreakdown` (one move), `ScoreCard` (the whole game, shown once the game is played through or skipped to the end — a move still locked keeps its name masked), `ScoreLegend` (a closed `<details>` under the introduction). The sticky progress chip also shows the running total. A score is out of 100 per move (a flawless blind game) and can exceed 100%.
 - **Client-side only.** The score lives in page state, like the walkthrough's progress: nothing is stored, and there is no leaderboard. The answers are in the page data anyway, so it is an honor system by design.
 
+### `lib/blog-directory.ts`, `lib/blog-directory-server.ts`, `components/BlogDirectory.tsx`, `lib/public-routes.ts` — The public directory of games
+`/blog` lists every game its author has shared, so readers can browse instead of following links one by one. The split follows the other blog modules:
+
+- **What is listed.** Exactly the games in the public index (`chess-diary:public:blog`, written by "Share link", read by `listPublishedBlogs`). A game that isn't shared can't be opened by anyone else, so it isn't listed; un-sharing removes it. Sharing a game therefore now also *lists* it: a link given to one person is no longer the only way to find it.
+- **`blog-directory.ts`** (pure, browser-safe): `buildDirectoryEntry` turns a stored game into a row — players, the author's side (from their Chess.com name), result (`win`/`draw`/`loss`, `null` for anything else), `inProgress` (no result yet), start and end dates (`resolveGameDates`, so a game in progress has no end date), the time control in words (`1/86400` → "1 day per move"), and how much was written (`countCommentary`: entries with something in them, plus whether there's an overall summary — the same entries the blog turns into move sections). `sortDirectory` puts the game that ended last first (an unfinished one by when it began, undated ones last, ties by start then game number), `groupByMonth` makes the headings, `filterDirectory` applies the search (either player, or the game number) and the result filter.
+- **`blog-directory-server.ts`** (server): `loadBlogDirectory` reads the published index, then for each owner just their shared games (`getGamesById` — one `HMGET`, not the whole games hash with every PGN), their journal for the commentary counts, and their Chess.com name. A shared game whose record is gone is skipped. The result is cached in memory for 60 s, because counting means reading the whole journal (entries carry pasted images); the share route calls `clearBlogDirectoryCache` so a change shows at once on the instance that made it (another instance can take up to 60 s).
+- **The page** (`app/blog/page.tsx`) is an async server component with `dynamic = 'force-dynamic'`: read per visit, never at build time, so the build needs no database. If the read fails it says so in an alert rather than failing the page. `BlogDirectory` is the only client part (search and filter state).
+- **Public routes** now live in `lib/public-routes.ts` (imported by `middleware.ts`) so a test can pin them. `/blog` is public alongside `/blog/(.*)`; `/blogger` and `/api/blog` are not. Note the test setup replaces Clerk's `createRouteMatcher` with a stub that matches nothing, so the test uses `createPathMatcher` from `@clerk/shared`, which it wraps.
+
 ### `lib/review-eval.ts` — The eval on a post-game review
 The journal shows the engine's eval beside a post-game review ("Added 61 days after game · +0.40 · good · 25 cp"). It used to come only from a copy saved *with* the review, taken in the browser when the review was written — so it was missing whenever the game hadn't been analysed yet, the review had been edited (an edit saves a fresh review without it), or the recorded move text didn't match the analysis exactly (`0-0` for `O-O`, `Nd2` for `Nbd2`). On the author's real journal that was 234 of 724 reviews. Now `GET /api/journal` works it out from the game when it is read:
 
@@ -256,6 +268,7 @@ Generates local-timezone ISO timestamps and filters journal entries by date rang
 | `PostGameSummaryCard.tsx` | Collapsible card displaying a post-game reflection entry (stats grid + coloured reflection sections) |
 | `PostGameSummaryForm.tsx` | Form for writing post-game reflections: "What went well", "Mistakes", "Lessons Learned", "Next Steps" |
 | `BlogPostModal.tsx` | Modal for generating and viewing a game analysis as a formatted blog post |
+| `BlogDirectory.tsx` | The public directory of shared games at `/blog`: games by month, each linking to its blog, with a search box and a result filter |
 | `blog-score.tsx` | The scoring game's display (`TriesLeft`, `ScoreBreakdown`, `ScoreCard`, `ScoreLegend`); numbers come from `lib/guess-score.ts` |
 | `blog-shared.tsx` | Types and interactive pieces shared by the modal and the public `/blog/[gameId]` page: `GameWalkthrough` (guess-the-move cards), the commentary boxes (`ThinkingBlock`, `AiAnalysisBlock`, `PostGameBlock`), `EvalCallout`, and `GuessEvalCard` (engine check of a reader's guess). `renderProse` / `renderInline` render commentary text with `**bold**`, web addresses as links, and chess notation set apart. A move has three phases (`puzzle` → optionally `thinking_shown` → `complete`); solving it — by playing my move, the engine's top move, any move the engine rates as well as or above mine, by skipping it (offered from the start), or by running out of tries — goes straight to `complete`, which shows the score breakdown, the thinking, engine check (with the engine's top line when my move wasn't its top move), AI analysis and post-game review together. At the end of the game `EngineSummaryCard` shows both players' accuracy and move-quality counts, sealed behind the same unlock as the overall summary. Step counters count whole moves (`formatMoveCount`: 16 plies read "8", an odd ply "4.5") |
 

@@ -1,15 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
+import { PUBLIC_ROUTES } from './lib/public-routes'
 
-const isPublicRoute = createRouteMatcher([
-  '/sign-in(.*)',
-  '/sign-up(.*)',
-  '/api/board-image(.*)',
-  '/api/backup/automated(.*)',
-  '/api/cron/(.*)',              // Cron endpoints are authenticated via CRON_SECRET, not Clerk
-  '/blog/(.*)',                  // Public shareable blog pages
-  '/api/games/(.*)/blog-post',  // Blog post generation API used by public pages
-  '/api/eval(.*)',              // Engine eval of a reader's guess on public blog pages (rate limited)
-])
+const isPublicRoute = createRouteMatcher(PUBLIC_ROUTES)
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {

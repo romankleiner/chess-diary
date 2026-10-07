@@ -1,6 +1,7 @@
 import Redis from 'ioredis';
 import { auth } from '@clerk/nextjs/server';
 import { withCurrentAccuracy } from './analysis-utils';
+import type { Game } from '@/types';
 
 export interface DatabaseData {
   games: Record<string, any>;
@@ -84,6 +85,19 @@ export async function getGames(userId?: string): Promise<Record<string, any>> {
   const client = getRedisClient();
   const raw = await client.hgetall(`chess-diary:${uid}:games`);
   return parseHashRecord(raw);
+}
+
+// Just the named games, not the whole hash (a game's PGN is long): the public
+// directory reads a dozen of a few hundred. Games that are not there are left out.
+export async function getGamesById(gameIds: string[], userId: string): Promise<Record<string, Game>> {
+  if (gameIds.length === 0) return {};
+  const client = getRedisClient();
+  const values = await client.hmget(`chess-diary:${userId}:games`, ...gameIds);
+  const games: Record<string, Game> = {};
+  gameIds.forEach((id, i) => {
+    if (values[i]) games[id] = JSON.parse(values[i] as string);
+  });
+  return games;
 }
 
 export async function saveGames(games: Record<string, any>, userId?: string): Promise<void> {
@@ -254,6 +268,14 @@ export async function unpublishBlog(gameId: string, userId?: string): Promise<vo
   // Only the publisher may un-share their own game.
   const owner = await client.hget(PUBLIC_BLOG_KEY, gameId);
   if (owner === uid) await client.hdel(PUBLIC_BLOG_KEY, gameId);
+}
+
+// Every published game and who owns it, for the public directory. Public
+// read — no auth, by design: it lists only what its authors chose to share.
+export async function listPublishedBlogs(): Promise<Array<{ gameId: string; ownerId: string }>> {
+  const client = getRedisClient();
+  const raw = await client.hgetall(PUBLIC_BLOG_KEY);
+  return Object.entries(raw).map(([gameId, ownerId]) => ({ gameId, ownerId }));
 }
 
 // ============================================================

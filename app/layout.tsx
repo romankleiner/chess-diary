@@ -31,6 +31,9 @@ export default function RootLayout({
                     <Link href="/games" className="hover:text-gray-300">
                       Games
                     </Link>
+                    <Link href="/blog" className="hover:text-gray-300">
+                      Blog
+                    </Link>
                     <Link href="/settings" className="hover:text-gray-300">
                       Settings
                     </Link>
