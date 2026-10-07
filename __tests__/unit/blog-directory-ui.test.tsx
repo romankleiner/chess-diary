@@ -15,7 +15,7 @@ import { loadBlogDirectory } from '@/lib/blog-directory-server';
 const mockLoad = vi.mocked(loadBlogDirectory);
 
 const entry = (over: Partial<DirectoryEntry> = {}): DirectoryEntry => ({
-  gameId: '100', white: 'romank66', black: 'opponent_a', authorColor: 'white', opponent: 'opponent_a',
+  gameId: '100', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
   result: 'win', inProgress: false, startDate: '2026-07-10', endDate: '2026-07-24', timeControl: '1 day per move',
   commentedMoves: 9, hasSummary: true,
   ...over,
@@ -51,12 +51,12 @@ describe('BlogDirectory', () => {
 
   it('lists each game as a link to its blog', () => {
     for (const id of ['100', '200', '300']) expect(html).toContain(`href="/blog/${id}"`);
-    expect(html.match(/<li>/g)).toHaveLength(3);
+    expect(html.match(/<li /g)).toHaveLength(3);
   });
 
-  it('names the players, white against black', () => {
-    expect(text).toContain('romank66 vs Late_One');
-    expect(text).toContain('romank66 vs Middle_One');
+  it('names the players, white against black, each with their rating', () => {
+    expect(text).toContain('romank66 (1523) vs Late_One (1480)');
+    expect(text).toContain('romank66 (1523) vs Middle_One (1480)');
   });
 
   it('says how each game ended, when it began and ended, and at what pace', () => {
@@ -178,6 +178,84 @@ describe('BlogDirectory', () => {
     const evil = renderToStaticMarkup(<BlogDirectory entries={[entry({ white: '<img src=x onerror=alert(1)>', gameId: '1' })]} />);
     expect(evil).not.toContain('<img');
     expect(evil).toContain('&lt;img');
+  });
+});
+
+// ─── ratings and profiles in the directory ────────────────────────────────────
+
+describe('BlogDirectory — ratings and profile links', () => {
+  const one = (over: Partial<DirectoryEntry> = {}) => renderToStaticMarkup(<BlogDirectory entries={[entry(over)]} />);
+  const anchors = (html: string) => [...html.matchAll(/<a ([^>]*)>([\s\S]*?)<\/a>/g)].map(m => ({ attrs: m[1], inner: m[2] }));
+  const profile = (html: string) => anchors(html).filter(a => a.attrs.includes('chess.com'));
+
+  it('shows a player without a rating as just their name', () => {
+    const text = textOf(one({ whiteRating: null }));
+    expect(text).toContain('romank66 vs opponent_a (1480)');
+    expect(textOf(one({ whiteRating: null, blackRating: null }))).toContain('romank66 vs opponent_a');
+  });
+
+  it('shows a rating beside each name, white’s with white and black’s with black', () => {
+    expect(textOf(one({ whiteRating: 900, blackRating: 2100 }))).toContain('romank66 (900) vs opponent_a (2100)');
+  });
+
+  it('links both players to their Chess.com profiles', () => {
+    const links = profile(one());
+    expect(links).toHaveLength(2);
+    expect(links[0].attrs).toContain('href="https://www.chess.com/member/romank66"');
+    expect(links[1].attrs).toContain('href="https://www.chess.com/member/opponent_a"');
+    expect(textOf(links[0].inner)).toContain('romank66');
+    expect(textOf(links[1].inner)).toContain('opponent_a');
+  });
+
+  it('opens a profile in a new tab, without handing the page to it', () => {
+    for (const link of profile(one())) {
+      expect(link.attrs).toContain('target="_blank"');
+      expect(link.attrs).toContain('rel="noopener noreferrer"');
+      expect(textOf(link.inner)).toContain('opens in a new tab');
+    }
+  });
+
+  it('labels the profile links', () => {
+    expect(textOf(one())).toContain('Chess.com profiles: romank66');
+  });
+
+  it('keeps the blog link as the title, and one profile pair for each game', () => {
+    const html = renderToStaticMarkup(<BlogDirectory entries={entries} />);
+    expect(profile(html)).toHaveLength(6);
+    expect(anchors(html).filter(a => a.attrs.includes('href="/blog/'))).toHaveLength(3);
+  });
+
+  it('never puts a link inside a link, which HTML does not allow', () => {
+    const html = renderToStaticMarkup(<BlogDirectory entries={entries} />);
+    expect(html).not.toMatch(/<a [^>]*>(?:(?!<\/a>)[\s\S])*<a /);
+  });
+
+  it('lets the whole card open the blog, with the profile links kept above that', () => {
+    const html = one();
+    const [blog] = anchors(html).filter(a => a.attrs.includes('href="/blog/'));
+    expect(blog.attrs).toContain("after:absolute");
+    expect(blog.attrs).toContain('after:inset-0');
+    expect(html).toMatch(/<li class="relative /);
+    // each profile link sits in something above the overlay
+    expect(html.match(/<span class="relative z-10"><a /g)).toHaveLength(2);
+  });
+
+  it('shows a name that is not a plausible Chess.com username as plain text, not a link', () => {
+    const html = one({ white: '../evil?x=1', whiteRating: 1500 });
+    expect(profile(html)).toHaveLength(1);
+    expect(html).not.toContain('chess.com/member/..');
+    expect(textOf(html)).toContain('Chess.com profiles: ../evil?x=1');
+  });
+
+  it('shows a rating beside a name in the title, not in the profile links', () => {
+    const profiles = textOf(one()).split('Chess.com profiles:')[1];
+    expect(profiles).not.toContain('1523');
+    expect(profiles).not.toContain('1480');
+  });
+
+  it('puts the rating in the accessible name of the blog link, so the card reads out in full', () => {
+    const [blog] = anchors(one()).filter(a => a.attrs.includes('href="/blog/'));
+    expect(textOf(blog.inner)).toBe('romank66 (1523) vs opponent_a (1480)');
   });
 });
 

@@ -4,6 +4,7 @@
  * of the database lives in lib/blog-directory-server.ts.)
  */
 import { resolveGameDates } from './game-dates';
+import { ratingsFromPgn } from './players';
 
 export type DirectoryResult = 'win' | 'draw' | 'loss';
 
@@ -11,6 +12,9 @@ export interface DirectoryEntry {
   gameId: string;
   white: string;
   black: string;
+  /** Each player's Chess.com rating in this game, when the PGN says. */
+  whiteRating: number | null;
+  blackRating: number | null;
   /** Which side the author played, when their Chess.com name says. */
   authorColor: 'white' | 'black' | null;
   opponent: string;
@@ -82,6 +86,7 @@ export function buildDirectoryEntry({ gameId, game, username, commentedMoves, ha
     gameId,
     white,
     black,
+    ...ratingsFromPgn(game.pgn),
     authorColor,
     opponent: game.opponent || (authorColor === 'white' ? black : authorColor === 'black' ? white : ''),
     result: asResult(game.result),

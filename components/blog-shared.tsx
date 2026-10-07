@@ -11,6 +11,7 @@ import Image from 'next/image';
 import { Chess } from 'chess.js';
 import { splitNotation } from '@/lib/notation';
 import { splitLinks } from '@/lib/linkify';
+import { chesscomProfileUrl } from '@/lib/players';
 import { formatPawns } from '@/lib/position-eval';
 import { earnsMoveOn, playerPawns, rateEngineBest, rateGuess, topLinePawns } from '@/lib/guess-eval';
 import type { GuessRating } from '@/lib/guess-eval';
@@ -1695,6 +1696,58 @@ export function ResultBadge({ result }: { result: string | null }) {
     <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${style}`}>
       {result.charAt(0).toUpperCase() + result.slice(1)}
     </span>
+  );
+}
+
+// ─── Players ──────────────────────────────────────────────────────────────────
+// A player's name links to their Chess.com profile (in a new tab, so a reader's
+// place in the walkthrough isn't lost), with their rating in the game beside it.
+// A name that isn't a plausible Chess.com username is shown as plain text rather
+// than linked: names come from Chess.com's API (see lib/players.ts).
+
+export function PlayerLink({ name, rating, ratingClassName = 'text-[0.7em]' }: {
+  name: string;
+  rating?: number | null;
+  /** The size of the rating beside the name; relative to the name by default. */
+  ratingClassName?: string;
+}) {
+  const href = chesscomProfileUrl(name);
+  return (
+    <>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline decoration-dotted decoration-gray-400 dark:decoration-gray-500 underline-offset-4 hover:decoration-solid focus-visible:decoration-solid"
+        >
+          {name}
+          <span className="sr-only"> (Chess.com profile, opens in a new tab)</span>
+        </a>
+      ) : name}
+      {rating != null && (
+        <span className={`ml-1.5 font-normal text-gray-600 dark:text-gray-400 ${ratingClassName}`}>
+          (<span className="sr-only">rating </span>{rating})
+        </span>
+      )}
+    </>
+  );
+}
+
+/** "white vs black", each with their rating and a link to their profile. */
+export function GamePlayers({ white, black, whiteRating, blackRating, ratingClassName }: {
+  white: string;
+  black: string;
+  whiteRating?: number | null;
+  blackRating?: number | null;
+  ratingClassName?: string;
+}) {
+  return (
+    <>
+      <PlayerLink name={white} rating={whiteRating} ratingClassName={ratingClassName} />
+      {' vs '}
+      <PlayerLink name={black} rating={blackRating} ratingClassName={ratingClassName} />
+    </>
   );
 }
 

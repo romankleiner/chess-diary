@@ -5,7 +5,7 @@ import {
 } from '@/lib/blog-directory';
 
 const entry = (over: Partial<DirectoryEntry> = {}): DirectoryEntry => ({
-  gameId: '100', white: 'romank66', black: 'opponent_a', authorColor: 'white', opponent: 'opponent_a',
+  gameId: '100', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
   result: 'win', inProgress: false, startDate: '2026-07-10', endDate: '2026-07-24', timeControl: '1 day per move',
   commentedMoves: 9, hasSummary: true,
   ...over,
@@ -71,7 +71,7 @@ describe('describeCommentary', () => {
 // ─── building a row ───────────────────────────────────────────────────────────
 
 describe('buildDirectoryEntry', () => {
-  const PGN = '[Event "Daily"]\n[Date "2026.07.10"]\n[White "romank66"]\n[Black "opponent_a"]\n\n1. e4 e5';
+  const PGN = '[Event "Daily"]\n[Date "2026.07.10"]\n[White "romank66"]\n[Black "opponent_a"]\n[WhiteElo "1523"]\n[BlackElo "1480"]\n\n1. e4 e5';
   const game = {
     white: 'romank66', black: 'opponent_a', opponent: 'opponent_a', result: 'win',
     date: '2026-07-24', pgn: PGN, timeControl: '1/86400',
@@ -81,7 +81,7 @@ describe('buildDirectoryEntry', () => {
 
   it('reads the players, result, dates, time control and commentary of the game', () => {
     expect(build()).toEqual({
-      gameId: '952794945', white: 'romank66', black: 'opponent_a', authorColor: 'white', opponent: 'opponent_a',
+      gameId: '952794945', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
       result: 'win', inProgress: false, startDate: '2026-07-10', endDate: '2026-07-24',
       timeControl: '1 day per move', commentedMoves: 9, hasSummary: true,
     });
@@ -125,6 +125,17 @@ describe('buildDirectoryEntry', () => {
     expect(live.startDate).toBe('2026-07-10');
   });
 
+  it('takes each player’s rating from the PGN, white’s and black’s the right way round', () => {
+    const swapped = '[WhiteElo "900"]\n[BlackElo "2100"]\n\n1. e4 e5';
+    expect(build({ game: { ...game, pgn: swapped } })).toMatchObject({ whiteRating: 900, blackRating: 2100 });
+  });
+
+  it('has no rating for a player whose tag is missing or unknown', () => {
+    expect(build({ game: { ...game, pgn: '[WhiteElo "1523"]\n\n1. e4' } })).toMatchObject({ whiteRating: 1523, blackRating: null });
+    expect(build({ game: { ...game, pgn: '[WhiteElo "?"]\n[BlackElo "?"]\n\n1. e4' } })).toMatchObject({ whiteRating: null, blackRating: null });
+    expect(build({ game: { ...game, pgn: null } })).toMatchObject({ whiteRating: null, blackRating: null });
+  });
+
   it('has no start date for a PGN that has none', () => {
     expect(build({ game: { ...game, pgn: '1. e4 e5' } }).startDate).toBeNull();
     expect(build({ game: { ...game, pgn: null } }).startDate).toBeNull();
@@ -132,7 +143,7 @@ describe('buildDirectoryEntry', () => {
 
   it('copes with a game missing most of its fields', () => {
     expect(buildDirectoryEntry({ gameId: '1', game: {}, commentedMoves: 0, hasSummary: false })).toEqual({
-      gameId: '1', white: '', black: '', authorColor: null, opponent: '', result: null, inProgress: true,
+      gameId: '1', white: '', black: '', whiteRating: null, blackRating: null, authorColor: null, opponent: '', result: null, inProgress: true,
       startDate: null, endDate: null, timeControl: '', commentedMoves: 0, hasSummary: false,
     });
   });

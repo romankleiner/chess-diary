@@ -565,6 +565,45 @@ describe('POST /api/games/[id]/blog-post — game dates', () => {
   });
 });
 
+describe('POST /api/games/[id]/blog-post — player ratings', () => {
+  const RATED_PGN = '[White "testuser"]\n[Black "opponent_a"]\n[WhiteElo "1523"]\n[BlackElo "1480"]\n\n1. e4 e5 2. Nf3 Nc6';
+  const meta = async (pgn: string) => {
+    mockGetGame.mockResolvedValue({ ...gameA, pgn });
+    return (await (await POST(makeReq(), params(gameA.id))).json()).gameMeta;
+  };
+
+  it('gives each player’s rating from the PGN’s Elo tags', async () => {
+    const m = await meta(RATED_PGN);
+    expect(m.whiteRating).toBe(1523);
+    expect(m.blackRating).toBe(1480);
+  });
+
+  it('gives null for a rating the PGN does not have, rather than leaving it out', async () => {
+    const m = await meta('[White "testuser"]\n[WhiteElo "1523"]\n\n1. e4 e5');
+    expect(m.whiteRating).toBe(1523);
+    expect(m.blackRating).toBeNull();
+    expect(m).toHaveProperty('blackRating');
+  });
+
+  it('gives null for ratings Chess.com marks as unknown', async () => {
+    const m = await meta('[WhiteElo "?"]\n[BlackElo "0"]\n\n1. e4 e5');
+    expect(m.whiteRating).toBeNull();
+    expect(m.blackRating).toBeNull();
+  });
+
+  it('gives null for both when there is no PGN', async () => {
+    const m = await meta('');
+    expect(m.whiteRating).toBeNull();
+    expect(m.blackRating).toBeNull();
+  });
+
+  it('still names the players as before', async () => {
+    const m = await meta(RATED_PGN);
+    expect(m.white).toBe(gameA.white);
+    expect(m.black).toBe(gameA.black);
+  });
+});
+
 describe('POST /api/games/[id]/blog-post — analysisSummary', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);

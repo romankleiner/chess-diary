@@ -3,12 +3,14 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { MoveSection, GameWalkthrough, GameDates, ResultBadge } from '@/components/blog-shared';
+import { MoveSection, GameWalkthrough, GameDates, GamePlayers, ResultBadge } from '@/components/blog-shared';
 import type { AnalysisSummary } from '@/lib/analysis-utils';
 
 interface GameMeta {
   white: string;
   black: string;
+  whiteRating?: number | null;  // each player's Chess.com rating in this game, when known
+  blackRating?: number | null;
   result: string | null;
   date: string;                // the end date, kept for older responses
   startDate?: string | null;   // ISO date the game began, when known
@@ -119,7 +121,12 @@ export default function BlogPage() {
             <div className="space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-                  {data.gameMeta.white} vs {data.gameMeta.black}
+                  <GamePlayers
+                    white={data.gameMeta.white}
+                    black={data.gameMeta.black}
+                    whiteRating={data.gameMeta.whiteRating}
+                    blackRating={data.gameMeta.blackRating}
+                  />
                 </h1>
                 <ResultBadge result={data.gameMeta.result} />
               </div>

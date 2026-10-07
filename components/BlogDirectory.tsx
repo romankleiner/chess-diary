@@ -9,7 +9,8 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ResultBadge } from '@/components/blog-shared';
+import { PlayerLink, ResultBadge } from '@/components/blog-shared';
+import { formatPlayer } from '@/lib/players';
 import {
   NO_FILTER, describeCommentary, filterDirectory, formatDateRange, groupByMonth, tallyResults,
 } from '@/lib/blog-directory';
@@ -114,9 +115,7 @@ export function BlogDirectory({ entries, initialFilter = NO_FILTER }: {
             </h2>
             <ul className="space-y-3">
               {group.entries.map(entry => (
-                <li key={entry.gameId}>
-                  <GameRow entry={entry} />
-                </li>
+                <GameRow key={entry.gameId} entry={entry} />
               ))}
             </ul>
           </section>
@@ -126,17 +125,20 @@ export function BlogDirectory({ entries, initialFilter = NO_FILTER }: {
   );
 }
 
+// The whole card opens the blog. A link can't hold other links, so the card is a
+// positioned <li>, the blog link is its title with an overlay (::after) covering
+// the card, and the profile links sit above that overlay (relative z-10).
 function GameRow({ entry }: { entry: DirectoryEntry }) {
   const when = [formatDateRange(entry.startDate, entry.endDate), entry.timeControl].filter(Boolean).join(' · ');
   return (
-    <Link
-      href={`/blog/${entry.gameId}`}
-      className="block rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 transition-colors hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50/40 dark:hover:bg-purple-900/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
-    >
+    <li className="relative rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 transition-colors hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50/40 dark:hover:bg-purple-900/10 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-purple-500">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {entry.white} vs {entry.black}
-        </span>
+        <Link
+          href={`/blog/${entry.gameId}`}
+          className="text-lg font-semibold text-gray-900 dark:text-gray-100 after:absolute after:inset-0 after:content-[''] focus:outline-none"
+        >
+          {formatPlayer(entry.white, entry.whiteRating)} vs {formatPlayer(entry.black, entry.blackRating)}
+        </Link>
         {entry.inProgress ? (
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300">
             In progress
@@ -145,6 +147,12 @@ function GameRow({ entry }: { entry: DirectoryEntry }) {
       </div>
       {when && <p className="mt-1 text-base text-gray-600 dark:text-gray-400">{when}</p>}
       <p className="mt-1 text-base text-gray-700 dark:text-gray-300">{describeCommentary(entry)}</p>
-    </Link>
+      <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        Chess.com profiles:{' '}
+        <span className="relative z-10"><PlayerLink name={entry.white} /></span>
+        {' · '}
+        <span className="relative z-10"><PlayerLink name={entry.black} /></span>
+      </p>
+    </li>
   );
 }

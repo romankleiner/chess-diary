@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
+  GamePlayers,
   GameWalkthrough,
   MoveSection,
   QUALITY_STYLE,
@@ -154,7 +155,9 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
   const [pgn, setPgn]             = useState('');
   const [userColor, setUserColor] = useState<'white' | 'black'>('white');
   const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null);
-  const [players, setPlayers]     = useState<{ white: string; black: string } | undefined>(undefined);
+  const [players, setPlayers]     = useState<
+    { white: string; black: string; whiteRating?: number | null; blackRating?: number | null } | undefined
+  >(undefined);
   const [error, setError]         = useState('');
   const [copied, setCopied]         = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -176,7 +179,12 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
       setPgn(data.pgn || '');
       setUserColor(data.userColor || 'white');
       setAnalysisSummary(data.analysisSummary ?? null);
-      setPlayers(data.gameMeta ? { white: data.gameMeta.white, black: data.gameMeta.black } : undefined);
+      setPlayers(data.gameMeta ? {
+        white: data.gameMeta.white,
+        black: data.gameMeta.black,
+        whiteRating: data.gameMeta.whiteRating,
+        blackRating: data.gameMeta.blackRating,
+      } : undefined);
       setStatus('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate blog post');
@@ -245,7 +253,10 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
           <div>
             <h2 className="font-semibold text-lg text-gray-900 dark:text-gray-100">Blog Post Draft</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              vs. {opponent}{resultLabel ? ` · ${resultLabel}` : ''}
+              {players
+                ? <GamePlayers {...players} ratingClassName="text-xs" />
+                : <>vs. {opponent}</>}
+              {resultLabel ? ` · ${resultLabel}` : ''}
             </p>
           </div>
           <button

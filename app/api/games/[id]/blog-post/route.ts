@@ -4,6 +4,7 @@ import { Chess } from 'chess.js';
 import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
 import { summarizeAnalysis } from '@/lib/analysis-utils';
 import { resolveGameDates } from '@/lib/game-dates';
+import { ratingsFromPgn } from '@/lib/players';
 import { formatSanLine, uciLineToSan } from '@/lib/position-facts';
 
 // Resolve whose game this is without requiring the viewer to be logged in.
@@ -290,6 +291,8 @@ export async function POST(
       gameMeta: {
         white:       game.white       || '',
         black:       game.black       || '',
+        // Each player's rating in this game, from the PGN's WhiteElo / BlackElo tags
+        ...ratingsFromPgn(game.pgn),
         result:      game.result      ?? null,
         date:        game.date        || '',
         // The day the game began (from its PGN) and the day it ended, called out
