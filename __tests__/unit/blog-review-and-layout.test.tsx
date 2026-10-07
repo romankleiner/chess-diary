@@ -445,6 +445,35 @@ describe('the walkthrough card layout', () => {
     expect(html).toContain('@4xl:col-start-2 @4xl:row-start-2'); // feedback and commentary
   });
 
+  describe('keeping the board in view beside tall commentary', () => {
+    const board = html.match(/class="([^"]*@4xl:row-span-2[^"]*)"/)![1].split(' ');
+
+    it('sticks the board column to the window in two columns, as tall as itself so it has room to travel', () => {
+      expect(board).toContain('@4xl:self-start');
+      expect(board).toContain('@4xl:[@media(min-height:42rem)]:sticky');
+      expect(board).toContain('@4xl:[@media(min-height:42rem)]:top-4');
+    });
+
+    it('does not stick in one column, where it would sit over the text, or on a window too short to hold it', () => {
+      expect(board).not.toContain('sticky');
+      expect(board).not.toContain('@4xl:sticky');
+      expect(board.filter(c => c.includes('sticky'))).toEqual(['@4xl:[@media(min-height:42rem)]:sticky']);
+    });
+
+    it('clips the card instead of hiding its overflow, which would make the card the thing the board sticks to', () => {
+      const card = html.match(/<div class="([^"]*)"><div class="bg-gray-50 dark:bg-gray-700 px-4 py-2\.5 flex items-center justify-between/)![1];
+      expect(card).toContain('overflow-clip');
+      expect(card).not.toContain('overflow-hidden');
+      expect(card).toContain('rounded-lg');
+    });
+
+    it('caps the move list in two columns, so the board column fits the window, and scrolls it', () => {
+      const list = html.match(/class="([^"]*font-mono[^"]*@4xl:max-h-24[^"]*)"/)![1];
+      expect(list).toContain('@4xl:overflow-y-auto');
+      expect(list).toContain('flex-wrap');
+    });
+  });
+
   it('collapses an empty prompts area instead of leaving a gap', () => {
     expect(html).toContain('empty:hidden');
   });

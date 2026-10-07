@@ -839,10 +839,23 @@ function MoveChips({ game, fromPly, toPly, viewIdx, goTo, guessPly, guessColor }
   guessPly?: number;
   guessColor?: 'green' | 'amber';
 }) {
+  // In the wide layout the list is capped at four rows (so the board column fits
+  // the window) and scrolls; keep the current move in sight as the board steps
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = box.current;
+    const current = list?.querySelector<HTMLElement>('[data-current]');
+    if (!list || !current || list.scrollHeight <= list.clientHeight) return;
+    const above = current.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    const below = above + current.offsetHeight - list.clientHeight;
+    if (above < 0) list.scrollTop += above;
+    else if (below > 0) list.scrollTop += below;
+  }, [viewIdx, fromPly, toPly]);
+
   if (toPly < fromPly) return null;
   const plies = Array.from({ length: toPly - fromPly + 1 }, (_, k) => fromPly + k);
   return (
-    <div className="flex flex-wrap gap-1 justify-center text-xs font-mono">
+    <div ref={box} className="flex flex-wrap gap-1 justify-center text-xs font-mono @4xl:max-h-24 @4xl:overflow-y-auto">
       {plies.map(p => {
         const num = Math.floor(p / 2) + 1;
         const label =
@@ -857,6 +870,7 @@ function MoveChips({ game, fromPly, toPly, viewIdx, goTo, guessPly, guessColor }
           <button
             key={p}
             onClick={() => goTo(p + 1)}
+            data-current={isCurrent || undefined}
             className={`px-1.5 py-0.5 rounded transition-colors ${
               isCurrent
                 ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200'
@@ -1413,8 +1427,10 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
 
   if (state === 'locked') return <LockedCard title={maskedHeader(section)} />;
 
+  // overflow-clip, not overflow-hidden: hidden makes the card a scroll container,
+  // and the board column's `sticky` would then stick to the card, not the window
   return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-clip">
 
       {/* ── Header ──────────────────────────────────────────────────── */}
       <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2.5 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
@@ -1461,7 +1477,13 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
           </div>
 
           {/* ── Board and its controls ───────────────────────────────── */}
-          <div className="space-y-4 @4xl:col-start-1 @4xl:row-start-1 @4xl:row-span-2">
+          {/* In two columns the commentary on the right can be taller than the
+              window, so the board stays in view beside it while the reader scrolls
+              (self-start so it is only as tall as itself and has room to travel
+              down the cell). Only on windows tall enough to hold the whole column,
+              or its bottom would be stuck out of reach; the move list is capped for
+              the same reason. */}
+          <div className="space-y-4 @4xl:col-start-1 @4xl:row-start-1 @4xl:row-span-2 @4xl:self-start @4xl:[@media(min-height:42rem)]:sticky @4xl:[@media(min-height:42rem)]:top-4">
             <div ref={boardRef} className="flex justify-center">
               <div style={{ width: boardWidth, cursor: atPuzzle ? 'pointer' : 'default' }}>
                 <Chessboard
