@@ -9,38 +9,49 @@ const { store } = vi.hoisted(() => {
   return { store: { hashes, strings, clear() { hashes.clear(); strings.clear(); } } };
 });
 
-vi.mock('ioredis', () => ({
-  default: class MockRedis {
-    async hget(key: string, field: string) { return store.hashes.get(key)?.get(field) ?? null; }
-    async hset(key: string, field: string, value: string) {
-      if (!store.hashes.has(key)) store.hashes.set(key, new Map());
-      store.hashes.get(key)!.set(field, value); return 0;
-    }
+vi.mock('ioredis', () => {
+  const hash = (key: string) => {
+    if (!store.hashes.has(key)) store.hashes.set(key, new Map());
+    return store.hashes.get(key)!;
+  };
+  const ops = {
+    async hget(key: string, field: string) { return store.hashes.get(key)?.get(field) ?? null; },
+    async hset(key: string, field: string, value: string) { hash(key).set(field, value); return 0; },
     async hdel(key: string, ...fields: string[]) {
       const h = store.hashes.get(key); if (!h) return 0;
       let n = 0; for (const f of fields) if (h.delete(f)) n++; return n;
+    },
+    async hgetall(key: string) { const h = store.hashes.get(key); return h ? Object.fromEntries(h) : {}; },
+    async hlen(key: string) { return store.hashes.get(key)?.size ?? 0; },
+    async hvals(key: string) { return [...(store.hashes.get(key)?.values() ?? [])]; },
+    async get(key: string) { return store.strings.get(key) ?? null; },
+    async set(key: string, value: string, ...args: unknown[]) {
+      if (args.includes('NX') && store.strings.has(key)) return null;
+      store.strings.set(key, value); return 'OK';
+    },
+    async setex(key: string, _: number, value: string) { store.strings.set(key, value); return 'OK'; },
+    async del(key: string) { store.strings.delete(key); store.hashes.delete(key); return 1; },
+  };
+  // multi() and pipeline() queue the same commands and run them in order on exec()
+  const batch = () => {
+    const queued: Array<() => Promise<unknown>> = [];
+    const b: Record<string, unknown> = {
+      exec: async () => { const out: Array<[null, unknown]> = []; for (const op of queued) out.push([null, await op()]); return out; },
+    };
+    for (const name of Object.keys(ops) as Array<keyof typeof ops>) {
+      b[name] = (...args: unknown[]) => { queued.push(() => (ops[name] as (...a: unknown[]) => Promise<unknown>)(...args)); return b; };
     }
-    async hgetall(key: string) {
-      const h = store.hashes.get(key); return h ? Object.fromEntries(h) : {};
-    }
-    async get(key: string) { return store.strings.get(key) ?? null; }
-    async set(key: string, value: string) { store.strings.set(key, value); return 'OK'; }
-    async setex(key: string, _: number, value: string) { store.strings.set(key, value); return 'OK'; }
-    async del(key: string) { store.strings.delete(key); store.hashes.delete(key); return 1; }
-    pipeline() {
-      const ops: (() => void)[] = [];
-      const p: any = {
-        del: (k: string) => { ops.push(() => { store.strings.delete(k); store.hashes.delete(k); }); return p; },
-        hset: (k: string, f: string, v: string) => {
-          ops.push(() => { if (!store.hashes.has(k)) store.hashes.set(k, new Map()); store.hashes.get(k)!.set(f, v); });
-          return p;
-        },
-        exec: async () => { ops.forEach(op => op()); return []; },
-      };
-      return p;
-    }
-  },
-}));
+    return b;
+  };
+  return {
+    default: class MockRedis {
+      hget = ops.hget; hset = ops.hset; hdel = ops.hdel; hgetall = ops.hgetall; hlen = ops.hlen; hvals = ops.hvals;
+      get = ops.get; set = ops.set; setex = ops.setex; del = ops.del;
+      multi = batch;
+      pipeline = batch;
+    },
+  };
+});
 
 process.env.REDIS_URL = 'redis://test';
 

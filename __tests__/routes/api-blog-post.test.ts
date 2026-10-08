@@ -4,7 +4,7 @@ import { gameA, thoughtEntry, moveEntry, summaryEntry, analysisA } from '../help
 
 vi.mock('@/lib/db', () => ({
   getGame: vi.fn(),
-  getJournal: vi.fn(),
+  getGamesJournal: vi.fn(),
   getAnalysis: vi.fn(),
   getSetting: vi.fn(),
   getBlogOwner: vi.fn(),
@@ -12,14 +12,14 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/lib/blog-visits-server', () => ({ recordVisit: vi.fn() }));
 
 import { POST } from '@/app/api/games/[id]/blog-post/route';
-import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
+import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
 import { recordVisit } from '@/lib/blog-visits-server';
 import { auth } from '@clerk/nextjs/server';
 
 const mockRecordVisit = vi.mocked(recordVisit);
 
 const mockGetGame      = vi.mocked(getGame);
-const mockGetJournal   = vi.mocked(getJournal);
+const mockGetJournal   = vi.mocked(getGamesJournal);
 const mockGetAnalysis  = vi.mocked(getAnalysis);
 const mockGetSetting   = vi.mocked(getSetting);
 const mockGetBlogOwner = vi.mocked(getBlogOwner);
@@ -80,9 +80,11 @@ describe('POST /api/games/[id]/blog-post — anonymous access', () => {
 
     const res = await POST(makeReq(), params(gameA.id));
     expect(res.status).toBe(200);
-    // db reads are scoped to the published owner, not the (absent) viewer
+    // db reads are scoped to the published owner, not the (absent) viewer --
+    // and to this one game's journal entries, not the whole journal
     expect(mockGetGame).toHaveBeenCalledWith(gameA.id, 'owner-abc');
-    expect(mockGetJournal).toHaveBeenCalledWith('owner-abc');
+    expect(mockGetJournal).toHaveBeenCalledWith([gameA.id], 'owner-abc');
+    expect(mockGetJournal).toHaveBeenCalledTimes(1);
   });
 
   it('a published game takes precedence over the viewer session', async () => {

@@ -3,16 +3,16 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 vi.mock('@/lib/db', () => ({
   listPublishedBlogs: vi.fn(),
   getGamesById: vi.fn(),
-  getJournal: vi.fn(),
+  getGamesJournal: vi.fn(),
   getSetting: vi.fn(),
 }));
 
 import { DIRECTORY_CACHE_MS, clearBlogDirectoryCache, loadBlogDirectory } from '@/lib/blog-directory-server';
-import { getGamesById, getJournal, getSetting, listPublishedBlogs } from '@/lib/db';
+import { getGamesById, getGamesJournal, getSetting, listPublishedBlogs } from '@/lib/db';
 
 const mockPublished = vi.mocked(listPublishedBlogs);
 const mockGames     = vi.mocked(getGamesById);
-const mockJournal   = vi.mocked(getJournal);
+const mockJournal   = vi.mocked(getGamesJournal);
 const mockSetting   = vi.mocked(getSetting);
 
 const PGN = '[Date "2026.07.10"]\n\n1. e4 e5';
@@ -45,7 +45,7 @@ describe('loadBlogDirectory', () => {
       { gameId: '111', entryType: 'thought', content: 'b' },
       { gameId: '111', entryType: 'post_game_summary', content: 's' },
       { gameId: '222', entryType: 'thought', content: 'c' },
-    ]);
+    ] as never);
 
     const entries = await loadBlogDirectory('alice');
     const byId = Object.fromEntries(entries.map(e => [e.gameId, e]));
@@ -62,7 +62,7 @@ describe('loadBlogDirectory', () => {
     mockPublished.mockResolvedValue([{ gameId: '111', ownerId: 'alice' }, { gameId: '222', ownerId: 'alice' }]);
     await loadBlogDirectory('alice');
     expect(mockGames).toHaveBeenCalledWith(['111', '222'], 'alice');
-    expect(mockJournal).toHaveBeenCalledWith('alice');
+    expect(mockJournal).toHaveBeenCalledWith(['111', '222'], 'alice');
     expect(mockSetting).toHaveBeenCalledWith('chesscom_username', 'alice');
   });
 
@@ -72,7 +72,7 @@ describe('loadBlogDirectory', () => {
     mockJournal.mockResolvedValue([
       { gameId: '111', entryType: 'thought', content: 'a' },
       { gameId: '999', entryType: 'thought', content: 'an unshared game' },
-    ]);
+    ] as never);
     const [entry] = await loadBlogDirectory('alice');
     expect(entry.commentedMoves).toBe(1);
   });

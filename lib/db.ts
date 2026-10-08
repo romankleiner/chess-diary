@@ -2,8 +2,9 @@ import Redis from 'ioredis';
 import { randomBytes } from 'crypto';
 import { auth } from '@clerk/nextjs/server';
 import { withCurrentAccuracy } from './analysis-utils';
-import type { Game } from '@/types';
+import type { Game, JournalEntry } from '@/types';
 import { BLOG_VISITS_KEPT } from './access-log';
+import { entryGameId, withoutImages } from './journal-copies';
 
 export interface DatabaseData {
   games: Record<string, any>;
@@ -117,44 +118,141 @@ export async function saveGames(games: Record<string, any>, userId?: string): Pr
 // ============================================================
 // Journal — Redis Hash: chess-diary:{uid}:journal
 //   field = entryId (string), value = JSON entry object
+//
+// The blog's copies, kept in step by every write below (in the same transaction):
+//   chess-diary:{uid}:journal-by-game:{gameId}  hash: entryId → the entry without its images
+//   chess-diary:{uid}:journal-games             hash: entryId → its gameId ('' for none), for
+//                                               every entry: where its copy is filed
+// The journal is 98% pasted images, which the blog never shows, so the public
+// blog reads one game's copies instead of the whole journal (lib/journal-copies.ts).
 // ============================================================
+
+const journalKey = (uid: string) => `chess-diary:${uid}:journal`;
+const gameJournalKey = (uid: string, gameId: string) => `chess-diary:${uid}:journal-by-game:${gameId}`;
+const entryGamesKey = (uid: string) => `chess-diary:${uid}:journal-games`;
+const copiesRebuiltKey = (uid: string) => `chess-diary:${uid}:journal-copies-rebuilt`;
+
+/** The copies are rebuilt from the whole journal at most this often, whatever happens. */
+export const JOURNAL_COPIES_REBUILD_SECONDS = 3600;
 
 export async function getJournalEntry(entryId: number, userId?: string): Promise<any | null> {
   const uid = userId || await getUserId();
   const client = getRedisClient();
-  const data = await client.hget(`chess-diary:${uid}:journal`, String(entryId));
+  const data = await client.hget(journalKey(uid), String(entryId));
   return data ? JSON.parse(data) : null;
 }
 
 export async function saveJournalEntry(entry: any, userId?: string): Promise<void> {
   const uid = userId || await getUserId();
   const client = getRedisClient();
-  await client.hset(`chess-diary:${uid}:journal`, String(entry.id), JSON.stringify(entry));
+  const id = String(entry.id);
+  const gameId = entryGameId(entry);
+  // An entry moved to another game leaves its old copy behind unless removed
+  const previous = await client.hget(entryGamesKey(uid), id);
+
+  const tx = client.multi();
+  tx.hset(journalKey(uid), id, JSON.stringify(entry));
+  if (previous && previous !== gameId) tx.hdel(gameJournalKey(uid, previous), id);
+  if (gameId) tx.hset(gameJournalKey(uid, gameId), id, JSON.stringify(withoutImages(entry)));
+  tx.hset(entryGamesKey(uid), id, gameId);
+  await tx.exec();
 }
 
 export async function deleteJournalEntry(entryId: number, userId?: string): Promise<void> {
   const uid = userId || await getUserId();
   const client = getRedisClient();
-  await client.hdel(`chess-diary:${uid}:journal`, String(entryId));
+  const id = String(entryId);
+  const previous = await client.hget(entryGamesKey(uid), id);
+
+  const tx = client.multi();
+  tx.hdel(journalKey(uid), id);
+  if (previous) tx.hdel(gameJournalKey(uid, previous), id);
+  tx.hdel(entryGamesKey(uid), id);
+  await tx.exec();
 }
 
 export async function getJournal(userId?: string): Promise<any[]> {
   const uid = userId || await getUserId();
   const client = getRedisClient();
-  const raw = await client.hgetall(`chess-diary:${uid}:journal`);
+  const raw = await client.hgetall(journalKey(uid));
   return parseHashArray(raw);
 }
+
+/** Queue replacing every copy with copies of `entries`, given the games the old copies were filed under. */
+function queueCopies(
+  tx: ReturnType<Redis['multi']>,
+  uid: string,
+  entries: ReadonlyArray<{ id: unknown; gameId?: unknown }>,
+  oldGameIds: Iterable<string>,
+): void {
+  tx.del(entryGamesKey(uid));
+  for (const gameId of oldGameIds) tx.del(gameJournalKey(uid, gameId));
+  for (const entry of entries) {
+    const id = String(entry.id);
+    const gameId = entryGameId(entry);
+    tx.hset(entryGamesKey(uid), id, gameId);
+    if (gameId) tx.hset(gameJournalKey(uid, gameId), id, JSON.stringify(withoutImages(entry)));
+  }
+}
+
+const filedGames = async (client: Redis, uid: string) =>
+  new Set((await client.hvals(entryGamesKey(uid))).filter(Boolean));
 
 export async function saveJournal(entries: any[], userId?: string): Promise<void> {
   const uid = userId || await getUserId();
   const client = getRedisClient();
-  const key = `chess-diary:${uid}:journal`;
-  const pipeline = client.pipeline();
-  pipeline.del(key);
+  const oldGameIds = await filedGames(client, uid);
+  const tx = client.multi();
+  tx.del(journalKey(uid));
   for (const entry of entries) {
-    pipeline.hset(key, String(entry.id), JSON.stringify(entry));
+    tx.hset(journalKey(uid), String(entry.id), JSON.stringify(entry));
   }
-  await pipeline.exec();
+  queueCopies(tx, uid, entries, oldGameIds);
+  await tx.exec();
+}
+
+/**
+ * Make sure the copies are in step with the journal before they are read. They
+ * are in step when every entry is filed (one count against another, two cheap
+ * commands). If not -- the first time, before any copies existed, or after the
+ * journal was changed some other way -- they are rebuilt from the whole journal,
+ * but at most once an hour: nothing a reader does can make the blog read the
+ * whole journal again and again. Readers in the meantime see the copies as they are.
+ */
+async function ensureJournalCopies(client: Redis, uid: string): Promise<void> {
+  const [entries, filed] = await Promise.all([client.hlen(journalKey(uid)), client.hlen(entryGamesKey(uid))]);
+  if (entries === filed) return;
+  const claimed = await client.set(copiesRebuiltKey(uid), '1', 'EX', JOURNAL_COPIES_REBUILD_SECONDS, 'NX');
+  if (!claimed) return;
+  try {
+    const [all, oldGameIds] = await Promise.all([getJournal(uid), filedGames(client, uid)]);
+    const tx = client.multi();
+    queueCopies(tx, uid, all, oldGameIds);
+    await tx.exec();
+  } catch (error) {
+    // Let the next reader try again rather than leave the copies out of step for an hour
+    await client.del(copiesRebuiltKey(uid));
+    throw error;
+  }
+}
+
+/**
+ * The journal entries of these games, without their images: what the blog needs,
+ * read without touching the rest of the journal.
+ */
+export async function getGamesJournal(gameIds: string[], userId: string): Promise<Omit<JournalEntry, 'image'>[]> {
+  if (gameIds.length === 0) return [];
+  const client = getRedisClient();
+  await ensureJournalCopies(client, userId);
+  const pipeline = client.pipeline();
+  for (const gameId of gameIds) pipeline.hgetall(gameJournalKey(userId, gameId));
+  const results = (await pipeline.exec()) ?? [];
+  const entries: Omit<JournalEntry, 'image'>[] = [];
+  for (const [error, raw] of results) {
+    if (error) throw error;
+    entries.push(...parseHashArray((raw ?? {}) as Record<string, string>));
+  }
+  return entries;
 }
 
 // ============================================================

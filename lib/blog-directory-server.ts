@@ -7,15 +7,15 @@
  * "Share link" writes to, and a game not in it cannot be opened by anyone else.
  * Each author has their own directory, opened by their own secret key.
  */
-import { getGamesById, getJournal, getSetting, listPublishedBlogs } from '@/lib/db';
+import { getGamesById, getGamesJournal, getSetting, listPublishedBlogs } from '@/lib/db';
 import { buildDirectoryEntry, countCommentary } from '@/lib/blog-directory';
 import type { DirectoryEntry } from '@/lib/blog-directory';
 
 /**
- * Counting what each game has written about it means reading the author's whole
- * journal (the entries carry their pasted images), so a visit within this long
- * of the last one is answered from memory. It is per server instance, so a game
- * shared or un-shared on another instance can take this long to show up there.
+ * Counting what each game has written about it reads the shared games' journal
+ * entries (image-free copies, small), so a visit within this long of the last one
+ * is answered from memory. It is per server instance, so a game shared or
+ * un-shared on another instance can take this long to show up there.
  */
 export const DIRECTORY_CACHE_MS = 60_000;
 
@@ -39,7 +39,7 @@ async function readDirectory(): Promise<OwnedEntry[]> {
   const perOwner = await Promise.all([...byOwner].map(async ([ownerId, gameIds]) => {
     const [games, journal, username] = await Promise.all([
       getGamesById(gameIds, ownerId),
-      getJournal(ownerId),
+      getGamesJournal(gameIds, ownerId),
       getSetting('chesscom_username', ownerId),
     ]);
     const commentary = countCommentary(journal, new Set(gameIds));

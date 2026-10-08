@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { Chess } from 'chess.js';
-import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
+import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
 import { summarizeAnalysis } from '@/lib/analysis-utils';
 import { resolveGameDates } from '@/lib/game-dates';
 import { ratingsFromPgn } from '@/lib/players';
@@ -72,9 +72,11 @@ export async function POST(
       );
     }
 
+    // Only this game's journal entries, without their pasted images: the whole
+    // journal is ~80 MB of images the blog never shows (see lib/journal-copies.ts)
     const [game, journalEntries, analysis, username] = await Promise.all([
       getGame(gameId, ownerId),
-      getJournal(ownerId),
+      getGamesJournal([gameId], ownerId),
       getAnalysis(gameId, ownerId),
       getSetting('chesscom_username', ownerId),
     ]);
