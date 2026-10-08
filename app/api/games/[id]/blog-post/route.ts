@@ -5,17 +5,17 @@ import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/li
 import { summarizeAnalysis } from '@/lib/analysis-utils';
 import { resolveGameDates } from '@/lib/game-dates';
 import { ratingsFromPgn } from '@/lib/players';
+import { recordVisit } from '@/lib/blog-visits-server';
 import { formatSanLine, uciLineToSan } from '@/lib/position-facts';
 
 // Resolve whose game this is without requiring the viewer to be logged in.
 // A published (shared) game is readable by anyone — including signed-in users
 // who aren't the author. An unpublished game is visible only to its author
-// via their session, so they can preview a draft before sharing.
-async function resolveBlogOwner(gameId: string): Promise<string | null> {
-  const publishedOwner = await getBlogOwner(gameId);
-  if (publishedOwner) return publishedOwner;
-  const { userId } = await auth();
-  return userId ?? null;
+// via their session, so they can preview a draft before sharing. The viewer is
+// returned too, so the visit can be logged as the author's own or someone else's.
+async function resolveBlogOwner(gameId: string): Promise<{ ownerId: string | null; viewerId: string | null }> {
+  const [publishedOwner, { userId }] = await Promise.all([getBlogOwner(gameId), auth()]);
+  return { ownerId: publishedOwner ?? userId ?? null, viewerId: userId ?? null };
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -64,7 +64,7 @@ export async function POST(
   try {
     const { id: gameId } = await params;
 
-    const ownerId = await resolveBlogOwner(gameId);
+    const { ownerId, viewerId } = await resolveBlogOwner(gameId);
     if (!ownerId) {
       return NextResponse.json(
         { error: 'This blog post hasn’t been shared by its author.' },
@@ -82,6 +82,13 @@ export async function POST(
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
+
+    // Every blog page loads through here once, so this is where a game's views are logged
+    await recordVisit(ownerId, request.headers, {
+      page: 'game',
+      gameId,
+      viewer: viewerId === ownerId ? 'owner' : 'visitor',
+    });
 
     const usernameLC = (username || '').toLowerCase();
     const userColor: 'white' | 'black' =

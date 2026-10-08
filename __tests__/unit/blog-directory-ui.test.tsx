@@ -1,18 +1,11 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 // The matcher Clerk's createRouteMatcher is built on. (The test setup replaces
 // createRouteMatcher itself with a stub that matches nothing.)
 import { createPathMatcher } from '@clerk/shared/pathMatcher';
 import type { DirectoryEntry } from '@/lib/blog-directory';
 import { PUBLIC_ROUTES } from '@/lib/public-routes';
-
-vi.mock('@/lib/blog-directory-server', () => ({ loadBlogDirectory: vi.fn() }));
-
 import { BlogDirectory } from '@/components/BlogDirectory';
-import BlogDirectoryPage, { dynamic, metadata } from '@/app/blog/page';
-import { loadBlogDirectory } from '@/lib/blog-directory-server';
-
-const mockLoad = vi.mocked(loadBlogDirectory);
 
 const entry = (over: Partial<DirectoryEntry> = {}): DirectoryEntry => ({
   gameId: '100', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
@@ -259,56 +252,9 @@ describe('BlogDirectory — ratings and profile links', () => {
   });
 });
 
-// ─── the page ─────────────────────────────────────────────────────────────────
-
-describe('the directory page', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-  });
-
-  it('is read on each visit, not when the site is built', () => {
-    expect(dynamic).toBe('force-dynamic');
-  });
-
-  it('has a title and description of its own', () => {
-    expect(metadata.title).toBe('Game blogs — Chess Diary');
-    expect(String(metadata.description)).toContain('guess the move');
-  });
-
-  it('introduces the games and lists them, newest first, whatever order they were read in', async () => {
-    mockLoad.mockResolvedValue([entries[2], entries[0], entries[1]]);
-    const html = renderToStaticMarkup(await BlogDirectoryPage());
-
-    expect(html).toContain('<h1');
-    expect(textOf(html)).toContain('Game blogs');
-    expect(textOf(html)).toContain('you can try to guess my move');
-    const order = ['300', '200', '100'].map(id => html.indexOf(`href="/blog/${id}"`));
-    expect(order.every(i => i > 0)).toBe(true);
-    expect(order).toEqual([...order].sort((a, b) => a - b));
-  });
-
-  it('says so, in an alert, when the games cannot be read, rather than failing the page', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mockLoad.mockRejectedValue(new Error('redis down'));
-    const html = renderToStaticMarkup(await BlogDirectoryPage());
-
-    expect(html).toContain('role="alert"');
-    expect(textOf(html)).toContain('couldn\'t be loaded right now');
-    expect(textOf(html)).toContain('Game blogs');
-    expect(html).not.toContain('redis down');
-    expect(log).toHaveBeenCalled();
-    log.mockRestore();
-  });
-
-  it('says so, but not as an error, when nothing has been shared', async () => {
-    mockLoad.mockResolvedValue([]);
-    const html = renderToStaticMarkup(await BlogDirectoryPage());
-    expect(textOf(html)).toContain('No games have been shared yet.');
-    expect(html).not.toContain('role="alert"');
-  });
-});
-
 // ─── who can open it ──────────────────────────────────────────────────────────
+// (The directory page's own rules -- the secret key, the author -- are tested in
+// blog-directory-page.test.tsx.)
 
 describe('public routes', () => {
   const open = createPathMatcher(PUBLIC_ROUTES);
@@ -325,7 +271,10 @@ describe('public routes', () => {
   });
 
   it('keeps everything else behind sign-in', () => {
-    for (const path of ['/', '/journal', '/games', '/settings', '/api/games', '/api/journal', '/api/games/952794945/share', '/backups']) {
+    for (const path of [
+      '/', '/journal', '/games', '/settings', '/api/games', '/api/journal', '/api/games/952794945/share', '/backups',
+      '/visitors', '/api/blog-visits', '/api/blog-directory/key',
+    ]) {
       expect(open(path), path).toBe(false);
     }
   });

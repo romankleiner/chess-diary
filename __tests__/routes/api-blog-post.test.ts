@@ -9,10 +9,14 @@ vi.mock('@/lib/db', () => ({
   getSetting: vi.fn(),
   getBlogOwner: vi.fn(),
 }));
+vi.mock('@/lib/blog-visits-server', () => ({ recordVisit: vi.fn() }));
 
 import { POST } from '@/app/api/games/[id]/blog-post/route';
 import { getGame, getJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
+import { recordVisit } from '@/lib/blog-visits-server';
 import { auth } from '@clerk/nextjs/server';
+
+const mockRecordVisit = vi.mocked(recordVisit);
 
 const mockGetGame      = vi.mocked(getGame);
 const mockGetJournal   = vi.mocked(getJournal);
@@ -562,6 +566,55 @@ describe('POST /api/games/[id]/blog-post — game dates', () => {
     const m = await meta({ pgn: '', date: '2026-07-24', result: 'win' });
     expect(m.startDate).toBeNull();
     expect(m.endDate).toBe('2026-07-24');
+  });
+});
+
+describe('POST /api/games/[id]/blog-post — logging the visit', () => {
+  const visitReq = () => new NextRequest(`http://localhost/api/games/${gameA.id}/blog-post`, {
+    method: 'POST',
+    headers: { 'x-real-ip': '203.0.113.7', 'user-agent': 'Mozilla/5.0' },
+  });
+
+  it('logs a reader’s view of a shared game against its author', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as never);
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetGame.mockResolvedValue(gameA);
+    await POST(visitReq(), params(gameA.id));
+
+    expect(mockRecordVisit).toHaveBeenCalledTimes(1);
+    const [owner, headers, details] = mockRecordVisit.mock.calls[0];
+    expect(owner).toBe('owner-abc');
+    expect(headers.get('x-real-ip')).toBe('203.0.113.7');
+    expect(details).toEqual({ page: 'game', gameId: gameA.id, viewer: 'visitor' });
+  });
+
+  it('logs a signed-in reader who is not the author as a visitor', async () => {
+    mockAuth.mockResolvedValue({ userId: 'someone-else' } as never);
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetGame.mockResolvedValue(gameA);
+    await POST(visitReq(), params(gameA.id));
+    expect(mockRecordVisit.mock.calls[0][2]).toMatchObject({ viewer: 'visitor' });
+  });
+
+  it('logs the author’s own look (a shared game, or a draft preview) as theirs', async () => {
+    mockGetGame.mockResolvedValue(gameA);
+    mockAuth.mockResolvedValue({ userId: 'owner-abc' } as never);
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    await POST(visitReq(), params(gameA.id));
+    mockGetBlogOwner.mockResolvedValue(null); // unshared: a preview
+    await POST(visitReq(), params(gameA.id));
+
+    expect(mockRecordVisit.mock.calls.map(c => [c[0], c[2].viewer])).toEqual([['owner-abc', 'owner'], ['owner-abc', 'owner']]);
+  });
+
+  it('logs nothing for a game that is not shared, or that is not there', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as never);
+    mockGetBlogOwner.mockResolvedValue(null);
+    await POST(visitReq(), params(gameA.id));
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetGame.mockResolvedValue(null);
+    await POST(visitReq(), params('ghost'));
+    expect(mockRecordVisit).not.toHaveBeenCalled();
   });
 });
 

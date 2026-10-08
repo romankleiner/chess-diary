@@ -1,7 +1,9 @@
 import Redis from 'ioredis';
+import { randomBytes } from 'crypto';
 import { auth } from '@clerk/nextjs/server';
 import { withCurrentAccuracy } from './analysis-utils';
 import type { Game } from '@/types';
+import { BLOG_VISITS_KEPT } from './access-log';
 
 export interface DatabaseData {
   games: Record<string, any>;
@@ -276,6 +278,92 @@ export async function listPublishedBlogs(): Promise<Array<{ gameId: string; owne
   const client = getRedisClient();
   const raw = await client.hgetall(PUBLIC_BLOG_KEY);
   return Object.entries(raw).map(([gameId, ownerId]) => ({ gameId, ownerId }));
+}
+
+// ============================================================
+// Directory keys — the secret link to an author's directory of shared games
+//   chess-diary:{uid}:directory-key    string: the author's current key
+//   chess-diary:public:directory-keys  hash:   key → uid, to find whose directory a key opens
+//
+// Kept apart from the settings hash, which the Settings page rewrites as a whole.
+// A key opens a directory only while it is still its author's current key, so a
+// replaced key stops working even if its entry in the lookup somehow survives.
+// ============================================================
+
+const DIRECTORY_KEYS = 'chess-diary:public:directory-keys';
+const directoryKeyOf = (uid: string) => `chess-diary:${uid}:directory-key`;
+
+/** 128 random bits as 22 characters of base64url. */
+function newDirectoryKey(): string {
+  return randomBytes(16).toString('base64url');
+}
+
+/** Whose directory a key opens, or null. Public read, by design: the key is the permission. */
+export async function getDirectoryOwner(key: string): Promise<string | null> {
+  const client = getRedisClient();
+  const uid = await client.hget(DIRECTORY_KEYS, key);
+  if (!uid) return null;
+  return (await client.get(directoryKeyOf(uid))) === key ? uid : null;
+}
+
+/** The author's key, made the first time it is asked for. */
+export async function getOrCreateDirectoryKey(userId: string): Promise<string> {
+  const client = getRedisClient();
+  const own = directoryKeyOf(userId);
+  let key = await client.get(own);
+  if (!key) {
+    // Two first visits at once must agree on one key: only one SET NX wins
+    const candidate = newDirectoryKey();
+    key = (await client.set(own, candidate, 'NX')) ? candidate : await client.get(own);
+    if (!key) throw new Error('Could not create a directory key');
+  }
+  // Also mends a lookup lost to a partial restore
+  await client.hset(DIRECTORY_KEYS, key, userId);
+  return key;
+}
+
+/** Replace the author's key: the old link stops working at once. */
+export async function rotateDirectoryKey(userId: string): Promise<string> {
+  const client = getRedisClient();
+  const own = directoryKeyOf(userId);
+  const old = await client.get(own);
+  const key = newDirectoryKey();
+  const pipeline = client.pipeline();
+  pipeline.set(own, key);
+  pipeline.hset(DIRECTORY_KEYS, key, userId);
+  if (old) pipeline.hdel(DIRECTORY_KEYS, old);
+  await pipeline.exec();
+  return key;
+}
+
+// ============================================================
+// Blog visits — Redis List: chess-diary:{uid}:blog-visits, newest first
+//   value = JSON visit (see lib/access-log.ts). Capped at BLOG_VISITS_KEPT,
+//   so a flood of requests can't grow it without limit.
+// ============================================================
+
+const blogVisitsOf = (uid: string) => `chess-diary:${uid}:blog-visits`;
+
+export async function recordBlogVisit(userId: string, visit: object): Promise<void> {
+  const client = getRedisClient();
+  const key = blogVisitsOf(userId);
+  const pipeline = client.pipeline();
+  pipeline.lpush(key, JSON.stringify(visit));
+  pipeline.ltrim(key, 0, BLOG_VISITS_KEPT - 1);
+  await pipeline.exec();
+}
+
+/** The most recent visits, newest first; a line that isn't JSON is skipped. */
+export async function getBlogVisits(userId: string, limit = BLOG_VISITS_KEPT): Promise<unknown[]> {
+  // LRANGE 0 -1 means "to the end", so asking for none must not reach Redis
+  if (limit <= 0) return [];
+  const client = getRedisClient();
+  const lines = await client.lrange(blogVisitsOf(userId), 0, limit - 1);
+  const visits: unknown[] = [];
+  for (const line of lines) {
+    try { visits.push(JSON.parse(line)); } catch { /* skip */ }
+  }
+  return visits;
 }
 
 // ============================================================

@@ -1,10 +1,11 @@
 /**
- * Reading the public directory out of the database: every game its author has
+ * Reading the public directory out of the database: every game an author has
  * shared, with what the directory shows of each. Server only. (What a row is,
  * and how rows are ordered and filtered, is in lib/blog-directory.ts.)
  *
  * Nothing is listed that was not shared: the index it starts from is the one
  * "Share link" writes to, and a game not in it cannot be opened by anyone else.
+ * Each author has their own directory, opened by their own secret key.
  */
 import { getGamesById, getJournal, getSetting, listPublishedBlogs } from '@/lib/db';
 import { buildDirectoryEntry, countCommentary } from '@/lib/blog-directory';
@@ -18,14 +19,16 @@ import type { DirectoryEntry } from '@/lib/blog-directory';
  */
 export const DIRECTORY_CACHE_MS = 60_000;
 
-let cached: { at: number; entries: DirectoryEntry[] } | null = null;
+interface OwnedEntry { ownerId: string; entry: DirectoryEntry }
+
+let cached: { at: number; rows: OwnedEntry[] } | null = null;
 
 /** Forget the remembered directory, so the next visit reads it afresh. */
 export function clearBlogDirectoryCache(): void {
   cached = null;
 }
 
-async function readDirectory(): Promise<DirectoryEntry[]> {
+async function readDirectory(): Promise<OwnedEntry[]> {
   const published = await listPublishedBlogs();
 
   const byOwner = new Map<string, string[]>();
@@ -42,21 +45,25 @@ async function readDirectory(): Promise<DirectoryEntry[]> {
     const commentary = countCommentary(journal, new Set(gameIds));
 
     // A published game whose record has gone is skipped rather than listed with nothing to open
-    return gameIds.filter(id => games[id]).map(gameId => buildDirectoryEntry({
-      gameId,
-      game: games[gameId],
-      username,
-      commentedMoves: commentary.get(gameId)?.commentedMoves ?? 0,
-      hasSummary: commentary.get(gameId)?.hasSummary ?? false,
+    return gameIds.filter(id => games[id]).map(gameId => ({
+      ownerId,
+      entry: buildDirectoryEntry({
+        gameId,
+        game: games[gameId],
+        username,
+        commentedMoves: commentary.get(gameId)?.commentedMoves ?? 0,
+        hasSummary: commentary.get(gameId)?.hasSummary ?? false,
+      }),
     }));
   }));
 
   return perOwner.flat();
 }
 
-export async function loadBlogDirectory(now: number = Date.now()): Promise<DirectoryEntry[]> {
-  if (cached && now - cached.at < DIRECTORY_CACHE_MS) return cached.entries;
-  const entries = await readDirectory();
-  cached = { at: now, entries };
-  return entries;
+/** The games one author has shared. */
+export async function loadBlogDirectory(ownerId: string, now: number = Date.now()): Promise<DirectoryEntry[]> {
+  if (!cached || now - cached.at >= DIRECTORY_CACHE_MS) {
+    cached = { at: now, rows: await readDirectory() };
+  }
+  return cached.rows.filter(row => row.ownerId === ownerId).map(row => row.entry);
 }

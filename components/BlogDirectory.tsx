@@ -7,7 +7,7 @@
  * what a row says and how the list is filtered is lib/blog-directory.ts.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { PlayerLink, ResultBadge } from '@/components/blog-shared';
 import { formatPlayer } from '@/lib/players';
@@ -15,6 +15,7 @@ import {
   NO_FILTER, describeCommentary, filterDirectory, formatDateRange, groupByMonth, tallyResults,
 } from '@/lib/blog-directory';
 import type { DirectoryEntry, DirectoryFilter } from '@/lib/blog-directory';
+import { DIRECTORY_KEY_STORAGE } from '@/lib/directory-key';
 
 const RESULT_FILTERS: Array<{ value: DirectoryFilter['result']; label: string }> = [
   { value: 'all', label: 'All' },
@@ -25,12 +26,19 @@ const RESULT_FILTERS: Array<{ value: DirectoryFilter['result']; label: string }>
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export function BlogDirectory({ entries, initialFilter = NO_FILTER }: {
+export function BlogDirectory({ entries, initialFilter = NO_FILTER, directoryKey }: {
   entries: DirectoryEntry[];
   /** The search and filter to start with; none unless asked for. */
   initialFilter?: DirectoryFilter;
+  /** The key this directory was opened with: remembered for the visit, so a game can link back here. */
+  directoryKey?: string;
 }) {
   const [filter, setFilter] = useState<DirectoryFilter>(initialFilter);
+
+  useEffect(() => {
+    if (!directoryKey) return;
+    try { sessionStorage.setItem(DIRECTORY_KEY_STORAGE, directoryKey); } catch { /* storage may be off */ }
+  }, [directoryKey]);
 
   const tally = useMemo(() => tallyResults(entries), [entries]);
   const shown = useMemo(() => filterDirectory(entries, filter), [entries, filter]);

@@ -34,6 +34,9 @@ export default function RootLayout({
                     <Link href="/blog" className="hover:text-gray-300">
                       Blog
                     </Link>
+                    <Link href="/visitors" className="hover:text-gray-300">
+                      Visitors
+                    </Link>
                     <Link href="/settings" className="hover:text-gray-300">
                       Settings
                     </Link>

@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { MoveSection, GameWalkthrough, GameDates, GamePlayers, ResultBadge } from '@/components/blog-shared';
+import { directoryPath, storedDirectoryKey } from '@/lib/directory-key';
 import type { AnalysisSummary } from '@/lib/analysis-utils';
 
 interface GameMeta {
@@ -29,6 +30,11 @@ interface BlogData {
 
 type Status = 'loading' | 'done' | 'error';
 
+// The directory key this browser was given this visit, if any (see BlogDirectory)
+const noSubscription = () => () => {};
+const readStoredKey = () => storedDirectoryKey(() => sessionStorage);
+const useStoredDirectoryKey = () => useSyncExternalStore(noSubscription, readStoredKey, () => null);
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function BlogPage() {
@@ -38,6 +44,7 @@ export default function BlogPage() {
   const [status, setStatus]   = useState<Status>('loading');
   const [data, setData]       = useState<BlogData | null>(null);
   const [error, setError]     = useState('');
+  const directoryKey = useStoredDirectoryKey();
 
   const load = async () => {
     setStatus('loading');
@@ -82,12 +89,16 @@ export default function BlogPage() {
           >
             ♟ Chess Diary
           </a>
-          <Link
-            href="/blog"
-            className="text-sm font-medium text-purple-700 dark:text-purple-300 hover:underline"
-          >
-            ← All games
-          </Link>
+          {/* Only for readers who came through the directory: a game link shared
+              on its own doesn't lead to the rest (the directory is unlisted) */}
+          {directoryKey && (
+            <Link
+              href={directoryPath(directoryKey)}
+              className="text-sm font-medium text-purple-700 dark:text-purple-300 hover:underline"
+            >
+              ← All games
+            </Link>
+          )}
         </div>
       </header>
 
