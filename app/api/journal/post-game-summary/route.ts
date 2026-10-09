@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getJournal, getGame, getAnalysis, getSetting, saveJournalEntry, getJournalEntry } from '@/lib/db';
+import { getJournal, getGame, getAnalysis, getSetting, saveJournalEntry, getJournalEntry, publishBlog } from '@/lib/db';
 import { computeStatistics } from '@/lib/analysis-utils';
 import { getLocalTimestamp } from '@/lib/timestamps';
+import { clearBlogDirectoryCache } from '@/lib/blog-directory-server';
+import { isGameOver } from '@/lib/game-status';
 
 // GET: Check if a post-game summary exists for a gameId
 export async function GET(request: NextRequest) {
@@ -91,7 +93,22 @@ export async function POST(request: NextRequest) {
 
     await saveJournalEntry(entry);
 
-    return NextResponse.json({ success: true, entry });
+    // The summary means the review is finished, so the game's blog is ready:
+    // share it, which lists it in the author's directory too. Only on creation
+    // -- editing the summary later never re-shares a game the author un-shared.
+    // A failure here leaves the summary saved; "Share link" still works.
+    let published = false;
+    if (game && isGameOver(game.result)) {
+      try {
+        await publishBlog(gameId);
+        clearBlogDirectoryCache();
+        published = true;
+      } catch (error) {
+        console.error('Error publishing the blog after a post-game summary:', error);
+      }
+    }
+
+    return NextResponse.json({ success: true, entry, published });
   } catch (error) {
     console.error('Error creating post-game summary:', error);
     return NextResponse.json({ error: 'Failed to create summary' }, { status: 500 });

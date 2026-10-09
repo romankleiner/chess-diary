@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { isGameOver } from '@/lib/game-status';
 
 interface Statistics {
   totalMoves: number;
@@ -23,7 +24,8 @@ interface PostGameSummaryFormProps {
   gameId: string;
   gameSnapshot: GameSnapshot | null;
   statistics: Statistics | null;
-  onSaved: (entry: any) => void;
+  /** `published`: whether saving also shared the game's blog (it does once the game is over) */
+  onSaved: (entry: any, published: boolean) => void;
   onCancel: () => void;
 }
 
@@ -54,7 +56,7 @@ export default function PostGameSummaryForm({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save');
-      onSaved(data.entry);
+      onSaved(data.entry, data.published === true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save summary');
     } finally {
@@ -194,6 +196,12 @@ export default function PostGameSummaryForm({
 
       {error && (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      )}
+
+      {isGameOver(gameSnapshot?.result) && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Saving also shares this game’s blog and lists it in your directory.
+        </p>
       )}
 
       {/* Actions */}

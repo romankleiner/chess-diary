@@ -512,11 +512,13 @@ export default function GamesPage() {
               gameId={summaryGameData.gameId}
               gameSnapshot={summaryGameData.gameSnapshot}
               statistics={summaryGameData.statistics}
-              onSaved={() => {
+              onSaved={(_entry, published) => {
                 setExistingSummaries(prev => new Set([...prev, summaryGameData.gameId]));
                 setShowSummaryForm(null);
                 setSummaryGameData(null);
-                showToast('🏁 Post-game summary saved to journal!');
+                showToast(published
+                  ? '🏁 Summary saved, and the game is now on your blog'
+                  : '🏁 Post-game summary saved to journal!');
               }}
               onCancel={() => {
                 setShowSummaryForm(null);

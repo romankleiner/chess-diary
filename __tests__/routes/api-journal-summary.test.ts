@@ -9,12 +9,17 @@ vi.mock('@/lib/db', () => ({
   getSetting: vi.fn(),
   saveJournalEntry: vi.fn(),
   getJournalEntry: vi.fn(),
+  publishBlog: vi.fn(),
+}));
+vi.mock('@/lib/blog-directory-server', () => ({
+  clearBlogDirectoryCache: vi.fn(),
 }));
 
 import { GET, POST, PUT } from '@/app/api/journal/post-game-summary/route';
 import {
-  getJournal, getGame, getAnalysis, getSetting, saveJournalEntry, getJournalEntry,
+  getJournal, getGame, getAnalysis, getSetting, saveJournalEntry, getJournalEntry, publishBlog,
 } from '@/lib/db';
+import { clearBlogDirectoryCache } from '@/lib/blog-directory-server';
 
 const mockGetJournal = vi.mocked(getJournal);
 const mockGetGame = vi.mocked(getGame);
@@ -22,10 +27,13 @@ const mockGetAnalysis = vi.mocked(getAnalysis);
 const mockGetSetting = vi.mocked(getSetting);
 const mockSaveEntry = vi.mocked(saveJournalEntry);
 const mockGetEntry = vi.mocked(getJournalEntry);
+const mockPublishBlog = vi.mocked(publishBlog);
+const mockClearDirectory = vi.mocked(clearBlogDirectoryCache);
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockSaveEntry.mockResolvedValue(undefined);
+  mockPublishBlog.mockResolvedValue(undefined);
 });
 
 // ─── GET ──────────────────────────────────────────────────────────────────────
@@ -212,5 +220,93 @@ describe('PUT /api/journal/post-game-summary', () => {
     expect(entry.postGameSummary.reflections.whatWentWell).toBe('Good opening play');
     // New field should be updated
     expect(entry.postGameSummary.reflections.nextSteps).toBe('Study endgames');
+  });
+
+  it('never shares the blog: editing a summary must not re-share a game its author un-shared', async () => {
+    mockGetEntry.mockResolvedValue({ ...summaryEntry });
+    const req = new NextRequest('http://localhost/api/journal/post-game-summary', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: summaryEntry.id, reflections: { nextSteps: 'Study endgames' } }),
+    });
+    expect((await PUT(req)).status).toBe(200);
+    expect(mockPublishBlog).not.toHaveBeenCalled();
+  });
+});
+
+// ─── POST — sharing the blog ──────────────────────────────────────────────────
+
+describe('POST /api/journal/post-game-summary — sharing the blog', () => {
+  const post = (gameId: string | null = gameA.id) => POST(new NextRequest('http://localhost/api/journal/post-game-summary', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, reflections: { lessonsLearned: 'Check for forks' } }),
+  }));
+
+  beforeEach(() => {
+    mockGetJournal.mockResolvedValue([]);
+    mockGetGame.mockResolvedValue(gameA);
+    mockGetAnalysis.mockResolvedValue(null);
+    mockGetSetting.mockResolvedValue('testuser');
+  });
+
+  it('shares a finished game’s blog once its summary is saved, and says so', async () => {
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true, published: true });
+    expect(mockPublishBlog).toHaveBeenCalledTimes(1);
+    expect(mockPublishBlog).toHaveBeenCalledWith(gameA.id);
+  });
+
+  it('saves the summary first, so the shared blog already ends with it', async () => {
+    await post();
+    expect(mockSaveEntry.mock.invocationCallOrder[0]).toBeLessThan(mockPublishBlog.mock.invocationCallOrder[0]);
+  });
+
+  it('has the directory read afresh, so the game is listed at once', async () => {
+    await post();
+    expect(mockClearDirectory).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['no result yet', null],
+    ['an empty result', ''],
+    ['the text "null"', 'null'],
+    ['a result still in progress', 'in_progress'],
+  ])('never shares a game still being played (%s) — the opponent could read the thinking', async (_name, result) => {
+    mockGetGame.mockResolvedValue({ ...gameA, result });
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true, published: false });
+    expect(mockSaveEntry).toHaveBeenCalledTimes(1);
+    expect(mockPublishBlog).not.toHaveBeenCalled();
+    expect(mockClearDirectory).not.toHaveBeenCalled();
+  });
+
+  it('never shares a game that isn’t the caller’s', async () => {
+    mockGetGame.mockResolvedValue(null);
+    expect(await (await post('someone-elses-game')).json()).toMatchObject({ published: false });
+    expect(mockPublishBlog).not.toHaveBeenCalled();
+  });
+
+  it('still saves the summary when sharing fails, and says it wasn’t shared', async () => {
+    mockPublishBlog.mockRejectedValue(new Error('redis down'));
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true, published: false });
+    expect(mockSaveEntry).toHaveBeenCalledTimes(1);
+    expect(mockClearDirectory).not.toHaveBeenCalled();
+  });
+
+  it('shares nothing when the summary can’t be saved', async () => {
+    mockSaveEntry.mockRejectedValue(new Error('redis down'));
+    expect((await post()).status).toBe(500);
+    expect(mockPublishBlog).not.toHaveBeenCalled();
+  });
+
+  it('shares nothing when the game already has a summary', async () => {
+    mockGetJournal.mockResolvedValue([summaryEntry]);
+    expect((await post(summaryEntry.gameId)).status).toBe(409);
+    expect(mockPublishBlog).not.toHaveBeenCalled();
   });
 });
