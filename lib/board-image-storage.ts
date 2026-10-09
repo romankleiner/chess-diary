@@ -1,65 +1,55 @@
 import { put, head, list, del } from '@vercel/blob';
+import { boardCacheKey, chessvisionUrl, parseBoardImageRequest } from './board-image-request';
+import type { BoardImageRequest } from './board-image-request';
 
 /**
- * Get a cached board image from Vercel Blob storage (PUBLIC store)
- * If the image doesn't exist, fetch it from chess-api.com and cache it
+ * The stored image of this diagram, or null if there isn't one. A single
+ * HEAD on the store: cheap, and the only thing an anonymous request can cost
+ * (see app/api/board-image/route.ts).
  */
-export async function getCachedBoardImage(
-  fen: string, 
-  pov: 'white' | 'black' = 'white'
-): Promise<string> {
-  // Strip move numbers from FEN if present (some APIs don't accept them)
-  // FEN format: position active castling en-passant halfmove fullmove
-  // We only need: position active castling en-passant
-  const fenParts = fen.trim().split(/\s+/);
-  const fenForRendering = fenParts.slice(0, 4).join(' '); // Keep only first 4 parts
-  
-  // Create cache key based on FEN and perspective
-  const cacheKey = `boards/${Buffer.from(fenForRendering).toString('base64').replace(/\//g, '_')}-${pov}.png`;
-  
+export async function findCachedBoardImage(request: Pick<BoardImageRequest, 'fen4' | 'pov'>): Promise<string | null> {
   try {
-    // Check if image exists in PUBLIC blob storage
-    const exists = await head(cacheKey, {
-      token: process.env.BLOB_IMAGES_READ_WRITE_TOKEN,
-    });
-    if (exists) {
-      console.log('[BOARD-CACHE] Cache hit:', cacheKey);
-      return exists.url; // Return CDN URL
-    }
-  } catch (error) {
-    // Image doesn't exist, need to generate
-    console.log('[BOARD-CACHE] Cache miss:', cacheKey);
+    const found = await head(boardCacheKey(request), { token: process.env.BLOB_IMAGES_READ_WRITE_TOKEN });
+    return found?.url ?? null;
+  } catch {
+    // head() throws for a blob that isn't there
+    return null;
   }
-  
-  // Generate image from chessvision.ai
-  const fenActiveSide = fenParts[1] === 'b' ? 'black' : 'white';
-  const apiUrl = `https://fen2image.chessvision.ai/${fenParts[0]}?turn=${fenActiveSide}&pov=${pov}`;
-  
-  console.log('[BOARD-CACHE] Fetching from chessvision.ai:', apiUrl);
-  
-  const response = await fetch(apiUrl, { redirect: 'follow' });
-  
+}
+
+/**
+ * Make the diagram with the image service and store it publicly; returns its
+ * address. This is what costs: a fetch from a third party and a write to the
+ * store, so only trusted callers (the signed-in author, the export) reach it.
+ */
+export async function generateBoardImage(request: BoardImageRequest): Promise<string> {
+  const response = await fetch(chessvisionUrl(request), { redirect: 'follow' });
   if (!response.ok) {
     throw new Error(`Failed to fetch board image from chessvision.ai: ${response.status} ${response.statusText}`);
   }
-  
-  const imageBuffer = await response.arrayBuffer();
-  
-  // Upload to blob storage with public access. allowOverwrite is required
-  // because head()+put() isn't atomic: two concurrent cache misses for the
-  // same FEN/pov both reach here and race to write the same key. The key is
-  // deterministic (same FEN+pov ⇒ same image), so the loser overwriting with
-  // an equivalent image is harmless — without this flag, put() throws.
-  console.log('[BOARD-CACHE] Uploading to blob storage...');
-  const blob = await put(cacheKey, imageBuffer, {
+  const image = await response.arrayBuffer();
+
+  // allowOverwrite: two simultaneous misses for the same diagram both write the
+  // same key. The key is deterministic (same position and side ⇒ same image), so
+  // the second write is harmless; without the flag, put() throws.
+  const blob = await put(boardCacheKey(request), image, {
     access: 'public',
     contentType: 'image/png',
     token: process.env.BLOB_IMAGES_READ_WRITE_TOKEN,
     allowOverwrite: true,
   });
-  
-  console.log('[BOARD-CACHE] Cached:', blob.url);
   return blob.url;
+}
+
+/**
+ * The stored image of a position, made and stored first if need be. For trusted
+ * server-side callers only (the Word export): it always may generate. Throws for
+ * a position that isn't one.
+ */
+export async function getCachedBoardImage(fen: string, pov: 'white' | 'black' = 'white'): Promise<string> {
+  const request = parseBoardImageRequest(fen, pov);
+  if ('error' in request) throw new Error(request.error);
+  return (await findCachedBoardImage(request)) ?? generateBoardImage(request);
 }
 
 /**

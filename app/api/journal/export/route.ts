@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getJournal, getGames, getAnalysis, saveJournalEntry } from '@/lib/db';
 import { refreshSummaryAccuracy } from '@/lib/summary-accuracy';
+import { getCachedBoardImage } from '@/lib/board-image-storage';
 
 export const maxDuration = 60; // Vercel Pro allows up to 60s — large exports need the room
 
@@ -183,9 +184,16 @@ export async function GET(request: NextRequest) {
                         }
                       }
 
-                      const boardUrl = `${request.nextUrl.origin}/api/board-image?fen=${encodeURIComponent(entry.fen)}&pov=${pov}`;
-                      const boardResponse = await fetch(boardUrl);
-                      if (boardResponse.ok) {
+                      // Straight from the store, making the image if need be -- not
+                      // through the public endpoint, which makes new images only for
+                      // a signed-in browser. A failure leaves the position as text below.
+                      const boardResponse = await getCachedBoardImage(entry.fen, pov === 'black' ? 'black' : 'white')
+                        .then(url => fetch(url))
+                        .catch((error: unknown) => {
+                          console.error(`[EXPORT] Entry ${entry.id}: Failed to generate board -`, error instanceof Error ? error.message : error);
+                          return null;
+                        });
+                      if (boardResponse?.ok) {
                         const arrayBuffer = await boardResponse.arrayBuffer();
                         imageBuffer = Buffer.from(arrayBuffer);
 
@@ -203,7 +211,7 @@ export async function GET(request: NextRequest) {
                           }
                           entriesToPersist.set(originalEntry.id, originalEntry);
                         }
-                      } else {
+                      } else if (boardResponse) {
                         const errorText = await boardResponse.text();
                         console.error(`[EXPORT] Entry ${entry.id}: Failed to generate board - ${boardResponse.status}: ${errorText}`);
                       }

@@ -17,7 +17,7 @@
 
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { gameA, thoughtEntry, moveEntry, summaryEntry } from '../helpers/fixtures';
+import { gameA, gameB, thoughtEntry, moveEntry, summaryEntry, TEST_USERNAME } from '../helpers/fixtures';
 
 vi.mock('@/lib/db', () => ({
   getJournal:  vi.fn(),
@@ -26,15 +26,20 @@ vi.mock('@/lib/db', () => ({
   saveJournalEntry: vi.fn(),
 }));
 
-// Stub global fetch to prevent real HTTP calls during DOCX generation.
-// The export route optionally fetches board images from /api/board-image —
-// we return { ok: false } by default so FEN-based image generation fails
-// gracefully (the route logs the error and continues without the image).
+// The export gets a board image straight from the store (making it if need be),
+// then fetches the stored file. The store is stubbed to hand back an address, and
+// global fetch to prevent real HTTP calls: it returns { ok: false } by default so
+// image generation fails gracefully (the route logs it and writes the FEN instead).
+vi.mock('@/lib/board-image-storage', () => ({ getCachedBoardImage: vi.fn() }));
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
 
 import { GET } from '@/app/api/journal/export/route';
 import { getJournal, getGames, getAnalysis, saveJournalEntry } from '@/lib/db';
+import { getCachedBoardImage } from '@/lib/board-image-storage';
+
+const mockBoardImage = vi.mocked(getCachedBoardImage);
+const STORED_BOARD = 'https://store.example/boards/abc-white.png';
 
 const mockGetJournal  = vi.mocked(getJournal);
 const mockGetGames    = vi.mocked(getGames);
@@ -90,6 +95,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({ ok: false, text: async () => 'not found' });
+  mockBoardImage.mockReset();
+  mockBoardImage.mockResolvedValue(STORED_BOARD);
   mockGetJournal.mockResolvedValue([]);
   mockGetGames.mockResolvedValue({});
   mockGetAnalysis.mockResolvedValue(null);
@@ -322,11 +329,46 @@ describe('GET /api/journal/export — DOCX format', () => {
 
   // ── FEN board-image fetching and caching ──────────────────────────────────
 
-  it('fetches a board image when entry has a FEN but no cached image', async () => {
+  it('gets a board image from the store when entry has a FEN but no cached image', async () => {
     mockGetJournal.mockResolvedValue([{ ...moveEntry }]); // moveEntry has a FEN
     mockGetGames.mockResolvedValue({ 'game-111': gameA });
     await readExport(await GET(makeReq(DOCX_PARAMS)));
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/board-image'));
+    expect(mockBoardImage).toHaveBeenCalledWith(moveEntry.fen, 'white');
+    expect(fetchMock).toHaveBeenCalledWith(STORED_BOARD);
+  });
+
+  it('draws the board from Black’s side for a game the author played as Black', async () => {
+    mockGetJournal.mockResolvedValue([{ ...moveEntry, gameId: gameB.id }]);
+    mockGetGames.mockResolvedValue({ [gameB.id]: gameB });
+    await readExport(await GET(makeReq({ ...DOCX_PARAMS, username: TEST_USERNAME })));
+    expect(mockBoardImage).toHaveBeenCalledWith(moveEntry.fen, 'black');
+  });
+
+  it('draws it from White’s side for a game the author played as White', async () => {
+    mockGetJournal.mockResolvedValue([{ ...moveEntry }]);
+    mockGetGames.mockResolvedValue({ [gameA.id]: gameA });
+    await readExport(await GET(makeReq({ ...DOCX_PARAMS, username: TEST_USERNAME })));
+    expect(mockBoardImage).toHaveBeenCalledWith(moveEntry.fen, 'white');
+  });
+
+  it('does not go through the public board-image endpoint, which makes images only for a signed-in browser', async () => {
+    mockGetJournal.mockResolvedValue([{ ...moveEntry }]);
+    mockGetGames.mockResolvedValue({ 'game-111': gameA });
+    await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/board-image'));
+  });
+
+  it('writes the position as text, and still delivers the document, when the image cannot be made', async () => {
+    mockGetJournal.mockResolvedValue([{ ...moveEntry }]);
+    mockGetGames.mockResolvedValue({ 'game-111': gameA });
+    mockBoardImage.mockRejectedValue(new Error('image service down'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+    expect(isZip(doneOf(msgs)!.data)).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSaveEntry).not.toHaveBeenCalled();
+    log.mockRestore();
   });
 
   it('skips the board-image fetch when a cached image is present at images[0]', async () => {

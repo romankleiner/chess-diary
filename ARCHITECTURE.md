@@ -107,7 +107,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 
 | Method | Route | Description |
 |---|---|---|
-| GET | `/api/board-image` | Serve a cached board diagram PNG for a FEN string |
+| GET | `/api/board-image` | A board diagram for `?fen=&pov=white|black`, by redirect. **Public** (copied blog HTML embeds these addresses), so the position must be a real one; only the signed-in author's requests make and store new images, anyone else gets a stored image or is sent to the image service itself; anonymous requests are rate limited (120 / minute / IP). See "Board Diagram Cache" |
 | GET/POST | `/api/settings` | Read / save user settings |
 | GET | `/api/models` | Claude models available for AI analysis, fetched from Anthropic and cached (`?refresh=1` bypasses the cache) |
 | GET | `/api/eval` | Engine evaluation of one position (`?fen=&depth=`), used by the public blog to rate a reader's guess. **Public** (listed in `lib/public-routes.ts`), so it validates the FEN, clamps depth to 6–18, caches, and rate-limits (30 / minute / IP → `429` + `Retry-After`) |
@@ -277,12 +277,13 @@ Both players are shown with their rating and a link to their Chess.com profile, 
 ### `lib/opening-book.ts` — Opening Book Lookup
 Reads a Polyglot binary opening book from `data/opening-book.bin` using Zobrist hashing. Returns candidate moves for a position. Pure file I/O — no network calls. Used during analysis to tag book moves.
 
-### `lib/board-image-storage.ts` — Board Diagram Cache
-Two-tier caching pipeline for board diagrams:
-1. Check Vercel Blob (public) by FEN-based key — return immediately if found
-2. Generate image from `https://fen2image.chessvision.ai`, upload to Vercel Blob, return URL
+### `lib/board-image-request.ts`, `lib/board-image-storage.ts`, `/api/board-image` — Board Diagram Cache
+Board diagrams are PNGs drawn by `https://fen2image.chessvision.ai` and kept in Vercel Blob (public), keyed by the position (placement, side to move, castling, en passant) and the side it is drawn from. The daily cron deletes images older than 90 days.
 
-Also handles migration of base64-encoded images in journal entries to Vercel Blob.
+- **Checked requests** (`parseBoardImageRequest`): the endpoint is public, because the blog's copied HTML embeds `/api/board-image` addresses that readers elsewhere load without signing in. So the position must pass chess.js's `validateFen` (four to six fields; missing move counters are filled in), at most 100 characters, and the side must be exactly `white` or `black`; anything else is a 400 before the store is touched. The image service's address and the storage key are built only from the checked fields, so a request can't steer either (path or query injection into the image service was possible before). The storage key is unchanged, so images stored before are still found; every position in the author's journal and games (829 and 112) passes the check.
+- **Only the author makes images.** `findCachedBoardImage` is a single `head()` on the store; `generateBoardImage` fetches from the image service and `put()`s the result — the part that costs. The endpoint generates only for a signed-in request. Anyone else is redirected to the stored image if there is one, or else straight to the image service, so their browser fetches the picture and nothing is spent on this account. (The chess-api.com renderer used as a fallback before no longer returns an image.)
+- **Anonymous requests are rate limited** (120 a minute per address, per server instance, `lib/rate-limit.ts`) before the store is asked. A stored image's redirect is cacheable at the CDN for an hour (`s-maxage=3600`), so repeat views of a page don't run the function; anything else is `no-store`, so the author's next request makes the real image.
+- **The Word export** calls `getCachedBoardImage` directly (find, else generate) rather than the public endpoint, which as a server-side request carries no session and could no longer make images. A failure leaves the position as text in the document. Note that the export also writes each generated diagram back into its journal entry (`images[0]`), which adds to the journal's size.
 
 ### `lib/backup-prune.ts` — Backup Retention Policy
 Tiered deletion strategy for Vercel Blob backups:
