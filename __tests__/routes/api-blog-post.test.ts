@@ -687,6 +687,41 @@ describe('POST /api/games/[id]/blog-post — analysisSummary', () => {
   });
 });
 
+describe('POST /api/games/[id]/blog-post — moveQualities', () => {
+  beforeEach(() => {
+    mockGetGame.mockResolvedValue(gameA); // 1. e4 e5 2. Nf3 Nc6
+  });
+
+  it('gives the engine’s verdict on every move of the game, in order', async () => {
+    mockGetAnalysis.mockResolvedValue({
+      ...analysisA,
+      moves: [
+        { moveNumber: 1, color: 'white', move: 'e4',  moveQuality: 'book' },
+        { moveNumber: 1, color: 'black', move: 'e5',  moveQuality: 'excellent' },
+        { moveNumber: 2, color: 'white', move: 'Nf3', moveQuality: 'inaccuracy' },
+        { moveNumber: 2, color: 'black', move: 'Nc6', moveQuality: 'blunder' },
+      ],
+    });
+    const { moveQualities } = await (await POST(makeReq(), params(gameA.id))).json();
+
+    expect(moveQualities).toEqual(['book', 'excellent', 'inaccuracy', 'blunder']);
+  });
+
+  it('leaves every move uncoloured when the game has not been analysed', async () => {
+    mockGetAnalysis.mockResolvedValue(null);
+    const { moveQualities } = await (await POST(makeReq(), params(gameA.id))).json();
+
+    expect(moveQualities).toEqual([null, null, null, null]);
+  });
+
+  it('is empty when the game has no moves to colour', async () => {
+    mockGetGame.mockResolvedValue({ ...gameA, pgn: '' });
+    const { moveQualities } = await (await POST(makeReq(), params(gameA.id))).json();
+
+    expect(moveQualities).toEqual([]);
+  });
+});
+
 describe('POST /api/games/[id]/blog-post — response shape', () => {
   beforeEach(() => {
     mockGetGame.mockResolvedValue(gameA);

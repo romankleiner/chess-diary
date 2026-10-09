@@ -8,7 +8,7 @@ import {
   QUALITY_STYLE,
   formatEval,
 } from '@/components/blog-shared';
-import type { AnalysisSummary } from '@/lib/analysis-utils';
+import type { AnalysisSummary, MoveQualityKey } from '@/lib/analysis-utils';
 
 interface BlogPostModalProps {
   gameId: string;
@@ -155,6 +155,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
   const [pgn, setPgn]             = useState('');
   const [userColor, setUserColor] = useState<'white' | 'black'>('white');
   const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null);
+  const [moveQualities, setMoveQualities] = useState<(MoveQualityKey | null)[] | null>(null);
   const [players, setPlayers]     = useState<
     { white: string; black: string; whiteRating?: number | null; blackRating?: number | null } | undefined
   >(undefined);
@@ -179,6 +180,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
       setPgn(data.pgn || '');
       setUserColor(data.userColor || 'white');
       setAnalysisSummary(data.analysisSummary ?? null);
+      setMoveQualities(data.moveQualities ?? null);
       setPlayers(data.gameMeta ? {
         white: data.gameMeta.white,
         black: data.gameMeta.black,
@@ -299,6 +301,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
               userColor={userColor}
               summary={summary}
               analysisSummary={analysisSummary}
+              moveQualities={moveQualities}
               players={players}
             />
           )}

@@ -203,6 +203,31 @@ export function summarizeAnalysis(analysis: StoredAnalysis | null | undefined): 
   return { white: side('white'), black: side('black') };
 }
 
+const normSan = (s: string) => s.replace(/[+#?!]/g, '').trim().toLowerCase();
+
+/**
+ * The engine's verdict on each move of the game, in the game's order: `plies` is
+ * the game's moves (as chess.js gives them), and entry i is the quality of ply i.
+ * A move is found in the analysis by its move number and colour, and must be the
+ * same move -- an analysis of another version of the game would colour the wrong
+ * moves. A move the analysis doesn't cover (one that stopped short of the end) or
+ * rates with no known category is null.
+ */
+export function qualitiesByPly(
+  moves: unknown,
+  plies: ReadonlyArray<{ san: string; color: 'w' | 'b' }>,
+): (MoveQualityKey | null)[] {
+  const stored = Array.isArray(moves) ? (moves as (StoredMove & { moveNumber?: unknown; move?: unknown })[]) : [];
+  return plies.map((ply, i) => {
+    const color = ply.color === 'w' ? 'white' : 'black';
+    const hit = stored.find(m => m?.moveNumber === Math.floor(i / 2) + 1 && (!m.color || m.color === color));
+    if (!hit) return null;
+    if (typeof hit.move === 'string' && normSan(hit.move) !== normSan(ply.san)) return null;
+    const quality = hit.moveQuality || hit.quality || '';
+    return (MOVE_QUALITIES as readonly string[]).includes(quality) ? quality as MoveQualityKey : null;
+  });
+}
+
 /**
  * Compute summary statistics for the user's moves in a completed game analysis.
  * Returns null if analysis data is missing.

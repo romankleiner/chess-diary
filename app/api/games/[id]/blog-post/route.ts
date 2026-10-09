@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { Chess } from 'chess.js';
 import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
-import { summarizeAnalysis } from '@/lib/analysis-utils';
+import { qualitiesByPly, summarizeAnalysis } from '@/lib/analysis-utils';
+import type { MoveQualityKey } from '@/lib/analysis-utils';
 import { resolveGameDates } from '@/lib/game-dates';
 import { ratingsFromPgn } from '@/lib/players';
 import { recordVisit } from '@/lib/blog-visits-server';
@@ -110,6 +111,9 @@ export async function POST(
     let pgnSans: string[] = [];
     let pgnFenKeys: string[] = []; // pgnFenKeys[p] = position before ply p
     let pgnFens: string[] = [];     // full FENs for chess.js parsing
+    // moveQualities[p] = the engine's verdict on ply p, which colours the move
+    // list once the reader is past it
+    let moveQualities: (MoveQualityKey | null)[] = [];
     try {
       if (game.pgn) {
         const chess = new Chess();
@@ -118,6 +122,7 @@ export async function POST(
         pgnSans    = verbose.map((m: any) => m.san as string);
         pgnFenKeys = verbose.map((m: any) => fenKey(m.before as string));
         pgnFens    = verbose.map((m: any) => m.before as string);
+        moveQualities = qualitiesByPly(analysis?.moves, verbose);
       }
     } catch { /* unparseable PGN → sections stay unanchored */ }
 
@@ -297,6 +302,7 @@ export async function POST(
       pgn: game.pgn || '',
       userColor,
       analysisSummary: summarizeAnalysis(analysis),
+      moveQualities,
       gameMeta: {
         white:       game.white       || '',
         black:       game.black       || '',

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { MoveSection, GameWalkthrough, GameDates, GamePlayers, ResultBadge } from '@/components/blog-shared';
 import { directoryPath, storedDirectoryKey } from '@/lib/directory-key';
-import type { AnalysisSummary } from '@/lib/analysis-utils';
+import type { AnalysisSummary, MoveQualityKey } from '@/lib/analysis-utils';
 
 interface GameMeta {
   white: string;
@@ -25,6 +25,7 @@ interface BlogData {
   pgn: string;
   userColor: 'white' | 'black';
   analysisSummary?: AnalysisSummary | null;
+  moveQualities?: (MoveQualityKey | null)[];
   gameMeta: GameMeta;
 }
 
@@ -153,6 +154,7 @@ export default function BlogPage() {
               userColor={data.userColor}
               summary={data.summary}
               analysisSummary={data.analysisSummary}
+              moveQualities={data.moveQualities}
               players={{ white: data.gameMeta.white, black: data.gameMeta.black }}
             />
           </>

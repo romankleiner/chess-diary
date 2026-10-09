@@ -83,6 +83,21 @@ const QUALITY_TEXT: Record<string, string> = {
   blunder:    'text-red-700 dark:text-red-400',
 };
 
+const QUALITY_NAME: Record<MoveQualityKey, string> = {
+  book: 'Book', excellent: 'Excellent', good: 'Good', inaccuracy: 'Inaccuracy', mistake: 'Mistake', blunder: 'Blunder',
+};
+
+// Same colours as the legend on the analysis page: the engine review's badges, and
+// the move list once the reader is past a move.
+const QUALITY_BADGE: Record<MoveQualityKey, string> = {
+  book:       'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+  excellent:  'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+  good:       'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+  inaccuracy: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+  mistake:    'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+  blunder:    'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+};
+
 // Stored evaluations carry a forced mate as ±100, which reads better as "+Mate".
 export function formatEval(v: number): string {
   return formatPawns(v);
@@ -830,15 +845,22 @@ function StepControls({ viewIdx, minIdx, maxIdx, goTo }: {
   );
 }
 
-// Inline SAN chips for a ply range; clicking jumps to the position after that ply
-function MoveChips({ game, fromPly, toPly, viewIdx, goTo, guessPly, guessColor }: {
-  game: ParsedGame;
+// Inline SAN chips for a ply range; clicking jumps to the position after that ply.
+// Moves up to `colouredThrough` are tinted by the engine's verdict (the analysis
+// page's colours). Only moves the reader is past: coloured sooner, an opponent's
+// blunder just before a guess would point straight at the answer.
+export function MoveChips({ game, fromPly, toPly, viewIdx, goTo, guessPly, guessColor, qualities, colouredThrough = -1 }: {
+  game: Pick<ParsedGame, 'sans'>;
   fromPly: number;
   toPly: number;
   viewIdx: number;
   goTo: (idx: number) => void;
   guessPly?: number;
   guessColor?: 'green' | 'amber';
+  /** qualities[p] = the engine's verdict on ply p, where the analysis has one */
+  qualities?: readonly (MoveQualityKey | null)[] | null;
+  /** The last ply to colour; none when -1 */
+  colouredThrough?: number;
 }) {
   // In the wide layout the list is capped at four rows (so the board column fits
   // the window) and scrolls; keep the current move in sight as the board steps
@@ -864,19 +886,27 @@ function MoveChips({ game, fromPly, toPly, viewIdx, goTo, guessPly, guessColor }
           p === fromPly   ? `${num}… ${game.sans[p]}` :
           game.sans[p];
         const isCurrent = viewIdx === p + 1;
-        const guessCls = guessColor === 'amber'
+        const quality = p <= colouredThrough ? qualities?.[p] ?? null : null;
+        // A coloured chip keeps its colour when current and is ringed instead (a
+        // book move's tint is the current chip's purple). The guessed move is in
+        // bold; uncoloured, it shows how the reader did, as before.
+        const guessCls = quality ? 'font-semibold' : guessColor === 'amber'
           ? 'text-amber-700 dark:text-amber-300 font-semibold'
           : 'text-green-700 dark:text-green-300 font-semibold';
+        const tone = quality
+          ? `${QUALITY_BADGE[quality]} hover:brightness-95 dark:hover:brightness-125${isCurrent ? ' ring-2 ring-inset ring-purple-600 dark:ring-purple-300' : ''}`
+          : isCurrent
+            ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200'
+            : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400';
         return (
           <button
             key={p}
             onClick={() => goTo(p + 1)}
             data-current={isCurrent || undefined}
-            className={`px-1.5 py-0.5 rounded transition-colors ${
-              isCurrent
-                ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200'
-                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400'
-            } ${p === guessPly ? guessCls : ''}`}
+            data-quality={quality ?? undefined}
+            title={quality ? QUALITY_NAME[quality] : undefined}
+            aria-label={quality ? `${label}, ${QUALITY_NAME[quality].toLowerCase()}` : undefined}
+            className={`px-1.5 py-0.5 rounded transition-colors ${tone} ${p === guessPly ? guessCls : ''}`}
           >
             {label}
           </button>
@@ -1051,12 +1081,14 @@ function GuessEvalResult({ rating, color }: { rating: GuessRating; color: 'white
 
 type Resolution = 'guessed' | 'guessed_best' | 'guessed_better' | 'guessed_equal' | 'revealed' | 'out_of_tries';
 
-function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResolved, onScore, contentRef }: {
+function WalkthroughMoveCard({ section, game, startPly, guessPly, state, qualities, onResolved, onScore, contentRef }: {
   section: MoveSection;
   game: ParsedGame;
   startPly: number;
   guessPly: number;
   state: 'locked' | 'active' | 'done';
+  /** The engine's verdict on each ply, coloured into the move list once this move is solved */
+  qualities?: readonly (MoveQualityKey | null)[] | null;
   onResolved: () => void;
   /** Told the move's score whenever it changes (a guess, a rating that arrives late, a skip). */
   onScore?: (score: PositionScore) => void;
@@ -1516,6 +1548,8 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
               goTo={goTo}
               guessPly={guessPly}
               guessColor={resolvedHow === 'revealed' || resolvedHow === 'out_of_tries' ? 'amber' : 'green'}
+              qualities={qualities}
+              colouredThrough={resolved ? guessPly : -1}
             />
           </div>
 
@@ -1633,14 +1667,18 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, onResol
 
 // ─── Tail card: the rest of the game after the last journal entry ─────────────
 
-function TailCard({ game, startPly, userColor, locked, onReachedEnd }: {
+function TailCard({ game, startPly, userColor, locked, qualities, onReachedEnd }: {
   game: ParsedGame;
   startPly: number;
   userColor: 'white' | 'black';
   locked: boolean;
+  qualities?: readonly (MoveQualityKey | null)[] | null;
   onReachedEnd?: () => void;
 }) {
   const [viewIdx, setViewIdx] = useState(startPly);
+  // Nothing is left to guess here, so each move is coloured as soon as the reader
+  // has stepped onto it -- not before, so a blunder ahead doesn't give the story away
+  const [furthest, setFurthest] = useState(startPly);
   const { ref, width } = useBoardWidth();
   const boardId = `tail-${useId().replace(/:/g, '')}`;
   const maxIdx = game.sans.length;
@@ -1650,6 +1688,7 @@ function TailCard({ game, startPly, userColor, locked, onReachedEnd }: {
   const goTo = (idx: number) => {
     const clamped = Math.max(startPly, Math.min(maxIdx, idx));
     setViewIdx(clamped);
+    setFurthest(f => Math.max(f, clamped));
     if (clamped === maxIdx) onReachedEnd?.(); // game fully played through
   };
 
@@ -1676,7 +1715,15 @@ function TailCard({ game, startPly, userColor, locked, onReachedEnd }: {
           </div>
         </div>
         <StepControls viewIdx={viewIdx} minIdx={startPly} maxIdx={maxIdx} goTo={goTo} />
-        <MoveChips game={game} fromPly={startPly} toPly={maxIdx - 1} viewIdx={viewIdx} goTo={goTo} />
+        <MoveChips
+          game={game}
+          fromPly={startPly}
+          toPly={maxIdx - 1}
+          viewIdx={viewIdx}
+          goTo={goTo}
+          qualities={qualities}
+          colouredThrough={furthest - 1}
+        />
       </div>
     </div>
   );
@@ -1801,20 +1848,6 @@ export function SummaryCard({ summary }: { summary: string }) {
 // How the game went by the engine's reckoning, as on the game's analysis page:
 // both players' accuracy and how many of their moves fall in each quality
 // category. Shown at the end of the game, ahead of my own overall summary.
-
-const QUALITY_NAME: Record<MoveQualityKey, string> = {
-  book: 'Book', excellent: 'Excellent', good: 'Good', inaccuracy: 'Inaccuracy', mistake: 'Mistake', blunder: 'Blunder',
-};
-
-// Same colours as the legend on the analysis page.
-const QUALITY_BADGE: Record<MoveQualityKey, string> = {
-  book:       'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-  excellent:  'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  good:       'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  inaccuracy: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-  mistake:    'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
-  blunder:    'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-};
 
 const QUALITY_HINT: Record<MoveQualityKey, string> = {
   book: 'opening theory', excellent: '≤ 25 cp lost', good: '≤ 50 cp', inaccuracy: '≤ 100 cp', mistake: '≤ 200 cp', blunder: '> 200 cp',
@@ -1945,15 +1978,32 @@ export function revealScrollBlock(contentHeight: number, viewportHeight: number)
   return contentHeight > viewportHeight * 0.85 ? 'start' : 'nearest';
 }
 
+// What the move lists' colours mean, under the introduction
+export function MoveQualityLegend() {
+  return (
+    <div data-quality-legend className="max-w-3xl text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+      Once you&apos;ve guessed or skipped one of my moves, it and the moves leading up to it are coloured by
+      the engine&apos;s verdict:{' '}
+      <span className="inline-flex flex-wrap gap-1 align-middle">
+        {MOVE_QUALITIES.map(q => (
+          <span key={q} className={`px-1.5 py-0.5 rounded text-xs ${QUALITY_BADGE[q]}`}>{QUALITY_NAME[q]}</span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 // ─── Game walkthrough container ───────────────────────────────────────────────
 
-export function GameWalkthrough({ pgn, sections, userColor, summary = '', analysisSummary = null, players }: {
+export function GameWalkthrough({ pgn, sections, userColor, summary = '', analysisSummary = null, moveQualities = null, players }: {
   pgn: string;
   sections: MoveSection[];
   userColor: 'white' | 'black';
   summary?: string;
   /** Engine review shown at the end of the game, ahead of the summary. */
   analysisSummary?: AnalysisSummary | null;
+  /** The engine's verdict on each ply, which colours the move lists as the reader gets past them. */
+  moveQualities?: readonly (MoveQualityKey | null)[] | null;
   /** Player names for the engine review's column headings. */
   players?: { white: string; black: string };
 }) {
@@ -2076,6 +2126,7 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
         depending on whether it was any good.
       </p>
       <ScoreLegend />
+      {moveQualities?.some(Boolean) && <MoveQualityLegend />}
 
       {/* Sticky progress chip — at the top-right, or beside the main column on
           very wide screens, where the margin is wide enough to hold it without
@@ -2115,6 +2166,7 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
               startPly={it.startPly}
               guessPly={it.guessPly}
               state={state}
+              qualities={moveQualities}
               onResolved={() => setDoneCount(c => c + 1)}
               onScore={score => recordScore(i, score)}
               contentRef={el => { contentRefs.current[i] = el; }}
@@ -2132,6 +2184,7 @@ export function GameWalkthrough({ pgn, sections, userColor, summary = '', analys
           startPly={tailStart}
           userColor={userColor}
           locked={!allDone && !revealEnd}
+          qualities={moveQualities}
           onReachedEnd={() => setTailDone(true)}
         />
       )}
