@@ -252,6 +252,40 @@ describe('BlogDirectory — ratings and profile links', () => {
   });
 });
 
+// ─── stopping sharing a game ──────────────────────────────────────────────────
+// (Clicking through it -- confirm, the row leaving, "Share it again" -- needs a
+// browser; it was checked there with the requests stubbed.)
+
+describe('BlogDirectory — stopping sharing a game', () => {
+  const buttons = (html: string) =>
+    [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map(([, attrs, text]) => ({ attrs, text }));
+  const stopButtons = (html: string) => buttons(html).filter(b => b.text === 'Stop sharing');
+
+  it('gives each game a "Stop sharing" button on the author’s own directory', () => {
+    expect(stopButtons(renderToStaticMarkup(<BlogDirectory entries={entries} canUnshare />))).toHaveLength(entries.length);
+  });
+
+  it('gives readers no such button', () => {
+    expect(stopButtons(renderToStaticMarkup(<BlogDirectory entries={entries} />))).toHaveLength(0);
+    expect(stopButtons(renderToStaticMarkup(<BlogDirectory entries={entries} canUnshare={false} />))).toHaveLength(0);
+  });
+
+  it('puts the button above the card’s link, so clicking it doesn’t open the blog', () => {
+    const [button] = stopButtons(renderToStaticMarkup(<BlogDirectory entries={[entry()]} canUnshare />));
+    expect(button.attrs).toMatch(/class="[^"]*\brelative\b[^"]*\bz-10\b/);
+    expect(button.attrs).toContain('type="button"');
+  });
+
+  it('asks before stopping: nothing to confirm is open until the button is pressed', () => {
+    const html = renderToStaticMarkup(<BlogDirectory entries={[entry()]} canUnshare />);
+    const [button] = stopButtons(html);
+    expect(button.attrs).toContain('aria-expanded="false"');
+    expect(button.attrs).toContain('aria-controls="unshare-100"');
+    expect(html).not.toContain('id="unshare-100"');
+    expect(textOf(html)).not.toContain('Stop sharing this game?');
+  });
+});
+
 // ─── who can open it ──────────────────────────────────────────────────────────
 // (The directory page's own rules -- the secret key, the author -- are tested in
 // blog-directory-page.test.tsx.)

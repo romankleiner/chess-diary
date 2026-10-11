@@ -2,19 +2,20 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { DirectoryEntry } from '@/lib/blog-directory';
 
-vi.mock('@/lib/blog-directory-server', () => ({ loadBlogDirectory: vi.fn() }));
+vi.mock('@/lib/blog-directory-server', () => ({ loadBlogDirectory: vi.fn(), clearBlogDirectoryCache: vi.fn() }));
 vi.mock('@/lib/blog-visits-server', () => ({ recordVisit: vi.fn() }));
 vi.mock('@/lib/db', () => ({ getDirectoryOwner: vi.fn(), getOrCreateDirectoryKey: vi.fn() }));
 vi.mock('next/headers', () => ({ headers: vi.fn(async () => new Headers({ 'x-real-ip': '203.0.113.7' })) }));
 
 import BlogDirectoryPage, { dynamic, metadata } from '@/app/blog/page';
 import BlogLayout, { metadata as layoutMetadata } from '@/app/blog/layout';
-import { loadBlogDirectory } from '@/lib/blog-directory-server';
+import { clearBlogDirectoryCache, loadBlogDirectory } from '@/lib/blog-directory-server';
 import { recordVisit } from '@/lib/blog-visits-server';
 import { getDirectoryOwner, getOrCreateDirectoryKey } from '@/lib/db';
 import { auth } from '@clerk/nextjs/server';
 
 const mockLoad      = vi.mocked(loadBlogDirectory);
+const mockClear     = vi.mocked(clearBlogDirectoryCache);
 const mockRecord    = vi.mocked(recordVisit);
 const mockOwnerOf   = vi.mocked(getDirectoryOwner);
 const mockOwnKey    = vi.mocked(getOrCreateDirectoryKey);
@@ -167,6 +168,40 @@ describe('the directory page — for its author', () => {
     const html = await visit();
     expect(textOf(html)).toContain('No games have been shared yet.');
     expect(html).not.toContain('role="alert"');
+  });
+});
+
+describe('the directory page — stopping sharing a game', () => {
+  const stopButtons = (html: string) => (html.match(/>Stop sharing<\/button>/g) ?? []).length;
+
+  it('gives the signed-in author a "Stop sharing" button on every game', async () => {
+    signedInAs('alice');
+    expect(stopButtons(await visit())).toBe(entries.length);
+  });
+
+  it('gives it to the author on their own link too', async () => {
+    signedInAs('alice');
+    expect(stopButtons(await visit({ key: ALICE_KEY }))).toBe(entries.length);
+  });
+
+  it('never gives it to a reader holding the key, signed in or not', async () => {
+    expect(stopButtons(await visit({ key: ALICE_KEY }))).toBe(0);
+    signedInAs('bob');
+    expect(stopButtons(await visit({ key: ALICE_KEY }))).toBe(0);
+  });
+
+  it('shows the author what is shared right now, not a copy remembered from up to a minute ago', async () => {
+    signedInAs('alice');
+    await visit();
+    expect(mockClear).toHaveBeenCalledTimes(1);
+    expect(mockClear.mock.invocationCallOrder[0]).toBeLessThan(mockLoad.mock.invocationCallOrder[0]);
+  });
+
+  it('keeps readers on the remembered copy, so their visits stay cheap', async () => {
+    await visit({ key: ALICE_KEY });
+    signedInAs('bob');
+    await visit({ key: ALICE_KEY });
+    expect(mockClear).not.toHaveBeenCalled();
   });
 });
 

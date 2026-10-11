@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { auth } from '@clerk/nextjs/server';
 import { BlogDirectory } from '@/components/BlogDirectory';
 import { DirectoryShareLink } from '@/components/DirectoryShareLink';
-import { loadBlogDirectory } from '@/lib/blog-directory-server';
+import { clearBlogDirectoryCache, loadBlogDirectory } from '@/lib/blog-directory-server';
 import { recordVisit } from '@/lib/blog-visits-server';
 import { sortDirectory } from '@/lib/blog-directory';
 import type { DirectoryEntry } from '@/lib/blog-directory';
@@ -65,6 +65,10 @@ export default async function BlogDirectoryPage({ searchParams }: {
   if (access) {
     await recordVisit(access.ownerId, await headers(), { page: 'directory', viewer: access.viewer });
     try {
+      // The author sees what is shared right now, not this server's copy from up to
+      // a minute ago: a game they just stopped sharing (on another instance) must
+      // not come back on a reload. Their visits are few; readers' stay cached.
+      if (access.viewer === 'owner') clearBlogDirectoryCache();
       entries = sortDirectory(await loadBlogDirectory(access.ownerId));
     } catch (error) {
       console.error('[BLOG-DIRECTORY] Error:', error);
@@ -84,7 +88,7 @@ export default async function BlogDirectoryPage({ searchParams }: {
       {access?.viewer === 'owner' && <DirectoryShareLink directoryKey={access.key} />}
 
       {access && entries ? (
-        <BlogDirectory entries={entries} directoryKey={access.key} />
+        <BlogDirectory entries={entries} directoryKey={access.key} canUnshare={access.viewer === 'owner'} />
       ) : (
         <p role="alert" className="py-16 text-center text-base text-red-700 dark:text-red-400">
           The list of games couldn&apos;t be loaded right now. Please try again in a moment.
