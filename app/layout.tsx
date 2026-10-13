@@ -14,7 +14,8 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <ClerkProvider>
+    // Sign-ups go through the waitlist (Clerk's Waitlist access mode): see app/waitlist
+    <ClerkProvider waitlistUrl="/waitlist">
       <html lang="en">
         <body className="antialiased">
           <div className="min-h-screen">

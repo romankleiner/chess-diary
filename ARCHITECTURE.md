@@ -6,6 +6,9 @@ Chess Diary is a **Next.js 15 (App Router)** web application for daily-chess pla
 
 All data is private per authenticated user, with one exception: a game's blog the author has shared ("Share link", or by saving the game's post-game summary once it is over). A shared game's blog can be opened by anyone with its link, and is listed in the author's directory at `/blog`, which is unlisted: it opens only with the author's secret key (or for the author, signed in). Search engines are asked not to index any of it, and views are logged for the author (see "The public directory of games" and "Who read the blog" below).
 
+### Who may sign up
+Accounts are by the admin's approval, so strangers can't spend the app's quotas (Vercel, Redis, chess-api.com) or its Anthropic key (the AI commentary runs on the server's `ANTHROPIC_API_KEY`). This is **Clerk's Waitlist access mode**, set in the Clerk dashboard (Configure → Restrictions / Access mode → Waitlist, on the production instance; email must be enabled for the invitations). Anyone without an account asks for access at `/waitlist` (Clerk's `<Waitlist />`; `<ClerkProvider waitlistUrl="/waitlist">` makes the sign-in box offer it instead of "Sign up"); the admin approves them on the Clerk dashboard's Waitlist page (⋯ → Invite), and Clerk emails an invitation to sign up. Until then they have no account and so no session: nothing behind `auth.protect()` in `middleware.ts` can be reached, and no app code is involved in keeping them out. Existing accounts still sign in; to remove one, ban or delete it in the Clerk dashboard. `/waitlist` and its sub-paths are public (`lib/public-routes.ts`), `/waitlisted` is not.
+
 ---
 
 ## Technology Stack
@@ -62,7 +65,8 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 | `/settings` | `app/settings/page.tsx` | Chess.com username, AI model, analysis depth |
 | `/backups` | `app/backups/page.tsx` | Backup history, download, restore, and prune |
 | `/sign-in` | `app/sign-in/[[...sign-in]]/page.tsx` | Clerk sign-in |
-| `/sign-up` | `app/sign-up/[[...sign-up]]/page.tsx` | Clerk sign-up |
+| `/sign-up` | `app/sign-up/[[...sign-up]]/page.tsx` | Clerk sign-up (for people the admin has invited, see *Who may sign up*) |
+| `/waitlist` | `app/waitlist/[[...waitlist]]/page.tsx` | **Public.** Clerk's `<Waitlist />`: anyone else asks for access here |
 
 ---
 

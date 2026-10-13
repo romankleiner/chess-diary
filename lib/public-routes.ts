@@ -6,6 +6,8 @@
 export const PUBLIC_ROUTES: string[] = [
   '/sign-in(.*)',
   '/sign-up(.*)',
+  '/waitlist',                   // Asking for access: sign-ups are approved by the admin (Clerk waitlist)
+  '/waitlist/(.*)',
   '/api/board-image(.*)',
   '/api/backup/automated(.*)',
   '/api/cron/(.*)',              // Cron endpoints are authenticated via CRON_SECRET, not Clerk

@@ -6,6 +6,8 @@ import { createPathMatcher } from '@clerk/shared/pathMatcher';
 import type { DirectoryEntry } from '@/lib/blog-directory';
 import { PUBLIC_ROUTES } from '@/lib/public-routes';
 import { BlogDirectory } from '@/components/BlogDirectory';
+import { Waitlist } from '@clerk/nextjs';
+import WaitlistPage from '@/app/waitlist/[[...waitlist]]/page';
 
 const entry = (over: Partial<DirectoryEntry> = {}): DirectoryEntry => ({
   gameId: '100', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
@@ -316,5 +318,23 @@ describe('public routes', () => {
   it('does not open routes that merely start with "/blog"', () => {
     expect(open('/blogger')).toBe(false);
     expect(open('/api/blog')).toBe(false);
+  });
+
+  it('lets anyone ask for access on the waitlist, as sign-ups are approved there', () => {
+    expect(open('/waitlist')).toBe(true);
+    expect(open('/waitlist/verify')).toBe(true); // Clerk's own steps under the page
+  });
+
+  it('opens nothing else that merely starts with "/waitlist"', () => {
+    expect(open('/waitlisted')).toBe(false);
+    expect(open('/api/waitlist')).toBe(false);
+  });
+});
+
+describe('the waitlist page', () => {
+  it('is Clerk’s waitlist, sending people who already have an account to sign in', () => {
+    const element = WaitlistPage() as React.ReactElement<{ children: React.ReactElement<{ signInUrl?: string }> }>;
+    expect(element.props.children.type).toBe(Waitlist);
+    expect(element.props.children.props.signInUrl).toBe('/sign-in');
   });
 });
