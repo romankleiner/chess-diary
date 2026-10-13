@@ -17,8 +17,9 @@
 // shaped it:
 //
 //  - Chess.com tracks the average centipawn LOSS, not the drop in win
-//    probability (rank correlation -0.83 against -0.64). The loss already has
-//    the position built in: normalizeCpLoss caps it where a position is lopsided.
+//    probability (rank correlation -0.83 against -0.64). The loss it is given
+//    now has the position built in, though: gradedCpLoss (below) counts a loss
+//    for less where the game is already decided, and is the plain loss when level.
 //  - Small losses cost almost nothing and large ones a great deal, hence a shape
 //    steeper than a plain exponential (the exponent below is above 1).
 //  - Opening-book moves count as perfect rather than being left out of the
@@ -26,6 +27,13 @@
 //
 // It was calibrated on analyses run at depth 15-18, so a much shallower
 // analysis, whose losses are noisier, will read somewhat lower.
+//
+// Since then the losses it is given are graded (gradedCpLoss): a loss counts for
+// less where the game was already decided. That is a deliberate departure from
+// Chess.com, which does not do so: on 152 sides of 76 of the author's games the
+// figure now lands within 4.5 points of Chess.com's on average, reading 3.9 points
+// higher (it was 2.5 and 0.8). Refitting the two constants on graded losses gets
+// no closer than 4.0, so they were left as they were.
 
 /** Centipawns a move can lose before its accuracy has fallen to 100/e (about 37%). */
 export const ACCURACY_SCALE_CP = 100;
@@ -54,14 +62,22 @@ export function calculateAccuracy(centipawnLosses: number[]): number {
 interface StoredMoveLoss {
   color?: string;
   centipawnLoss?: unknown;
+  gradedLoss?: unknown;
+}
+
+/** The loss a stored move is graded by: `gradedLoss` (see withCurrentGrading), else its plain loss. */
+function lossGradedBy(move: StoredMoveLoss): number | null {
+  if (typeof move.gradedLoss === 'number') return move.gradedLoss;
+  return typeof move.centipawnLoss === 'number' ? move.centipawnLoss : null;
 }
 
 /** One player's accuracy from the moves of a stored analysis, or null if none has a loss. */
 export function accuracyFromMoves(moves: unknown, color: 'white' | 'black'): number | null {
   if (!Array.isArray(moves)) return null;
   const losses = (moves as StoredMoveLoss[])
-    .filter(move => move?.color === color && typeof move.centipawnLoss === 'number')
-    .map(move => move.centipawnLoss as number);
+    .filter(move => move?.color === color)
+    .map(lossGradedBy)
+    .filter((loss): loss is number => loss !== null);
   return losses.length > 0 ? calculateAccuracy(losses) : null;
 }
 
@@ -83,49 +99,50 @@ export function withCurrentAccuracy<T extends { moves?: unknown; whiteAccuracy?:
   };
 }
 
-/**
- * Normalise a raw centipawn loss, removing two categories of ceiling artifact
- * that arise from the ±10 000 sentinel used to represent forced mates:
- *
- * 1. "Played a slower win" — best move was a forced mate (10 000 cp sentinel)
- *    but the played move still leaves a large material advantage.  The raw
- *    delta looks enormous even though the position is objectively still winning.
- *    → cap based on how good the resulting position still is for the mover.
- *
- * 2. "Natural losing move in a lost position" — the mover was already clearly
- *    losing before their move (e.g. −1000 cp = down 10 pawns), and their move
- *    happens to allow a forced mate.  The raw delta is again huge, but the
- *    position was already effectively decided — this is not a new blunder.
- *    → cap based on how bad the position already was for the mover.
- *
- * Both cases are symmetric: the evaluation on the "stable" side of the move
- * (after for case 1, before for case 2) tells us whether the ±10 000 ceiling
- * is distorting the delta.
- *
- * @param cpLoss           Raw centipawn loss (>= 0).
- * @param playerEvalAfter  Eval after the move from the mover's perspective (positive = winning).
- * @param playerEvalBefore Eval before the move from the mover's perspective (positive = winning).
- */
-export function normalizeCpLoss(
-  cpLoss: number,
-  playerEvalAfter: number,
-  playerEvalBefore: number,
-): number {
-  // Case 1 — position still winning after the move (played a slower win)
-  if (playerEvalAfter >= 500) return Math.min(cpLoss, 50);    // still very winning → at most "good"
-  if (playerEvalAfter >= 300) return Math.min(cpLoss, 100);   // clearly winning    → at most "inaccuracy"
+// ─── Grading a move by the winning chances it gave away ───────────────────────
+//
+// A pawn given away costs far more in a level game than in one already won or
+// lost: from +5 to +4 the game is still won, from +1 to 0.00 an advantage is
+// gone. So a move is graded by the winning chances it gave away, read off the
+// usual S-shaped curve from evaluation to expected score, and counted in the
+// centipawns that would give away as much in a level position (dividing by the
+// curve's slope at 0.00). Near equality that is the plain centipawn loss, so the
+// accuracy formula above and the categories below hold there as before; the
+// further the game is from level, the less a loss counts, smoothly:
+//
+//   +5 → +4: 35 (good)       +1 → 0.00: 98 (inaccuracy)    +3 → +1: 156 (mistake)
+//   +5 → 0.00: 339 (blunder — throwing a win away still is one)
+//   +8 → +6: 24 (excellent)  -5 → -6: 23 (excellent)
+//
+// Forced mates (stored as ±100 pawns or more) sit at the ends of the curve, so
+// missing a mate while staying well ahead, or allowing one when long lost,
+// counts for little. That replaces the stepped caps analyses were saved under
+// before (see oldCap), which gave no relief at all to +5 → +4.
 
-  // Case 2 — position already clearly lost before the move (natural losing continuation)
-  if (playerEvalBefore <= -500) return Math.min(cpLoss, 50);  // already very losing → at most "good"
-  if (playerEvalBefore <= -300) return Math.min(cpLoss, 100); // clearly losing      → at most "inaccuracy"
+/** How steeply winning chances rise with the evaluation: the curve's k, per centipawn. */
+export const WIN_CURVE_STEEPNESS = 0.005;
 
-  // Global ceiling: prevents the ±10 000 sentinel from inflating any move
-  // beyond firmly-blunder territory even in edge cases not covered above.
-  return Math.min(cpLoss, 600);
+/** The mover's expected score, 0 to 1, where the engine has them `cp` centipawns ahead. */
+export function winningChances(cp: number): number {
+  return 1 / (1 + Math.exp(-WIN_CURVE_STEEPNESS * cp));
 }
 
 /**
- * Classify a move's quality based on centipawn loss.
+ * A move's loss as the grade counts it: the winning chances it gave away, in the
+ * centipawns that would give away as many in a level position. Rounded.
+ *
+ * @param rawLoss         Centipawns the move fell short of the engine's best (>= 0).
+ * @param playerEvalAfter The evaluation after the move, in centipawns, from the mover's side.
+ */
+export function gradedCpLoss(rawLoss: number, playerEvalAfter: number): number {
+  if (!(rawLoss > 0)) return 0;
+  if (!Number.isFinite(playerEvalAfter)) return Math.round(rawLoss);
+  const given = winningChances(playerEvalAfter + rawLoss) - winningChances(playerEvalAfter);
+  return Math.round(given / (WIN_CURVE_STEEPNESS / 4));
+}
+
+/**
+ * Classify a move's quality based on centipawn loss (the graded loss, see gradedCpLoss).
  */
 export function getMoveQuality(cpLoss: number): string {
   if (cpLoss <= 25) return 'excellent';
@@ -133,6 +150,86 @@ export function getMoveQuality(cpLoss: number): string {
   if (cpLoss <= 100) return 'inaccuracy';
   if (cpLoss <= 200) return 'mistake';
   return 'blunder';
+}
+
+interface StoredGradedMove {
+  moveNumber?: unknown;
+  color?: unknown;
+  evaluation?: unknown;
+  centipawnLoss?: unknown;
+  gradedLoss?: unknown;
+  moveQuality?: unknown;
+}
+
+/** A move's ply (0-based) from its move number and colour, or null without a number. */
+const plyOf = (move: StoredGradedMove): number | null =>
+  typeof move.moveNumber === 'number' ? (move.moveNumber - 1) * 2 + (move.color === 'black' ? 1 : 0) : null;
+
+/** A stored evaluation (pawns, White's view) in centipawns from one side's view, or null. */
+const sideCp = (pawns: unknown, color: unknown): number | null =>
+  typeof pawns === 'number' && Number.isFinite(pawns) ? Math.round(pawns * 100) * (color === 'black' ? -1 : 1) : null;
+
+/**
+ * The step caps on a move's loss that analyses were saved under before grading by
+ * winning chances: half a pawn once the position after it was +5 (or the one before
+ * it -5), a pawn at +3 (-3), and six pawns in all.
+ */
+function oldCap(after: number, before: number | null): number {
+  if (after >= 500) return 50;
+  if (after >= 300) return 100;
+  if (before !== null && before <= -500) return 50;
+  if (before !== null && before <= -300) return 100;
+  return 600;
+}
+
+/**
+ * How far a stored move fell short of the engine's best, in centipawns. Analyses
+ * saved since grading by winning chances store exactly that (with `gradedLoss`
+ * beside it). Older ones stored it cut by the step caps (oldCap): where a stored
+ * loss is exactly at its cap the cap may have cut it, and the drop between the
+ * stored evaluations before and after the move stands in, when larger. Elsewhere
+ * the stored loss is kept, as the drop between two separate engine readings is
+ * noisier (within 4 cp on a typical move, but over 3 pawns out on 1 in 100).
+ */
+function rawLossOf(move: StoredGradedMove, previous: StoredGradedMove | undefined, after: number): number | null {
+  const stored = move.centipawnLoss;
+  if (typeof stored !== 'number' || !Number.isFinite(stored)) return null;
+  if (typeof move.gradedLoss === 'number' || stored <= 0) return Math.max(0, stored);
+  const before = previous ? sideCp(previous.evaluation, move.color) : null;
+  if (stored !== oldCap(after, before)) return stored;
+  return before === null ? stored : Math.max(stored, before - after);
+}
+
+/**
+ * The analysis with every move graded by the current rule, whenever it was saved:
+ * `centipawnLoss` is how far the move fell short of the engine's best (for an
+ * older analysis as near as can be told, see rawLossOf), `gradedLoss` what the
+ * grade counts of it (gradedCpLoss), and `moveQuality` the category for that.
+ * Like accuracy, the grade is derived from what was measured, so it is worked out
+ * when an analysis is read rather than trusted from storage. Book moves, and moves
+ * without an evaluation or loss, are left as they are. Returns a copy.
+ */
+export function withCurrentGrading<T extends { moves?: unknown }>(analysis: T): T {
+  if (!Array.isArray(analysis.moves)) return analysis;
+  const moves = analysis.moves as (StoredGradedMove | null)[];
+  const byPly = new Map<number, StoredGradedMove>();
+  for (const move of moves) {
+    const ply = move && typeof move === 'object' ? plyOf(move) : null;
+    if (ply !== null) byPly.set(ply, move as StoredGradedMove);
+  }
+  return {
+    ...analysis,
+    moves: moves.map(move => {
+      if (!move || typeof move !== 'object' || move.moveQuality === 'book') return move;
+      const ply = plyOf(move);
+      const after = sideCp(move.evaluation, move.color);
+      if (ply === null || after === null) return move;
+      const raw = rawLossOf(move, byPly.get(ply - 1), after);
+      if (raw === null) return move;
+      const graded = gradedCpLoss(raw, after);
+      return { ...move, centipawnLoss: raw, gradedLoss: graded, moveQuality: getMoveQuality(graded) };
+    }),
+  };
 }
 
 /** The move-quality categories, best to worst -- the legend on the game's analysis page. */
@@ -165,6 +262,7 @@ interface StoredMove {
   moveQuality?: string;
   quality?: string;
   centipawnLoss?: unknown;
+  gradedLoss?: unknown;
 }
 
 /**
@@ -185,8 +283,10 @@ export function summarizeAnalysis(analysis: StoredAnalysis | null | undefined): 
       const quality: string = move.moveQuality || move.quality || '';
       if ((MOVE_QUALITIES as readonly string[]).includes(quality)) counts[quality as MoveQualityKey]++;
       // Book moves carry a loss of 0 and are left out of accuracy, so leave them out here too.
-      if (quality !== 'book' && typeof move.centipawnLoss === 'number') {
-        lossTotal += move.centipawnLoss;
+      // The loss the grade counts, like the accuracy beside it.
+      const loss = lossGradedBy(move);
+      if (quality !== 'book' && loss !== null) {
+        lossTotal += loss;
         lossCount++;
       }
     }
@@ -257,8 +357,9 @@ export function computeStatistics(gameAnalysis: any, username: string) {
     else if (quality === 'mistake') mistakes++;
     else if (quality === 'inaccuracy') inaccuracies++;
 
-    if (typeof move.centipawnLoss === 'number') {
-      totalCentipawnLoss += move.centipawnLoss;
+    const loss = lossGradedBy(move);
+    if (loss !== null) {
+      totalCentipawnLoss += loss;
       movesWithEval++;
     }
   }

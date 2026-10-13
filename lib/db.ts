@@ -1,7 +1,7 @@
 import Redis from 'ioredis';
 import { randomBytes } from 'crypto';
 import { auth } from '@clerk/nextjs/server';
-import { withCurrentAccuracy } from './analysis-utils';
+import { withCurrentAccuracy, withCurrentGrading } from './analysis-utils';
 import type { Game, JournalEntry } from '@/types';
 import { BLOG_VISITS_KEPT } from './access-log';
 import { entryGameId, withoutImages } from './journal-copies';
@@ -264,9 +264,10 @@ export async function getAnalysis(gameId: string, userId?: string): Promise<any 
   const uid = userId || await getUserId();
   const client = getRedisClient();
   const data = await client.hget(`chess-diary:${uid}:analyses`, gameId);
-  // Accuracy is derived from the moves, so it is worked out here rather than trusted from
-  // storage: an analysis saved under an older formula reads as the current one.
-  return data ? withCurrentAccuracy(JSON.parse(data)) : null;
+  // Each move's grade and the accuracy are derived from what was measured, so they are
+  // worked out here rather than trusted from storage: an analysis saved under an older
+  // rule reads as the current one.
+  return data ? withCurrentAccuracy(withCurrentGrading(JSON.parse(data))) : null;
 }
 
 export async function saveAnalysis(gameId: string, analysis: any, userId?: string): Promise<void> {

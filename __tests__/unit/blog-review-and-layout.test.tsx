@@ -48,6 +48,9 @@ const summary: AnalysisSummary = summarizeAnalysis({
 const walkthrough = (props: Partial<React.ComponentProps<typeof GameWalkthrough>> = {}) =>
   renderToStaticMarkup(<GameWalkthrough pgn={PGN} userColor="white" sections={[section()]} {...props} />);
 
+/** Visible text of rendered markup. */
+const textOf = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+
 /** The text of each <dt>/<th> + <td> pair in the review table, keyed by the row label. */
 const rowsOf = (html: string) => {
   const rows: Record<string, string[]> = {};
@@ -237,6 +240,31 @@ describe('the engine check — top line', () => {
   });
 });
 
+describe('the engine check — a move in a game already decided', () => {
+  const body = (s: MoveSection) => textOf(renderToStaticMarkup(<SectionBody section={s} phase="complete" />));
+
+  // +5 → +4: a pawn short of the engine's best, graded "good" (see gradedCpLoss)
+  const decided = section({
+    engineEval: { moveQuality: 'good', centipawnLoss: 100, evaluation: 4, bestMoveSan: 'd4', topLine: '6. d4 exd4' },
+  });
+
+  it('shows what was actually lost, beside the engine’s top line', () => {
+    const text = body(decided);
+    expect(text).toContain('−1.00 (100 cp)');
+    expect(text).toContain('top line +5.0'); // the top line's evaluation: mine plus what I lost
+  });
+
+  it('says why the verdict is milder than the loss', () => {
+    expect(body(decided)).toContain('✓ Good — the game was already decided');
+  });
+
+  it('says nothing of the kind where the verdict is what the loss alone would give', () => {
+    const level = section({ engineEval: { moveQuality: 'inaccuracy', centipawnLoss: 100, evaluation: 0, bestMoveSan: 'd4' } });
+    expect(body(level)).toContain('⚠ Inaccuracy');
+    expect(body(level)).not.toContain('already decided');
+  });
+});
+
 // ─── the engine review card ───────────────────────────────────────────────────
 
 describe('EngineSummaryCard', () => {
@@ -247,6 +275,10 @@ describe('EngineSummaryCard', () => {
 
   it('is titled as the engine review', () => {
     expect(html).toContain('Engine review');
+  });
+
+  it('says a loss counts for less once the game is decided, as the categories and accuracy go by that', () => {
+    expect(textOf(html)).toContain('A loss counts for less when the game is already won or lost');
   });
 
   it('names both players, and marks which one is me', () => {

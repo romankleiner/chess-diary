@@ -13,6 +13,7 @@
 import { vi, describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { gameA } from '../helpers/fixtures';
+import { calculateAccuracy, gradedCpLoss } from '@/lib/analysis-utils';
 
 // ─── Shared fixture ───────────────────────────────────────────────────────────
 
@@ -289,6 +290,23 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     expect(clearGameProgress).toHaveBeenCalledOnce();
   });
 
+  it('counts the moves of earlier batches by their graded loss, as getAnalysis read them', async () => {
+    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' });
+    getAnalysis.mockResolvedValue({
+      moves: [
+        { moveNumber: 1, color: 'white', move: 'e4', centipawnLoss: 0, gradedLoss: 0 },
+        { moveNumber: 1, color: 'black', move: 'e5', centipawnLoss: 0, gradedLoss: 0 },
+        // A pawn given away in a won game: graded 35
+        { moveNumber: 2, color: 'white', move: 'Nf3', evaluation: 4, centipawnLoss: 100, gradedLoss: 35 },
+      ],
+    });
+    fetchMock.mockResolvedValueOnce(makeEval(4.0, 'b8c6')).mockResolvedValueOnce(makeEval(4.0, 'd2d4'));
+
+    const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 3 }))).json();
+
+    expect(body.analysis.whiteAccuracy).toBe(calculateAccuracy([0, 35]));
+  });
+
   it('analysis includes engine: chess-api.com', async () => {
     getGame.mockResolvedValue(gameWithPgn);
     queueChessApiResponses();
@@ -311,6 +329,26 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     const white = analysis.moves.find((m: any) => m.color === 'white');
     expect(white.centipawnLoss).toBe(0);
     expect(white.moveQuality).toBe('excellent');
+  });
+
+  it('grades a pawn given away in a won game for less, keeping what was actually lost', async () => {
+    // 1. e4 e5 2. Nf3 Nc6 with White already +5; Nf3 drops it to +4
+    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' });
+    fetchMock
+      .mockResolvedValueOnce(makeEval(5.0, 'e2e4'))   // before e4 (e4 is the best move)
+      .mockResolvedValueOnce(makeEval(5.0, 'e7e5'))   // after e4
+      .mockResolvedValueOnce(makeEval(5.0, 'e7e5'))   // before e5 (e5 is the best move)
+      .mockResolvedValueOnce(makeEval(5.0, 'd2d4'))   // after e5
+      .mockResolvedValueOnce(makeEval(5.0, 'd2d4'))   // before Nf3
+      .mockResolvedValueOnce(makeEval(4.0, 'b8c6'))   // after Nf3: White gave a pawn away
+      .mockResolvedValueOnce(makeEval(4.0, 'b8c6'))   // before Nc6 (Nc6 is the best move)
+      .mockResolvedValueOnce(makeEval(4.0, 'd2d4'));  // after Nc6
+
+    const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+    const nf3 = analysis.moves.find((m: { move: string }) => m.move === 'Nf3');
+
+    expect(nf3).toMatchObject({ centipawnLoss: 100, gradedLoss: 35, moveQuality: 'good' }); // not an inaccuracy
+    expect(analysis.whiteAccuracy).toBe(calculateAccuracy([0, 35]));
   });
 
   // ── Opening book ────────────────────────────────────────────────────────────
@@ -353,8 +391,12 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
 
       expect(book.moveQuality).toBe('book');
       expect(slip.centipawnLoss).toBe(100);
-      // mean of a perfect move (100) and a 100 cp slip (36.8), not the slip on its own
-      expect(analysis.whiteAccuracy).toBe(68.4);
+      // The slip goes from -2 to -3, with the game already going badly, so the grade
+      // counts it as 69, not 100
+      expect(slip.gradedLoss).toBe(gradedCpLoss(100, -300));
+      expect(slip.gradedLoss).toBe(69);
+      // mean of a perfect move and the slip, not the slip on its own
+      expect(analysis.whiteAccuracy).toBe(calculateAccuracy([0, 69]));
       expect(analysis.blackAccuracy).toBe(100);
     });
 
@@ -550,7 +592,8 @@ describe('POST /api/games/analyze — local Stockfish path', () => {
 
     expect(book.moveQuality).toBe('book');
     expect(slip.centipawnLoss).toBe(100);
-    expect(analysis.whiteAccuracy).toBe(68.4);
+    expect(slip.gradedLoss).toBe(69); // -2 → -3: counted for less, the game already going badly
+    expect(analysis.whiteAccuracy).toBe(calculateAccuracy([0, 69]));
     expect(analysis.blackAccuracy).toBe(100);
   });
 

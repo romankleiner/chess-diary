@@ -22,7 +22,7 @@ import {
 import type { Ledger, PositionScore } from '@/lib/guess-score';
 import { ScoreBreakdown, ScoreCard, ScoreLegend, TriesLeft, formatPoints } from '@/components/blog-score';
 import type { ScoreRow } from '@/components/blog-score';
-import { MOVE_QUALITIES } from '@/lib/analysis-utils';
+import { MOVE_QUALITIES, getMoveQuality } from '@/lib/analysis-utils';
 import type { AnalysisSummary, MoveQualityKey, SideSummary } from '@/lib/analysis-utils';
 
 // react-chessboard uses browser drag APIs — must be client-only.
@@ -960,7 +960,12 @@ function EvalCallout({ engineEval, color }: { engineEval: EngineEval; color: 'wh
         )}
       </div>
       {quality && lost > 0 && (
-        <p className={`text-xs ${quality.color} text-right`}>{quality.label}</p>
+        <p className={`text-xs ${quality.color} text-right`}>
+          {quality.label}
+          {/* The label counts a loss for less where the game was already decided
+              (gradedCpLoss), so it can be milder than the number beside it */}
+          {getMoveQuality(lost) !== engineEval.moveQuality && ' — the game was already decided'}
+        </p>
       )}
     </div>
   );
@@ -1941,6 +1946,10 @@ export function EngineSummaryCard({ summary, players, userColor }: {
             ))}
           </tbody>
         </table>
+        <p data-graded-note className="mt-3 text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+          A loss counts for less when the game is already won or lost: a pawn given away at +5 counts about a
+          third as much as one given away at 0.00.
+        </p>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { getMoveQuality } from '@/lib/analysis-utils';
 
 interface MoveAnalysis {
   moveNumber: number;
@@ -11,6 +12,8 @@ interface MoveAnalysis {
   evaluation: number;
   bestMove: string;
   centipawnLoss: number;
+  /** What the grade counts of centipawnLoss (less where the game was already decided) */
+  gradedLoss?: number;
   moveQuality: string;
 }
 
@@ -93,6 +96,30 @@ export default function GameAnalysisPage() {
       default:          return 'bg-gray-100 text-gray-800';
     }
   };
+
+  // The centipawns lost, coloured by the move's category. The category is graded
+  // (a loss counts for less where the game is already decided), so it goes by
+  // moveQuality rather than by the raw number.
+  const getLossTextColor = (quality: string) => {
+    switch (quality) {
+      case 'book':
+      case 'excellent':  return 'text-green-600';
+      case 'good':       return 'text-blue-600';
+      case 'inaccuracy': return 'text-yellow-600';
+      case 'mistake':    return 'text-orange-600';
+      default:           return 'text-red-600';
+    }
+  };
+
+  /**
+   * "Counted as 35 cp: the game was already decided", where that made the move's
+   * category milder than the loss alone would. (Near level the grade differs from
+   * the loss by a few cp, which is no reason to say anything.)
+   */
+  const gradedNote = (move: MoveAnalysis) =>
+    typeof move.gradedLoss === 'number' && move.moveQuality !== 'book' && getMoveQuality(move.centipawnLoss) !== move.moveQuality
+      ? `Counted as ${move.gradedLoss} cp: the game was already decided`
+      : undefined;
 
   const formatEval = (evaluation: number) => {
     if (Math.abs(evaluation) >= 100) {
@@ -245,13 +272,7 @@ export default function GameAnalysisPage() {
                           {formatEval(whiteMove.evaluation)}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm">
-                          <span className={`font-semibold ${
-                            whiteMove.centipawnLoss <= 25 ? 'text-green-600' :
-                            whiteMove.centipawnLoss <= 50 ? 'text-blue-600' :
-                            whiteMove.centipawnLoss <= 100 ? 'text-yellow-600' :
-                            whiteMove.centipawnLoss <= 200 ? 'text-orange-600' :
-                            'text-red-600'
-                          }`}>
+                          <span className={`font-semibold ${getLossTextColor(whiteMove.moveQuality)}`} title={gradedNote(whiteMove)}>
                             {whiteMove.centipawnLoss}
                           </span>
                         </td>
@@ -280,13 +301,7 @@ export default function GameAnalysisPage() {
                           {formatEval(blackMove.evaluation)}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm">
-                          <span className={`font-semibold ${
-                            blackMove.centipawnLoss <= 25 ? 'text-green-600' :
-                            blackMove.centipawnLoss <= 50 ? 'text-blue-600' :
-                            blackMove.centipawnLoss <= 100 ? 'text-yellow-600' :
-                            blackMove.centipawnLoss <= 200 ? 'text-orange-600' :
-                            'text-red-600'
-                          }`}>
+                          <span className={`font-semibold ${getLossTextColor(blackMove.moveQuality)}`} title={gradedNote(blackMove)}>
                             {blackMove.centipawnLoss}
                           </span>
                         </td>
@@ -317,6 +332,11 @@ export default function GameAnalysisPage() {
           <div><span className="px-2 py-1 rounded bg-orange-100 text-orange-800 text-xs">Mistake</span> ≤200 CP loss</div>
           <div><span className="px-2 py-1 rounded bg-red-100 text-red-800 text-xs">Blunder</span> &gt;200 CP loss</div>
         </div>
+        <p className="mt-3 text-gray-700 dark:text-gray-300">
+          A loss counts for less when the game is already won or lost: a pawn given away at +5 counts about
+          a third as much as one given away at 0.00. The categories and the accuracy go by that; the CP column
+          shows what was actually lost.
+        </p>
       </div>
     </div>
   );

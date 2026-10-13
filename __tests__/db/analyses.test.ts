@@ -29,6 +29,7 @@ vi.mock('ioredis', () => ({
 process.env.REDIS_URL = 'redis://test';
 
 import { getAnalysis, getAnalyses, saveAnalysis } from '@/lib/db';
+import { calculateAccuracy, gradedCpLoss } from '@/lib/analysis-utils';
 
 const KEY = `chess-diary:${TEST_USER}:analyses`;
 const rawStored = (gameId: string) => JSON.parse(store.hashes.get(KEY)!.get(gameId)!);
@@ -56,9 +57,29 @@ describe('getAnalysis — accuracy', () => {
 
     const analysis = await getAnalysis('g1');
 
-    expect(analysis.whiteAccuracy).toBe(68.4); // one perfect move, one 100 cp slip
-    expect(analysis.blackAccuracy).toBe(68.4);
+    // One perfect move and one 100 cp slip each, near level (+0.30 / +0.20), where the
+    // grade counts a slip at very nearly its plain loss
+    expect(analysis.whiteAccuracy).toBe(calculateAccuracy([0, gradedCpLoss(100, 30)]));
+    expect(analysis.blackAccuracy).toBe(calculateAccuracy([gradedCpLoss(100, -20), 0]));
+    expect(gradedCpLoss(100, 30)).toBe(96);
     expect(analysis.whiteAccuracy).not.toBe(98.8);
+  });
+
+  it('grades each move by the current rule when it is read', async () => {
+    await saveAnalysis('won', {
+      gameId: 'won',
+      moves: [
+        { moveNumber: 1, color: 'black', move: 'e5', evaluation: 5, centipawnLoss: 0, moveQuality: 'excellent' },
+        // +5.00 → +4.00, saved as a 100 cp inaccuracy
+        { moveNumber: 2, color: 'white', move: 'Nf3', evaluation: 4, centipawnLoss: 100, moveQuality: 'inaccuracy' },
+      ],
+    });
+
+    const analysis = await getAnalysis('won');
+
+    expect(analysis.moves[1]).toMatchObject({ centipawnLoss: 100, gradedLoss: 35, moveQuality: 'good' });
+    expect(analysis.whiteAccuracy).toBe(calculateAccuracy([35]));
+    expect(rawStored('won').moves[1].moveQuality).toBe('inaccuracy'); // storage untouched
   });
 
   it('returns the rest of the analysis as it was saved', async () => {
@@ -90,17 +111,14 @@ describe('getAnalysis — accuracy', () => {
   });
 
   it('agrees with the figure a new analysis saves, so analysing again changes nothing', async () => {
-    const { calculateAccuracy } = await import('@/lib/analysis-utils');
-    await saveAnalysis('g3', {
-      ...oldAnalysis,
-      whiteAccuracy: calculateAccuracy([0, 100]),
-      blackAccuracy: calculateAccuracy([100, 0]),
-    });
+    const white = calculateAccuracy([0, gradedCpLoss(100, 30)]);
+    const black = calculateAccuracy([gradedCpLoss(100, -20), 0]);
+    await saveAnalysis('g3', { ...oldAnalysis, whiteAccuracy: white, blackAccuracy: black });
 
     const analysis = await getAnalysis('g3');
 
-    expect(analysis.whiteAccuracy).toBe(calculateAccuracy([0, 100]));
-    expect(analysis.blackAccuracy).toBe(calculateAccuracy([100, 0]));
+    expect(analysis.whiteAccuracy).toBe(white);
+    expect(analysis.blackAccuracy).toBe(black);
   });
 
   it('is null for a game that has not been analysed', async () => {

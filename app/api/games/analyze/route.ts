@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
 import { getGame, getAnalysis, getSetting, setGameProgress, getGameProgress, clearGameProgress, saveAnalysis, saveGame } from '@/lib/db';
 import { Stockfish } from '@se-oss/stockfish';
-import { calculateAccuracy, getMoveQuality, normalizeCpLoss } from '@/lib/analysis-utils';
+import { calculateAccuracy, getMoveQuality, gradedCpLoss } from '@/lib/analysis-utils';
 import { isBookMove } from '@/lib/opening-book';
 import {
   setProgress as setInMemProgress,
@@ -143,12 +143,13 @@ async function analyzeGameChessApiBatched(
   const whiteLosses: number[] = [];
   const blackLosses: number[] = [];
   
-  // Re-calculate losses from existing moves
+  // Re-calculate losses from existing moves (graded as getAnalysis read them)
   for (const move of existingMoves) {
+    const loss = move.gradedLoss ?? move.centipawnLoss;
     if (move.color === 'white') {
-      whiteLosses.push(move.centipawnLoss);
+      whiteLosses.push(loss);
     } else {
-      blackLosses.push(move.centipawnLoss);
+      blackLosses.push(loss);
     }
   }
   
@@ -213,12 +214,6 @@ async function analyzeGameChessApiBatched(
         cpLoss = 0;
       }
 
-      // Normalise cp loss to remove forced-mate ceiling artifacts in both
-      // directions: "played a slower win" and "natural move in a lost position".
-      const playerEvalBefore = isWhiteMove ? evalBeforeWhite : -evalBeforeWhite;
-      const playerEvalAfter  = isWhiteMove ? evalAfterWhite  : -evalAfterWhite;
-      cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter, playerEvalBefore);
-
       // Book moves: force cpLoss = 0. They still count in the accuracy, as moves that
       // lost nothing. Evaluation is stored normally so the eval chart has no gaps.
       if (isBook) {
@@ -229,11 +224,17 @@ async function analyzeGameChessApiBatched(
       // Store evaluation in pawn units for display
       const evalAfterPawns = Math.round(evalAfterWhite) / 100;
 
+      // The grade counts a loss for less where the game is already decided (and
+      // takes forced mates in its stride): see gradedCpLoss. Measured from the
+      // stored evaluation, as getAnalysis regrades it when read.
+      const playerEvalAfter = Math.round(isWhiteMove ? evalAfterWhite : -evalAfterWhite);
+      const gradedLoss = gradedCpLoss(cpLoss, playerEvalAfter);
+
       // Accuracy counts every move, book moves as perfect ones (see calculateAccuracy)
       if (isWhiteMove) {
-        whiteLosses.push(cpLoss);
+        whiteLosses.push(gradedLoss);
       } else {
-        blackLosses.push(cpLoss);
+        blackLosses.push(gradedLoss);
       }
 
       const moveNumber = Math.floor(i / 2) + 1;
@@ -245,8 +246,9 @@ async function analyzeGameChessApiBatched(
         evaluation: evalAfterPawns,
         bestMove: evalBefore.bestMove,
         principalVariation: evalBefore.pv && evalBefore.pv.length > 0 ? evalBefore.pv.slice(0, 5) : undefined,
-        centipawnLoss: cpLoss,
-        moveQuality: isBook ? 'book' : getMoveQuality(cpLoss),
+        centipawnLoss: cpLoss, // how far it fell short of the engine's best
+        gradedLoss,            // what the grade counts of that
+        moveQuality: isBook ? 'book' : getMoveQuality(gradedLoss),
       });
 
       console.log(`[CHESS-API] Move ${i + 1}/${history.length} analyzed: ${move.san}, CP loss = ${cpLoss}${isBook ? ' (book)' : ''}`);
@@ -371,13 +373,6 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           cpLoss = 0;
         }
 
-        // Normalise cp loss to remove forced-mate ceiling artifacts in both
-        // directions: "played a slower win" and "natural move in a lost position".
-        // Both evalBefore and evalAfter are white-POV after sign adjustments above.
-        const playerEvalBefore = isWhiteMove ? evalBefore : -evalBefore;
-        const playerEvalAfter  = isWhiteMove ? evalAfter  : -evalAfter;
-        cpLoss = normalizeCpLoss(cpLoss, playerEvalAfter, playerEvalBefore);
-
         // Book moves: force cpLoss = 0. They still count in the accuracy, as moves that
         // lost nothing. Evaluation is stored normally so the eval chart has no gaps.
         if (isBook) {
@@ -387,11 +382,16 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
 
         const moveNumber = Math.floor(i / 2) + 1;
 
+        // The grade counts a loss for less where the game is already decided (see
+        // gradedCpLoss). evalAfter is white-POV after the sign adjustment above.
+        const playerEvalAfter = Math.round(isWhiteMove ? evalAfter : -evalAfter);
+        const gradedLoss = gradedCpLoss(cpLoss, playerEvalAfter);
+
         // Accuracy counts every move, book moves as perfect ones (see calculateAccuracy)
         if (isWhiteMove) {
-          whiteLosses.push(cpLoss);
+          whiteLosses.push(gradedLoss);
         } else {
-          blackLosses.push(cpLoss);
+          blackLosses.push(gradedLoss);
         }
 
         analyses.push({
@@ -401,8 +401,9 @@ async function analyzeGame(pgn: string, depth: number = 10, userColor: 'white' |
           evaluation: evalAfter / 100, // store in pawn units to match cloud analysis
           bestMove: bestMove,
           principalVariation: principalVariation.length > 0 ? principalVariation : undefined,
-          centipawnLoss: cpLoss,
-          moveQuality: isBook ? 'book' : getMoveQuality(cpLoss),
+          centipawnLoss: cpLoss, // how far it fell short of the engine's best
+          gradedLoss,            // what the grade counts of that
+          moveQuality: isBook ? 'book' : getMoveQuality(gradedLoss),
         });
       } catch (error) {
         console.error(`[STOCKFISH] Error analyzing move ${i + 1}:`, error);
