@@ -53,7 +53,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 |---|---|---|
 | `/` | `app/page.tsx` | Home / dashboard |
 | `/journal` | `app/journal/page.tsx` | Main journal editor — write entries, select games, view history |
-| `/games` | `app/games/page.tsx` | Game list with analysis status and post-game summary forms |
+| `/games` | `app/games/page.tsx` | Game list with analysis status and post-game summary forms. Very short games — finished in under 5 moves (whole moves: White's and Black's), with no journal entry — are left out, behind a "Show them" note (`splitVeryShortGames` in `lib/game-status.ts`). A game still being played is always listed, however young, and if the journal can't be read nothing is left out. Moves are counted from the PGN's text (`countPlies`): chess.js takes over a second to load the whole list's Chess.com PGNs, the text count 8 ms, and the two agree on all 128 of the author's games |
 | `/games/[id]` | `app/games/[id]/page.tsx` | Individual game detail and journal entries for that game |
 | `/games/[id]/analysis` | `app/games/[id]/analysis/page.tsx` | Move-by-move engine analysis viewer |
 | `/blog?key=…` | `app/blog/page.tsx` | **Unlisted** directory of an author's shared games, newest first by month, each linking to its blog; searchable and filterable by result. Opens with the author's secret key, or for the signed-in author (who also sees the link to share); anyone else gets a 404. A server component, read per visit |

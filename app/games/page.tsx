@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import PostGameSummaryForm from '@/components/PostGameSummaryForm';
 import BlogPostModal from '@/components/BlogPostModal';
 import { mergeRetry, runThinkingAnalysis, summarizeRun } from '@/lib/thinking-analysis-client';
+import { SHORT_GAME_MOVES, splitVeryShortGames } from '@/lib/game-status';
 
 interface Game {
   id: string;
@@ -13,6 +14,7 @@ interface Game {
   result: string | null;
   white: string;
   black: string;
+  pgn?: string;
   analysisCompleted?: boolean;
   analysisDepth?: number;
   analysisEngine?: string;
@@ -42,6 +44,17 @@ export default function GamesPage() {
   const [analyzingThinking, setAnalyzingThinking] = useState<string | null>(null);
   const [thinkingProgress, setThinkingProgress] = useState<{ current: number; total: number } | null>(null);
   const [gamesWithEntries, setGamesWithEntries] = useState<Set<string>>(new Set());
+  // Whether the journal could be read, so it is known which games have entries
+  const [entriesKnown, setEntriesKnown] = useState(false);
+
+  // Finished games of under five moves with nothing written about them (aborted or
+  // abandoned, typically) are left out of the list unless asked for
+  const [showVeryShort, setShowVeryShort] = useState(false);
+  const { kept, veryShort } = useMemo(
+    () => splitVeryShortGames(games, entriesKnown ? gamesWithEntries : null),
+    [games, gamesWithEntries, entriesKnown],
+  );
+  const listedGames = showVeryShort ? games : kept;
 
   // ── Blog post state ────────────────────────────────────────────────────
   const [showBlogModal, setShowBlogModal] = useState<string | null>(null);
@@ -109,6 +122,7 @@ export default function GamesPage() {
       );
       setExistingSummaries(withSummaries);
       setGamesWithEntries(withEntries);
+      setEntriesKnown(journalResponse.ok);
     } catch (error) {
       console.error('[FRONTEND] Error loading games:', error);
       const msg = error instanceof Error ? error.message : String(error);
@@ -328,13 +342,29 @@ export default function GamesPage() {
         </button>
       </div>
 
+      {veryShort.length > 0 && (
+        <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+          {showVeryShort ? 'Including ' : ''}
+          {veryShort.length} very short {veryShort.length === 1 ? 'game' : 'games'}
+          {showVeryShort ? '' : ' hidden'}: finished in under {SHORT_GAME_MOVES} moves, with nothing
+          written about {veryShort.length === 1 ? 'it' : 'them'}.{' '}
+          <button
+            type="button"
+            onClick={() => setShowVeryShort(shown => !shown)}
+            className="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {showVeryShort ? 'Hide' : 'Show'} {veryShort.length === 1 ? 'it' : 'them'}
+          </button>
+        </p>
+      )}
+
       {games.length === 0 ? (
         <p className="text-center text-gray-600">
           No games found. Click &quot;Fetch from Chess.com&quot; to import your games.
         </p>
       ) : (
         <div className="space-y-4">
-          {games.map((game) => {
+          {listedGames.map((game) => {
             const badge = getResultBadge(game.result);
             return (
               <div
