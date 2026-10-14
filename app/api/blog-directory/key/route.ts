@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { rotateDirectoryKey } from '@/lib/db';
+import { currentUserId } from '@/lib/user-id';
 
 // POST /api/blog-directory/key — replace the signed-in author's secret directory
 // link; the old one stops working at once. Not a public route: middleware holds
 // it behind sign-in, and it only ever changes the caller's own key.
 export async function POST() {
-  const { userId } = await auth();
+  const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   try {
     return NextResponse.json({ key: await rotateDirectoryKey(userId) });

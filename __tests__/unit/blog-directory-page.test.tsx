@@ -143,6 +143,21 @@ describe('the directory page — for its author', () => {
     expect(mockRecord.mock.calls[0][2]).toEqual({ page: 'directory', viewer: 'owner' });
   });
 
+  it('knows the author signed in with the account carried over to Production (lib/user-id.ts)', async () => {
+    const PROD = 'user_3KgYiYzMxX8zUjN4dBbv55hfT1T', DEV = 'user_395GdJ9fMuBbALA4mvYzpEUQrNI';
+    mockOwnerOf.mockImplementation(async key => (key === ALICE_KEY ? DEV : null)); // the key is the Development id's
+    signedInAs(PROD);
+
+    const own = await visit();
+    expect(mockOwnKey).toHaveBeenCalledWith(DEV);
+    expect(mockLoad).toHaveBeenCalledWith(DEV);
+    expect(textOf(own)).toContain('Your secret link');
+
+    const viaKey = await visit({ key: ALICE_KEY });
+    expect(textOf(viaKey)).toContain('Your secret link');
+    expect(mockRecord.mock.calls.map(c => c[2].viewer)).toEqual(['owner', 'owner']);
+  });
+
   it('still shows the author the box when they open their own link', async () => {
     signedInAs('alice');
     expect(textOf(await visit({ key: ALICE_KEY }))).toContain('Your secret link');

@@ -1,5 +1,5 @@
-import { auth } from '@clerk/nextjs/server';
 import Redis from 'ioredis';
+import { currentUserId } from './user-id';
 
 const ADMIN_KEY = 'chess-diary:admin';
 
@@ -21,8 +21,8 @@ function getRedisClient(): Redis {
  * The first authenticated user to hit this check becomes the admin automatically.
  */
 export async function isAdmin(): Promise<{ isAdmin: boolean; userId: string | null }> {
-  const authResult = await auth();
-  const userId = authResult.userId;
+  // The admin is recorded by data id, so a carried-over account stays admin (see lib/user-id.ts)
+  const userId = await currentUserId();
 
   if (!userId) {
     return { isAdmin: false, userId: null };

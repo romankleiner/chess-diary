@@ -106,3 +106,19 @@ describe('POST /api/blog-directory/key', () => {
     log.mockRestore();
   });
 });
+
+describe('the account carried over to Production (lib/user-id.ts)', () => {
+  const PROD = 'user_3KgYiYzMxX8zUjN4dBbv55hfT1T', DEV = 'user_395GdJ9fMuBbALA4mvYzpEUQrNI';
+  beforeEach(() => mockAuth.mockResolvedValue({ userId: PROD } as never));
+
+  it('reads the visit log kept under the Development id', async () => {
+    await GET();
+    expect(mockVisits).toHaveBeenCalledWith(DEV);
+  });
+
+  it('replaces the directory key kept under the Development id', async () => {
+    mockRotate.mockResolvedValue('NewKeyNewKeyNewKeyNew_');
+    await rotate();
+    expect(mockRotate).toHaveBeenCalledWith(DEV);
+  });
+});

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { getBlogVisits, getGamesById } from '@/lib/db';
+import { currentUserId } from '@/lib/user-id';
 import { asVisit } from '@/lib/access-log';
 import type { BlogVisit } from '@/lib/access-log';
 import { visitLoggingOn } from '@/lib/blog-visits-server';
@@ -8,7 +8,7 @@ import { visitLoggingOn } from '@/lib/blog-visits-server';
 // GET /api/blog-visits — the signed-in author's blog visit log, newest first,
 // with a "white vs black" name for each game in it. Not a public route.
 export async function GET() {
-  const { userId } = await auth();
+  const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   try {
     const visits = (await getBlogVisits(userId)).map(asVisit).filter((v): v is BlogVisit => v !== null);

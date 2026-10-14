@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { getJournal, saveJournal } from '@/lib/db';
+import { currentUserId } from '@/lib/user-id';
 
 export async function POST(request: NextRequest) {
   // Only allow in development
@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { userId } = await auth();
+    const userId = await currentUserId();
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

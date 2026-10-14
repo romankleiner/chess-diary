@@ -609,6 +609,19 @@ describe('POST /api/games/[id]/blog-post — logging the visit', () => {
     expect(mockRecordVisit.mock.calls.map(c => [c[0], c[2].viewer])).toEqual([['owner-abc', 'owner'], ['owner-abc', 'owner']]);
   });
 
+  it('knows the author signed in with the account carried over to Production (lib/user-id.ts)', async () => {
+    const PROD = 'user_3KgYiYzMxX8zUjN4dBbv55hfT1T', DEV = 'user_395GdJ9fMuBbALA4mvYzpEUQrNI';
+    mockGetGame.mockResolvedValue(gameA);
+    mockAuth.mockResolvedValue({ userId: PROD } as never);
+    mockGetBlogOwner.mockResolvedValue(DEV); // shared under the Development id
+    await POST(visitReq(), params(gameA.id));
+    mockGetBlogOwner.mockResolvedValue(null); // a draft preview reads the Development id's data
+    await POST(visitReq(), params(gameA.id));
+
+    expect(mockRecordVisit.mock.calls.map(c => [c[0], c[2].viewer])).toEqual([[DEV, 'owner'], [DEV, 'owner']]);
+    expect(mockGetGame).toHaveBeenLastCalledWith(gameA.id, DEV);
+  });
+
   it('logs nothing for a game that is not shared, or that is not there', async () => {
     mockAuth.mockResolvedValue({ userId: null } as never);
     mockGetBlogOwner.mockResolvedValue(null);

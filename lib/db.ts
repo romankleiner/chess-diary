@@ -1,6 +1,6 @@
 import Redis from 'ioredis';
 import { randomBytes } from 'crypto';
-import { auth } from '@clerk/nextjs/server';
+import { currentUserId } from './user-id';
 import { withCurrentAccuracy, withCurrentGrading } from './analysis-utils';
 import type { Game, JournalEntry } from '@/types';
 import { BLOG_VISITS_KEPT } from './access-log';
@@ -35,9 +35,10 @@ function getRedisClient(): Redis {
 
 // Get user ID from Clerk
 async function getUserId(): Promise<string> {
-  const authResult = await auth();
-  const userId = authResult.userId;
-  
+  // The id the signed-in user's data is kept under, which for a carried-over
+  // account is not its Clerk id (see lib/user-id.ts)
+  const userId = await currentUserId();
+
   if (!userId) {
     throw new Error('User not authenticated');
   }

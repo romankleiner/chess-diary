@@ -9,6 +9,9 @@ All data is private per authenticated user, with one exception: a game's blog th
 ### Who may sign up
 Accounts are by the admin's approval, so strangers can't spend the app's quotas (Vercel, Redis, chess-api.com) or its Anthropic key (the AI commentary runs on the server's `ANTHROPIC_API_KEY`). This is **Clerk's Waitlist access mode**, set in the Clerk dashboard (Configure → Restrictions / Access mode → Waitlist, on the production instance; email must be enabled for the invitations). Anyone without an account asks for access at `/waitlist` (Clerk's `<Waitlist />`; `<ClerkProvider waitlistUrl="/waitlist">` makes the sign-in box offer it instead of "Sign up"); the admin approves them on the Clerk dashboard's Waitlist page (⋯ → Invite), and Clerk emails an invitation to sign up. Until then they have no account and so no session: nothing behind `auth.protect()` in `middleware.ts` can be reached, and no app code is involved in keeping them out. Existing accounts still sign in; to remove one, ban or delete it in the Clerk dashboard. `/waitlist` and its sub-paths are public (`lib/public-routes.ts`), `/waitlisted` is not.
 
+### Accounts carried over between Clerk instances
+Data is keyed by a Clerk user ID, and the ID is also stored as a value: the admin (`chess-diary:admin`), each shared blog's owner (`chess-diary:public:blog`) and each directory key's owner (`chess-diary:public:directory-keys`). When the app moved from Clerk's Development instance to Production, the author's account got a new ID; rather than migrate the data, `lib/user-id.ts` maps the Production ID to the Development ID the data was created under (`dataUserId`; one entry, `user_3KgY…T1T` → `user_395G…rNI`). `currentUserId()` — the signed-in user's data ID — is what the app uses wherever the user is identified: the data layer (`getUserId` in `lib/db.ts`), the admin check (`lib/admin.ts`), the blog's owner-or-visitor checks (`/blog`, the blog-post route), the visit log and the directory key. Only a bare "is anyone signed in" check (the board-image route) uses `auth()` directly. Local development still signs in through the Development instance, as the old ID, so both reach the same data (they share the Redis database). Nothing was ever written under the Production ID. Anyone else keeps their own Clerk ID. To carry another account over, add its pair to `DATA_ID_OF`.
+
 ---
 
 ## Technology Stack
@@ -123,7 +126,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 ## Shared Library Modules (`lib/`)
 
 ### `lib/db.ts` — Database
-The central data access layer. Wraps ioredis and namespaces all keys by Clerk user ID. Every read/write calls `auth()` to resolve the current user.
+The central data access layer. Wraps ioredis and namespaces all keys by user ID — the signed-in user's *data* ID, which is their Clerk ID except for an account carried over from another Clerk instance (see *Accounts carried over between Clerk instances*). Every read/write calls `currentUserId()` (`lib/user-id.ts`) to resolve the current user.
 
 All data is stored in **Redis hashes** (`HSET` / `HGETALL`):
 

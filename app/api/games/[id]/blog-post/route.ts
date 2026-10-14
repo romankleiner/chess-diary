@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { Chess } from 'chess.js';
+import { currentUserId } from '@/lib/user-id';
 import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
 import { qualitiesByPly, summarizeAnalysis } from '@/lib/analysis-utils';
 import type { MoveQualityKey } from '@/lib/analysis-utils';
@@ -15,7 +15,8 @@ import { formatSanLine, uciLineToSan } from '@/lib/position-facts';
 // via their session, so they can preview a draft before sharing. The viewer is
 // returned too, so the visit can be logged as the author's own or someone else's.
 async function resolveBlogOwner(gameId: string): Promise<{ ownerId: string | null; viewerId: string | null }> {
-  const [publishedOwner, { userId }] = await Promise.all([getBlogOwner(gameId), auth()]);
+  // The viewer's data id, which is what the stored owner is (see lib/user-id.ts)
+  const [publishedOwner, userId] = await Promise.all([getBlogOwner(gameId), currentUserId()]);
   return { ownerId: publishedOwner ?? userId ?? null, viewerId: userId ?? null };
 }
 

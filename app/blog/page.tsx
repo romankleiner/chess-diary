@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { auth } from '@clerk/nextjs/server';
+import { currentUserId } from '@/lib/user-id';
 import { BlogDirectory } from '@/components/BlogDirectory';
 import { DirectoryShareLink } from '@/components/DirectoryShareLink';
 import { clearBlogDirectoryCache, loadBlogDirectory } from '@/lib/blog-directory-server';
@@ -34,7 +34,8 @@ interface Access {
 
 /** Whose directory this request may see, or null if none. */
 async function resolveAccess(keyParam: unknown): Promise<Access | null> {
-  const { userId } = await auth();
+  // The viewer's data id, which is what a directory key's owner is (see lib/user-id.ts)
+  const userId = await currentUserId();
   if (isDirectoryKey(keyParam)) {
     const ownerId = await getDirectoryOwner(keyParam);
     return ownerId ? { ownerId, key: keyParam, viewer: userId === ownerId ? 'owner' : 'visitor' } : null;
