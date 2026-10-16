@@ -355,6 +355,13 @@ Engine analysis uses different backends depending on environment:
 - **Local / non-Vercel**: Stockfish via `@se-oss/stockfish` npm package — full depth, no time limit
 - **Vercel serverless**: `chess-api.com` HTTP API — batched (2 calls per move: position before and after), adaptive batch sizes (5 / 3 / 2 / 1 moves per request depending on depth) to stay within Vercel's 10-second function timeout. Analysis can be resumed across requests using Redis progress keys.
 
+**No gaps.** A move used to be *skipped* whenever chess-api.com didn't answer, and the run still marked the game analysed — on the author's games 20 analyses were short of moves, two of them entirely empty (accuracy 100% for both sides). There were three causes, each handled now:
+- **It refuses some positions for good.** A finished position (checkmate, stalemate) it answers with an error, which cost the last move of every game ending in mate (9 games); those are worked out locally (`terminalEval`). And it rejects any position with an en passant square ("INVALID_FEN_VALIDATION_ERROR"), which chess.js writes only when the capture is really there; positions are sent without it (`engineFen` in `lib/position-eval.ts`, also used for the blog's guess ratings), at the cost of the engine overlooking that one en passant capture. That cost two moves each in four games.
+- **It stops answering for a while**, most likely rate limiting after many calls (a run of 13 games in 15 minutes ended in two empty analyses and a third of one). Each call is tried again once after a pause (1.5 s; `ENGINE_RETRY_PAUSE_MS`). If it still fails, the batch stops *at* that move (`stalled: true`, `nextMoveIndex` = that move) instead of skipping it; the Games page waits 20 s and resumes from there, up to 3 times in a row without progress, then says where it stopped and keeps what was done. A batch that stops before evaluating any move writes nothing, so a re-analysis begun while the engine is unreachable can't replace a finished analysis with an empty one; and while a re-run is unfinished, the game is marked not analysed.
+- **Anything thrown** while analysing a move stops the batch there too.
+
+The analysis page warns when an analysis has fewer moves than the game ("Only 0 of 55 moves were evaluated…") and points to re-analysing it; that covers analyses saved before this.
+
 ### AI Thinking Analysis
 Requires engine analysis to be completed first. Sends the player's recorded thought process, engine evaluation, best move and principal variation to Claude. The model and verbosity are user-configurable via Settings. Supports re-analysis and batching across multiple journal entries for a single game.
 

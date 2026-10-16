@@ -4,6 +4,7 @@ import { getGame, getAnalysis, getSetting, setGameProgress, getGameProgress, cle
 import { Stockfish } from '@se-oss/stockfish';
 import { calculateAccuracy, getMoveQuality, gradedCpLoss } from '@/lib/analysis-utils';
 import { isBookMove } from '@/lib/opening-book';
+import { engineFen, terminalEval } from '@/lib/position-eval';
 import {
   setProgress as setInMemProgress,
   clearProgress as clearInMemProgress,
@@ -61,7 +62,7 @@ async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        fen: fen,
+        fen: engineFen(fen), // without an en passant square, which the engine rejects
         depth: depth,
       }),
       signal: AbortSignal.timeout(10000), // 10 s per call — don't let one hung request stall the batch
@@ -105,19 +106,42 @@ async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score
   }
 }
 
+/** Pause before asking chess-api.com a second time when it fails to answer. */
+const ENGINE_RETRY_PAUSE_MS = Number(process.env.ENGINE_RETRY_PAUSE_MS ?? 1500);
+
+/**
+ * One evaluation, asked again once after a pause if chess-api.com fails to answer
+ * (an error status, a timeout, an unexpected reply). It refuses at times -- most
+ * likely rate limiting after many calls in a row -- and a second try often works.
+ *
+ * A position the game has ended in is worked out here instead (terminalEval):
+ * chess-api.com answers checkmate or stalemate with an error, which left the last
+ * move of every game ending in mate unanalysed, and now would stop the analysis there.
+ */
+async function getChessApiEvalWithRetry(fen: string, depth: number) {
+  const finished = terminalEval(fen);
+  if (finished) return { score: finished.pawns * 100, bestMove: '', pv: [] as string[] };
+  const first = await getChessApiEval(fen, depth);
+  if (first) return first;
+  await new Promise(resolve => setTimeout(resolve, ENGINE_RETRY_PAUSE_MS));
+  return getChessApiEval(fen, depth);
+}
+
 async function analyzeGameChessApiBatched(
-  pgn: string, 
-  depth: number, 
-  userColor: 'white' | 'black', 
+  pgn: string,
+  depth: number,
+  userColor: 'white' | 'black',
   gameId: string,
   startMoveIndex: number = 0,
   batchSize: number = 10
-): Promise<{ 
-  moves: any[]; 
-  whiteAccuracy: number; 
+): Promise<{
+  moves: any[];
+  whiteAccuracy: number;
   blackAccuracy: number;
   completed: boolean;
   nextMoveIndex: number;
+  /** The engine couldn't be reached for the move at nextMoveIndex: the batch stopped there, to be resumed */
+  stalled: boolean;
 }> {
   console.log(`[CHESS-API] Batch analysis starting at move ${startMoveIndex}, batch size ${batchSize}`);
   const chess = new Chess();
@@ -157,6 +181,11 @@ async function analyzeGameChessApiBatched(
 
   await setProgress(gameId, startMoveIndex, history.length);
 
+  // A move the engine can't evaluate is never skipped -- that used to leave gaps
+  // (once a whole game of them) in an analysis marked complete. The batch stops at
+  // it instead, and the caller resumes from there.
+  let stoppedAt: number | null = null;
+
   for (let i = startMoveIndex; i < endMoveIndex; i++) {
     const move = history[i];
     const isWhiteMove = chess.turn() === 'w';
@@ -175,21 +204,22 @@ async function analyzeGameChessApiBatched(
       const isBook = await isBookMove(fenBefore, uciPlayed);
       // ── End book detection ────────────────────────────────────────────────
 
-      const evalBefore = await getChessApiEval(fenBefore, depth);
+      const evalBefore = await getChessApiEvalWithRetry(fenBefore, depth);
 
       if (!evalBefore) {
-        console.log(`[CHESS-API] Skipping move ${i + 1}: API failed`);
-        chess.move(move.san);
-        continue;
+        console.log(`[CHESS-API] Stopping at move ${i + 1}: no evaluation of the position before it`);
+        stoppedAt = i;
+        break;
       }
 
       chess.move(move.san);
       const fenAfter = chess.fen();
-      const evalAfter = await getChessApiEval(fenAfter, depth);
+      const evalAfter = await getChessApiEvalWithRetry(fenAfter, depth);
 
       if (!evalAfter) {
-        console.log(`[CHESS-API] Skipping move ${i + 1}: API failed on after position`);
-        continue;
+        console.log(`[CHESS-API] Stopping at move ${i + 1}: no evaluation of the position after it`);
+        stoppedAt = i;
+        break;
       }
 
       // chess-api.com always returns eval from white's perspective.
@@ -253,22 +283,27 @@ async function analyzeGameChessApiBatched(
 
       console.log(`[CHESS-API] Move ${i + 1}/${history.length} analyzed: ${move.san}, CP loss = ${cpLoss}${isBook ? ' (book)' : ''}`);
     } catch (error) {
-      console.error(`[CHESS-API] Error analyzing move ${i + 1}:`, error);
+      console.error(`[CHESS-API] Error analyzing move ${i + 1}, stopping there:`, error);
+      stoppedAt = i;
+      break;
     }
   }
-  
+
   const whiteAccuracy = calculateAccuracy(whiteLosses);
   const blackAccuracy = calculateAccuracy(blackLosses);
-  const completed = endMoveIndex >= history.length;
-  
-  console.log(`[CHESS-API] Batch complete. Analyzed ${endMoveIndex}/${history.length}. White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
-  
-  return { 
-    moves: analyses, 
-    whiteAccuracy, 
-    blackAccuracy, 
+  const stalled = stoppedAt !== null;
+  const nextMoveIndex = stoppedAt ?? endMoveIndex;
+  const completed = !stalled && endMoveIndex >= history.length;
+
+  console.log(`[CHESS-API] Batch ${stalled ? 'stopped' : 'complete'}. Analyzed ${nextMoveIndex}/${history.length}. White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
+
+  return {
+    moves: analyses,
+    whiteAccuracy,
+    blackAccuracy,
     completed,
-    nextMoveIndex: endMoveIndex
+    nextMoveIndex,
+    stalled,
   };
 }
 
@@ -464,7 +499,19 @@ export async function POST(request: NextRequest) {
       // depth ≤10 → 12 moves/batch, depth ≤14 → 8, depth ≤18 → 5, higher → 3
       const batchSize = depth <= 10 ? 12 : depth <= 14 ? 8 : depth <= 18 ? 5 : 3;
       const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, batchSize);
-      
+
+      // Stopped before evaluating a single move: nothing has changed, so nothing is
+      // written -- a re-analysis begun while the engine is unreachable must not
+      // replace a finished analysis with an empty one
+      if (batchResult.stalled && batchResult.nextMoveIndex === startMoveIndex) {
+        return NextResponse.json({
+          success: true,
+          completed: false,
+          nextMoveIndex: startMoveIndex,
+          stalled: true,
+        });
+      }
+
       // Save analysis result
       const analysisData = {
         gameId,
@@ -490,13 +537,22 @@ export async function POST(request: NextRequest) {
           clearGameProgress(gameId),
         ]);
       } else {
-        await saveAnalysis(gameId, analysisData);
+        // Until every move is in, the game isn't analysed -- even if an earlier run
+        // finished: re-analysing replaces that run's moves from the first batch on
+        const saves: Promise<unknown>[] = [saveAnalysis(gameId, analysisData)];
+        if (game.analysisCompleted) {
+          game.analysisCompleted = false;
+          saves.push(saveGame(gameId, game));
+        }
+        await Promise.all(saves);
       }
-      
+
       return NextResponse.json({
         success: true,
         completed: batchResult.completed,
         nextMoveIndex: batchResult.nextMoveIndex,
+        // The engine couldn't be reached for the move at nextMoveIndex: try again from there shortly
+        stalled: batchResult.stalled,
         analysis: analysisData,
       });
     } else {

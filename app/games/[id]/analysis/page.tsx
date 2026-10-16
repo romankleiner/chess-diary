@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getMoveQuality } from '@/lib/analysis-utils';
+import { countPlies } from '@/lib/game-status';
 
 interface MoveAnalysis {
   moveNumber: number;
@@ -34,6 +35,7 @@ interface Game {
   opponent: string;
   date: string;
   result: string;
+  pgn?: string;
 }
 
 export default function GameAnalysisPage() {
@@ -170,7 +172,20 @@ export default function GameAnalysisPage() {
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h2 className="text-2xl font-bold mb-4">Game Analysis</h2>
-        
+
+        {/* An analysis can be short of moves: the engine service failing to answer
+            used to skip them, and a run stopped part way keeps what it did */}
+        {(() => {
+          const total = countPlies(game.pgn);
+          const done = analysis.moves.length;
+          return game.pgn && done < total ? (
+            <p role="alert" className="mb-4 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+              ⚠ Only {done} of {total} moves were evaluated: the engine service didn&apos;t answer for the rest,
+              so the accuracy and categories below cover only those. Analyse the game again from the Games page to fill them in.
+            </p>
+          ) : null;
+        })()}
+
         <div className="grid grid-cols-2 gap-4 mb-6">
           <div>
             <p className="text-sm text-gray-500">White</p>

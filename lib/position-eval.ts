@@ -54,6 +54,21 @@ export function terminalEval(fen: string): PositionEval | null {
 }
 
 /**
+ * A position as chess-api.com will take it: without an en passant square. It
+ * rejects any position that has one ("INVALID_FEN_VALIDATION_ERROR"), even a
+ * correct one -- and chess.js only writes one when the capture is really there
+ * (exd6 after ...d5, say). The engine then overlooks that one capture, which is
+ * better than no evaluation at all: it used to leave both moves around such a
+ * position unanalysed. Anything that isn't a full FEN is returned as it is.
+ */
+export function engineFen(fen: string): string {
+  const fields = fen.trim().split(/\s+/);
+  if (fields.length < 4 || fields[3] === '-') return fen;
+  fields[3] = '-';
+  return fields.join(' ');
+}
+
+/**
  * Read a chess-api.com response body. Returns null for anything that is not a
  * usable evaluation, including its error replies (which arrive as HTTP 200).
  */

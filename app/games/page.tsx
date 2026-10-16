@@ -20,6 +20,11 @@ interface Game {
   analysisEngine?: string;
 }
 
+/** Times in a row to wait for the engine service, when it stops answering, before giving up for now. */
+const ENGINE_STALL_RETRIES = 3;
+/** Seconds to wait each time. */
+const ENGINE_STALL_WAIT_S = 20;
+
 function getResultBadge(result: string | null): { label: string; className: string } | null {
   switch (result?.toLowerCase()) {
     case 'win':
@@ -189,9 +194,13 @@ export default function GamesPage() {
         }
       }, 2000);
 
-      // Loop through batches until the server reports completed
+      // Loop through batches until the server reports completed. When the engine
+      // service stops answering, the server stops the batch at that move rather than
+      // skipping it (`stalled`): wait, then resume from there -- a few times in a row
+      // at most, after which the moves done so far stay for a later run to finish.
       let startMoveIndex = 0;
       let completed = false;
+      let stallsInARow = 0;
       while (!completed) {
         const response = await fetch('/api/games/analyze', {
           method: 'POST',
@@ -218,6 +227,21 @@ export default function GamesPage() {
         if (!data.success) {
           alert(data.error || 'Analysis failed');
           return;
+        }
+        if (data.stalled) {
+          // A stall after progress starts the count afresh
+          stallsInARow = (data.nextMoveIndex ?? startMoveIndex) > startMoveIndex ? 1 : stallsInARow + 1;
+          if (stallsInARow > ENGINE_STALL_RETRIES) {
+            const move = Math.floor((data.nextMoveIndex ?? startMoveIndex) / 2) + 1;
+            alert(`The engine service has stopped answering, so the analysis stopped at move ${move}. ` +
+              'The moves analysed so far are kept: analyse the game again later to finish it.');
+            await loadGames();
+            return;
+          }
+          showToast(`⏳ The engine isn't answering, trying again in ${ENGINE_STALL_WAIT_S} s`);
+          await new Promise(resolve => setTimeout(resolve, ENGINE_STALL_WAIT_S * 1000));
+        } else {
+          stallsInARow = 0;
         }
         completed = data.completed;
         startMoveIndex = data.nextMoveIndex ?? startMoveIndex;

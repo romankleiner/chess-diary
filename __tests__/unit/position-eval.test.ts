@@ -6,6 +6,7 @@ import {
   isMatePawns,
   parseChessApiEval,
   roundPawns,
+  engineFen,
   terminalEval,
 } from '@/lib/position-eval';
 
@@ -15,6 +16,26 @@ const WHITE_MATED = 'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1
 // Black to move and checkmated (scholar's mate).
 const BLACK_MATED = 'r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4';
 const STALEMATE = '7k/5Q2/6K1/8/8/8/8/8 b - - 0 1';
+
+// ─── the position as chess-api.com will take it ───────────────────────────────
+
+describe('engineFen', () => {
+  // After 6...d5 in a real game: exd6 e.p. is possible, so chess.js writes d6, which the engine rejects
+  const EN_PASSANT = 'r1bqkb1r/pp2pppp/1nn5/2ppP3/8/1BP2N2/PP1P1PPP/RNBQK2R w KQkq d6 0 7';
+
+  it('drops the en passant square, leaving the rest of the position as it was', () => {
+    expect(engineFen(EN_PASSANT)).toBe('r1bqkb1r/pp2pppp/1nn5/2ppP3/8/1BP2N2/PP1P1PPP/RNBQK2R w KQkq - 0 7');
+  });
+
+  it('leaves a position without one as it is', () => {
+    expect(engineFen(START_FEN)).toBe(START_FEN);
+  });
+
+  it('leaves anything that is not a full position as it is', () => {
+    expect(engineFen('')).toBe('');
+    expect(engineFen('8/8/8/8/8/8/8/8 w')).toBe('8/8/8/8/8/8/8/8 w');
+  });
+});
 
 // ─── terminal positions ───────────────────────────────────────────────────────
 

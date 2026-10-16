@@ -86,6 +86,13 @@ describe('fetchPositionEval', () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it('sends a position without its en passant square, which the engine would reject', async () => {
+    const fetchFn = fakeFetch(evalReply(-0.34));
+    await fetchPositionEval('r1bqkb1r/pp2pppp/1nn5/2ppP3/8/1BP2N2/PP1P1PPP/RNBQK2R w KQkq d6 0 7', 12, fetchFn);
+    expect(JSON.parse(fetchFn.mock.calls[0][1]?.body as string).fen)
+      .toBe('r1bqkb1r/pp2pppp/1nn5/2ppP3/8/1BP2N2/PP1P1PPP/RNBQK2R w KQkq - 0 7');
+  });
+
   it('fails on an error status', async () => {
     await expect(fetchPositionEval(START_FEN, 12, fakeFetch(reply({}, false, 503)))).rejects.toThrow('returned 503');
   });

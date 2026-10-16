@@ -96,6 +96,7 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
 
   beforeAll(async () => {
     process.env.VERCEL = '1';
+    process.env.ENGINE_RETRY_PAUSE_MS = '0'; // no real pause before asking the engine again
     vi.resetModules();
 
     vi.doMock('@/lib/db', () => ({
@@ -114,6 +115,7 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
 
   afterAll(() => {
     delete process.env.VERCEL;
+    delete process.env.ENGINE_RETRY_PAUSE_MS;
     vi.unstubAllGlobals();
     vi.doUnmock('@/lib/db');
     vi.doUnmock('@se-oss/stockfish');
@@ -250,7 +252,8 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
       if (key === 'chesscom_username') return 'testuser';
       return null;
     });
-    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' }); // 4 plies
+    // 4 plies, not yet analysed (other tests mark the shared game analysed)
+    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6', analysisCompleted: false });
     // 3 moves in the batch × 2 evaluations each (before and after the move)
     for (let i = 0; i < 6; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
 
@@ -263,6 +266,136 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     expect(saveAnalysis).toHaveBeenCalledOnce();
     expect(saveGame).not.toHaveBeenCalled();    // game NOT yet marked complete
     expect(clearGameProgress).not.toHaveBeenCalled();
+  });
+
+  // ── The engine not answering ────────────────────────────────────────────────
+
+  describe('when chess-api.com fails to answer', () => {
+    const failure = { ok: false, status: 429, statusText: 'Too Many Requests', json: async () => ({}), text: async () => '' };
+    const fourPlies = { ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6', analysisCompleted: false };
+
+    beforeEach(() => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    it('asks again once, and carries on when the second try answers', async () => {
+      getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 e5' });
+      fetchMock
+        .mockResolvedValueOnce(failure)                   // before e4: refused…
+        .mockResolvedValueOnce(makeEval(0.3, 'd2d4'))     // …answered on the second try
+        .mockResolvedValueOnce(makeEval(0.3, 'e7e5'))
+        .mockResolvedValueOnce(makeEval(0.3, 'g8f6'))
+        .mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      expect(body).toMatchObject({ completed: true, stalled: false });
+      expect(body.analysis.moves.map((m: { move: string }) => m.move)).toEqual(['e4', 'e5']);
+    });
+
+    it('stops at a move it still can’t evaluate, never skipping it, and says where to resume', async () => {
+      getGame.mockResolvedValue(fourPlies);
+      fetchMock
+        .mockResolvedValueOnce(makeEval(0.3, 'd2d4'))     // e4 before
+        .mockResolvedValueOnce(makeEval(0.3, 'e7e5'))     // e4 after
+        .mockResolvedValueOnce(failure)                   // e5 before: refused
+        .mockResolvedValueOnce(failure);                  // …and again
+      // (anything after would be Nf3 — it must not be reached)
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      expect(body).toMatchObject({ success: true, completed: false, stalled: true, nextMoveIndex: 1 });
+      expect(body.analysis.moves.map((m: { move: string }) => m.move)).toEqual(['e4']);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(saveAnalysis).toHaveBeenCalledOnce();         // e4 is kept
+      expect(saveGame).not.toHaveBeenCalled();             // and the game is not marked analysed
+    });
+
+    it('stops on the position after a move too', async () => {
+      getGame.mockResolvedValue(fourPlies);
+      fetchMock
+        .mockResolvedValueOnce(makeEval(0.3, 'd2d4'))     // e4 before
+        .mockResolvedValueOnce(failure)                   // e4 after: refused
+        .mockResolvedValueOnce(failure);
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      expect(body).toMatchObject({ completed: false, stalled: true, nextMoveIndex: 0 });
+    });
+
+    it('resumes from that move, keeping the moves already done', async () => {
+      getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 e5' });
+      getAnalysis.mockResolvedValue({ moves: [{ moveNumber: 1, color: 'white', move: 'e4', centipawnLoss: 0, gradedLoss: 0 }] });
+      fetchMock.mockResolvedValueOnce(makeEval(0.3, 'g8f6')).mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 1 }))).json();
+
+      expect(body).toMatchObject({ completed: true, stalled: false });
+      expect(body.analysis.moves.map((m: { move: string }) => m.move)).toEqual(['e4', 'e5']);
+    });
+
+    it('writes nothing when it stops before evaluating a single move, so a finished analysis survives a failed re-run', async () => {
+      getGame.mockResolvedValue({ ...fourPlies, analysisCompleted: true });
+      fetchMock.mockResolvedValue(failure);
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 0 }))).json();
+
+      expect(body).toMatchObject({ success: true, completed: false, stalled: true, nextMoveIndex: 0 });
+      expect(saveAnalysis).not.toHaveBeenCalled();
+      expect(saveGame).not.toHaveBeenCalled();
+    });
+
+    it('works out a final checkmate itself, which chess-api.com won’t evaluate, so the last move isn’t lost', async () => {
+      getGame.mockResolvedValue({ ...fourPlies, pgn: '1. f3 e5 2. g4 Qh4#' });
+      // Seven positions go to the engine; the mate after 2...Qh4# does not
+      for (let i = 0; i < 7; i++) fetchMock.mockResolvedValueOnce(makeEval(-0.5, 'a2a3'));
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      expect(body).toMatchObject({ completed: true, stalled: false });
+      expect(fetchMock).toHaveBeenCalledTimes(7);
+      const mate = body.analysis.moves.at(-1);
+      expect(mate).toMatchObject({ move: 'Qh4#', evaluation: -100, centipawnLoss: 0 });
+    });
+
+    it('sends the engine positions without an en passant square, which it rejects', async () => {
+      // 1. e4 c5 2. e5 d5: exd6 e.p. is possible, so chess.js writes "d6" after 2...d5
+      getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 c5 2. e5 d5' });
+      for (let i = 0; i < 8; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'a2a3'));
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      expect(body).toMatchObject({ completed: true, stalled: false });
+      const sent = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).fen.split(' ')[3]);
+      expect(sent.every((ep: string) => ep === '-')).toBe(true);
+    });
+
+    it('stops at a move whose evaluation throws, rather than skipping it', async () => {
+      getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 e5' });
+      isBookMove.mockRejectedValueOnce(new Error('book unreadable'));
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      expect(body).toMatchObject({ completed: false, stalled: true, nextMoveIndex: 0 });
+    });
+  });
+
+  it('marks a game analysed before as not analysed while a re-run is still unfinished', async () => {
+    getSetting.mockImplementation(async (key: string) => {
+      if (key === 'analysis_depth') return '25';
+      if (key === 'chesscom_username') return 'testuser';
+      return null;
+    });
+    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6', analysisCompleted: true });
+    for (let i = 0; i < 6; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
+
+    const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 0 }))).json();
+
+    expect(body.completed).toBe(false);
+    expect(saveGame).toHaveBeenCalledOnce();
+    expect(saveGame.mock.calls[0][1]).toMatchObject({ analysisCompleted: false });
   });
 
   it('finishes the game on the following batch', async () => {

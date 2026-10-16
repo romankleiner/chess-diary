@@ -8,7 +8,7 @@
  * search depth, and simultaneous requests for the same position share one call.
  * The cache is per server instance, which is plenty for a personal blog.
  */
-import { parseChessApiEval, terminalEval } from './position-eval';
+import { engineFen, parseChessApiEval, terminalEval } from './position-eval';
 import type { PositionEval } from './position-eval';
 
 const CHESS_API_URL = 'https://chess-api.com/v1';
@@ -31,7 +31,8 @@ export async function fetchPositionEval(
   const response = await fetchFn(CHESS_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fen, depth }),
+    // Without an en passant square, which the engine rejects (see engineFen)
+    body: JSON.stringify({ fen: engineFen(fen), depth }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`chess-api.com returned ${response.status}`);
