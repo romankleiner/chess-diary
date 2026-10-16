@@ -5,6 +5,7 @@ import { Chess } from 'chess.js';
 import { GrammarCheck } from './grammar-check';
 import PostGameSummaryCard from '@/components/PostGameSummaryCard';
 import { formatPawnsFine } from '@/lib/position-eval';
+import { gameFilterGroups } from '@/lib/game-filter-groups';
 
 // Helper function to get current time in local timezone as ISO string
 function getLocalTimestamp(): string {
@@ -52,6 +53,7 @@ interface Game {
   black: string;
   url?: string;
   result: string | null;
+  date?: string; // YYYY-MM-DD; for a finished game, the day it ended
   turn?: string;
   fen?: string;
   pgn?: string;
@@ -1468,52 +1470,25 @@ export default function JournalPage() {
                   
                   setFilterGameId(newFilter);
                 }}
-                className="px-3 py-1 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:border-gray-600"
+                // Capped: a native select is as wide as its longest option, and the
+                // dated labels are long; the open list still shows them in full
+                className="max-w-[18rem] px-3 py-1 border border-gray-300 rounded-md text-sm dark:bg-gray-700 dark:border-gray-600"
               >
                 <option value="all">All Entries</option>
                 <option value="general">General Thoughts Only</option>
-                {(() => {
-                  // Get games that have journal entries — sourced from a stable
-                  // summary fetch so the dropdown stays populated even when a
-                  // game filter narrows `entries` to one game's records.
-                  const gamesWithEntries = allGames.filter(g => gameIdsWithEntries.has(g.id));
-                  
-                  // Separate active from finished games
-                  const activeGames = gamesWithEntries
-                    .filter(g => !g.result || g.result === 'null' || g.result.includes('progress'))
-                    .sort((a, b) => {
-                      if (!a.move_by && !b.move_by) return a.opponent.localeCompare(b.opponent);
-                      if (!a.move_by) return 1;
-                      if (!b.move_by) return -1;
-                      return a.move_by - b.move_by;
-                    });
-                  const finishedGames = gamesWithEntries.filter(g =>
-                    g.result && g.result !== 'null' && !g.result.includes('progress')
-                  );
-                  
-                  return (
-                    <>
-                      {activeGames.length > 0 && (
-                        <optgroup label="Active Games">
-                          {activeGames.map(game => (
-                            <option key={game.id} value={game.id}>
-                              {game.white} vs {game.black}
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      {finishedGames.length > 0 && (
-                        <optgroup label="Finished Games">
-                          {finishedGames.map(game => (
-                            <option key={game.id} value={game.id}>
-                              {game.white} vs {game.black}
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                    </>
-                  );
-                })()}
+                {/* Games that have journal entries -- sourced from a stable summary
+                    fetch so the dropdown stays populated even when a game filter
+                    narrows `entries` to one game's records. Active games first,
+                    then finished ones by month (lib/game-filter-groups.ts). */}
+                {gameFilterGroups(allGames.filter(g => gameIdsWithEntries.has(g.id)), username).map(group => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.options.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </div>
             

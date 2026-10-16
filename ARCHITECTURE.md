@@ -58,7 +58,7 @@ Pages are React Client Components (`'use client'`) that call API routes via `fet
 | Route | File | Purpose |
 |---|---|---|
 | `/` | `app/page.tsx` | Home / dashboard |
-| `/journal` | `app/journal/page.tsx` | Main journal editor — write entries, select games, view history |
+| `/journal` | `app/journal/page.tsx` | Main journal editor — write entries, select games, view history. The history's game **Filter** lists the games with entries as `lib/game-filter-groups.ts` arranges them: active games first (move due soonest at the top, "your move" when it is), then finished games by the month they ended, newest first. Each is "vs opponent · as White/Black", plus the day and result for a finished game: most opponents have been played more than once, and a pair of games started together ends the same day, so without the colour, day and result entries read alike. The closed dropdown is capped at 18rem |
 | `/games` | `app/games/page.tsx` | Game list with analysis status and post-game summary forms. Very short games — finished in under 5 moves (whole moves: White's and Black's), with no journal entry — are left out, behind a "Show them" note (`splitVeryShortGames` in `lib/game-status.ts`). A game still being played is always listed, however young, and if the journal can't be read nothing is left out. Moves are counted from the PGN's text (`countPlies`): chess.js takes over a second to load the whole list's Chess.com PGNs, the text count 8 ms, and the two agree on all 128 of the author's games |
 | `/games/[id]` | `app/games/[id]/page.tsx` | Individual game detail and journal entries for that game |
 | `/games/[id]/analysis` | `app/games/[id]/analysis/page.tsx` | Move-by-move engine analysis viewer |
