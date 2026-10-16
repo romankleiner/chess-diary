@@ -287,6 +287,22 @@ describe('GET /api/journal/export — DOCX format', () => {
     expect(isZip(doneOf(msgs)!.data)).toBe(true);
   });
 
+  it('writes a post-game summary’s free text, ahead of its headed sections', async () => {
+    const JSZip = (await import('jszip')).default;
+    const withOverall = {
+      ...summaryEntry,
+      postGameSummary: { ...summaryEntry.postGameSummary!, reflections: { overall: 'This was a solid game.', lessonsLearned: 'Evaluate positions' } },
+    };
+    mockGetJournal.mockResolvedValue([withOverall]);
+    mockGetGames.mockResolvedValue({ 'game-111': gameA });
+    const msgs = await readExport(await GET(makeReq(DOCX_PARAMS)));
+
+    const zip = await JSZip.loadAsync(Buffer.from(doneOf(msgs)!.data, 'base64'));
+    const xml = await zip.file('word/document.xml')!.async('string');
+    expect(xml).toContain('This was a solid game.');
+    expect(xml.indexOf('This was a solid game.')).toBeLessThan(xml.indexOf('LESSONS LEARNED'));
+  });
+
   // ── Progress ──────────────────────────────────────────────────────────────
 
   it('emits one progress message per entry, counting up to the total, before done', async () => {

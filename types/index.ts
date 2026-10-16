@@ -39,6 +39,8 @@ export interface JournalEntry {
       averageCentipawnLoss: number | null;
     } | null;
     reflections: {
+      /** Free text, shown first and without a heading (e.g. comments imported from an older diary) */
+      overall?: string;
       whatWentWell?: string;
       mistakes?: string;
       lessonsLearned?: string;

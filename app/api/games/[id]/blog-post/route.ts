@@ -286,6 +286,8 @@ export async function POST(
       // reflections below feed the summary.
       const r = summaryEntry.postGameSummary?.reflections;
       if (r) {
+        // Free text comes first, with no heading of its own
+        if (r.overall)        parts.push(r.overall);
         if (r.whatWentWell)   parts.push(`**What went well:** ${r.whatWentWell}`);
         if (r.mistakes)       parts.push(`**Key mistakes:** ${r.mistakes}`);
         if (r.lessonsLearned) parts.push(`**Lessons learned:** ${r.lessonsLearned}`);

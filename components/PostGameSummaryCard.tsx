@@ -13,6 +13,8 @@ interface Statistics {
 }
 
 interface Reflections {
+  /** Free text, shown first and without a heading */
+  overall?: string;
   whatWentWell?: string;
   mistakes?: string;
   lessonsLearned?: string;
@@ -59,6 +61,7 @@ export default function PostGameSummaryCard({ entry, onDelete }: PostGameSummary
   const reflections = summary?.reflections;
 
   const hasAnyReflection =
+    reflections?.overall ||
     reflections?.whatWentWell ||
     reflections?.mistakes ||
     reflections?.lessonsLearned ||
@@ -126,9 +129,9 @@ export default function PostGameSummaryCard({ entry, onDelete }: PostGameSummary
           )}
 
           {/* Collapsed preview of reflections */}
-          {!expanded && reflections?.lessonsLearned && (
+          {!expanded && (reflections?.lessonsLearned || reflections?.overall) && (
             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 line-clamp-1 italic">
-              &ldquo;{reflections.lessonsLearned}&rdquo;
+              &ldquo;{reflections.lessonsLearned || reflections.overall}&rdquo;
             </p>
           )}
         </div>
@@ -194,6 +197,11 @@ export default function PostGameSummaryCard({ entry, onDelete }: PostGameSummary
           {/* Reflections sections */}
           {hasAnyReflection ? (
             <div className="space-y-3">
+              {reflections?.overall && (
+                <p data-summary-overall className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
+                  {reflections.overall}
+                </p>
+              )}
               {reflections?.whatWentWell && (
                 <ReflectionSection icon="✅" title="What Went Well" text={reflections.whatWentWell} />
               )}

@@ -331,7 +331,7 @@ Generates local-timezone ISO timestamps and filters journal entries by date rang
 
 | Component | Purpose |
 |---|---|
-| `PostGameSummaryCard.tsx` | Collapsible card displaying a post-game reflection entry (stats grid + coloured reflection sections) |
+| `PostGameSummaryCard.tsx` | Collapsible card displaying a post-game reflection entry (stats grid + coloured reflection sections). A summary may also hold free text (`reflections.overall`, e.g. comments imported from the author's older Word diary), shown first with no heading — likewise in the blog's overall summary and the Word export |
 | `PostGameSummaryForm.tsx` | Form for writing post-game reflections: "What went well", "Mistakes", "Lessons Learned", "Next Steps" |
 | `BlogPostModal.tsx` | Modal for generating and viewing a game analysis as a formatted blog post |
 | `BlogDirectory.tsx` | The directory of shared games at `/blog`: games by month, each linking to its blog, with a search box and a result filter; remembers the directory key for the visit. On the author's own directory each game has "Stop sharing" |

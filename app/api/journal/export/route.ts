@@ -390,6 +390,16 @@ export async function GET(request: NextRequest) {
 
                   // ── Reflection sections ──────────────────────────────────────────
                   const reflections = pg?.reflections || {};
+
+                  // Free text first, with no heading of its own
+                  const overall = String((reflections as { overall?: string }).overall ?? '').trim();
+                  overall.split('\n').filter((line: string) => line.trim()).forEach((line: string) => {
+                    docSections.push(new Paragraph({
+                      children: [new TextRun({ text: line, size: 21, color: '1F2937' })],
+                      indent: { left: 240, right: 240 },
+                      spacing: { before: 120, after: 0 },
+                    }));
+                  });
                   const reflectionFields = [
                     { key: 'whatWentWell',   icon: '✅', label: 'What Went Well',  fill: 'F0FDF4', color: '16A34A' },
                     { key: 'mistakes',       icon: '❌', label: 'Key Mistakes',    fill: 'FEF2F2', color: 'DC2626' },

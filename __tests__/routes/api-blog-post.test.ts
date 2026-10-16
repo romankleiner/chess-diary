@@ -513,6 +513,23 @@ describe('POST /api/games/[id]/blog-post — summary', () => {
     expect(summary).toContain(summaryEntry.postGameSummary!.reflections.lessonsLearned!);
   });
 
+  it('puts a summary’s free text first, with no heading of its own', async () => {
+    const withOverall = {
+      ...summaryEntry,
+      postGameSummary: { ...summaryEntry.postGameSummary!, reflections: { overall: 'A solid game.\n\nGood exercise in winning won positions.', lessonsLearned: 'Evaluate, don’t just calculate' } },
+    };
+    mockGetJournal.mockResolvedValue([thoughtEntry, withOverall]);
+    const { summary } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(summary).toBe('A solid game.\n\nGood exercise in winning won positions.\n\n**Lessons learned:** Evaluate, don’t just calculate');
+  });
+
+  it('shows a summary with only free text as just that text', async () => {
+    const onlyOverall = { ...summaryEntry, postGameSummary: { statistics: null, reflections: { overall: 'Not much to add.' } } };
+    mockGetJournal.mockResolvedValue([thoughtEntry, onlyOverall]);
+    const { summary } = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(summary).toBe('Not much to add.');
+  });
+
   it('summary is empty when there is no post_game_summary entry', async () => {
     mockGetJournal.mockResolvedValue([thoughtEntry]);
     const { summary } = await (await POST(makeReq(), params(gameA.id))).json();

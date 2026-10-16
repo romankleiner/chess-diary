@@ -142,6 +142,27 @@ describe('POST /api/journal/post-game-summary — success with analysis', () => 
     expect(entry.entryType).toBe('post_game_summary');
   });
 
+  it('keeps free text with no heading, and uses it as the preview when nothing else is written', async () => {
+    const req = new NextRequest('http://localhost/api/journal/post-game-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId: gameA.id, reflections: { overall: 'A solid game.' } }),
+    });
+    const { entry } = await (await POST(req)).json();
+    expect(entry.postGameSummary.reflections.overall).toBe('A solid game.');
+    expect(entry.content).toBe('A solid game.');
+  });
+
+  it('adds no free-text field when none is given', async () => {
+    const req = new NextRequest('http://localhost/api/journal/post-game-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId: gameA.id, reflections }),
+    });
+    const { entry } = await (await POST(req)).json();
+    expect(entry.postGameSummary.reflections).not.toHaveProperty('overall');
+  });
+
   it('includes a gameSnapshot with opponent/result', async () => {
     const req = new NextRequest('http://localhost/api/journal/post-game-summary', {
       method: 'POST',

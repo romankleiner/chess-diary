@@ -69,10 +69,12 @@ export async function POST(request: NextRequest) {
       date: today,
       gameId,
       entryType: 'post_game_summary',
-      content: reflections?.lessonsLearned || reflections?.whatWentWell || '',
+      content: reflections?.lessonsLearned || reflections?.whatWentWell || reflections?.overall || '',
       postGameSummary: {
         statistics,
         reflections: {
+          // Free text with no heading, shown first (optional)
+          ...(reflections?.overall ? { overall: reflections.overall } : {}),
           whatWentWell: reflections?.whatWentWell || '',
           mistakes: reflections?.mistakes || '',
           lessonsLearned: reflections?.lessonsLearned || '',
