@@ -140,15 +140,20 @@ export function formatSanLine(
 const positionKey = (fen: string) => fen.trim().split(/\s+/).slice(0, 3).join(' ');
 const placementKey = (fen: string) => fen.trim().split(/\s+/).slice(0, 2).join(' ');
 
+/** The moves a game played to reach a position: `fens[k]` is the position before `sans[k]`, and the last FEN is the position itself. */
+export interface PlayedMoves {
+  fens: string[];
+  sans: string[];
+}
+
 /**
- * The real move history of a game up to the position `fen`, replayed from its
- * PGN: "1. e4 e5 2. Nf3 Nc6". Returns '' if `fen` is the starting position and
+ * The moves a game played to reach the position `fen`, replayed from its PGN.
  * null if the PGN is missing/unparseable or never reaches `fen`.
  */
-export function historyFromPgn(
+export function playedMovesBefore(
   pgn: string | null | undefined,
   fen: string | null | undefined,
-): string | null {
+): PlayedMoves | null {
   if (!pgn || !pgn.trim() || !fen) return null;
   try {
     const game = new Chess();
@@ -160,12 +165,31 @@ export function historyFromPgn(
     let index = positions.findIndex(p => positionKey(p) === positionKey(fen));
     if (index === -1) index = positions.findIndex(p => placementKey(p) === placementKey(fen));
     if (index === -1) return null;
-    if (index === 0) return '';
-
-    return formatSanLine(positions[0], moves.slice(0, index).map(m => m.san), { bareSingle: false });
+    return { fens: positions.slice(0, index + 1), sans: moves.slice(0, index).map(m => m.san) };
   } catch {
     return null;
   }
+}
+
+/**
+ * The real move history of a game up to the position `fen`, replayed from its
+ * PGN: "1. e4 e5 2. Nf3 Nc6". Returns '' if `fen` is the starting position and
+ * null if the PGN is missing/unparseable or never reaches `fen`.
+ */
+export function historyFromPgn(
+  pgn: string | null | undefined,
+  fen: string | null | undefined,
+): string | null {
+  const played = playedMovesBefore(pgn, fen);
+  if (!played) return null;
+  return formatSanLine(played.fens[0], played.sans, { bareSingle: false });
+}
+
+/** The move that led to the position, numbered ("16. a4", "15... Nxd4"), or null at the start or if unknown. */
+export function lastMoveText(played: PlayedMoves | null): string | null {
+  if (!played || played.sans.length === 0) return null;
+  const k = played.sans.length - 1;
+  return formatSanLine(played.fens[k], [played.sans[k]], { bareSingle: false });
 }
 
 function describeSquare(chess: Chess, square: Square): string {

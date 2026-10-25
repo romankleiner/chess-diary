@@ -37,6 +37,7 @@ vi.stubGlobal('fetch', fetchMock);
 import { GET } from '@/app/api/journal/export/route';
 import { getJournal, getGames, getAnalysis, saveJournalEntry } from '@/lib/db';
 import { getCachedBoardImage } from '@/lib/board-image-storage';
+import JSZip from 'jszip';
 
 const mockBoardImage = vi.mocked(getCachedBoardImage);
 const STORED_BOARD = 'https://store.example/boards/abc-white.png';
@@ -287,8 +288,8 @@ describe('GET /api/journal/export — DOCX format', () => {
     expect(isZip(doneOf(msgs)!.data)).toBe(true);
   });
 
-  it('writes a post-game summary’s free text, ahead of its headed sections', async () => {
-    const JSZip = (await import('jszip')).default;
+  // Builds a whole document and unzips it: give it time when the suite runs in parallel
+  it('writes a post-game summary’s free text, ahead of its headed sections', { timeout: 20_000 }, async () => {
     const withOverall = {
       ...summaryEntry,
       postGameSummary: { ...summaryEntry.postGameSummary!, reflections: { overall: 'This was a solid game.', lessonsLearned: 'Evaluate positions' } },

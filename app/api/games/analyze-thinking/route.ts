@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getGame, getJournal, getAnalysis, getSetting, saveJournalEntry } from '@/lib/db';
 import { buildAnalysisPrompt } from '@/lib/analysis-prompt';
 import type { PromptGrounding } from '@/lib/analysis-prompt';
-import { describePosition, formatSanLine, historyFromPgn, uciLineToSan } from '@/lib/position-facts';
+import { describePosition, formatSanLine, historyFromPgn, lastMoveText, playedMovesBefore, uciLineToSan } from '@/lib/position-facts';
 import { buildCorrectionPrompt, verifyAndClean } from '@/lib/line-verifier';
 import { DEFAULT_AI_MODEL } from '@/lib/model-catalog';
 import { Chess } from 'chess.js';
@@ -329,6 +329,9 @@ export async function POST(request: NextRequest) {
     // pgnMoves above only contains the player's own journaled moves (and nothing at
     // all for entries without a moveNumber), so it is the fallback.
     const historyText = historyFromPgn(game.pgn, entry.fen) ?? pgnMoves;
+    // The moves that led here: named in the prompt as history, and recognised by
+    // the line check if the model puts one in a marker anyway
+    const played = playedMovesBefore(game.pgn, entry.fen);
 
     console.log(`[AI-ANALYSIS] PGN context: ${historyText.substring(0, 100)}...`);
 
@@ -347,6 +350,7 @@ export async function POST(request: NextRequest) {
         engineBestMoveSan: bestMove.complete ? bestMove.sans[0] : undefined,
         engineLineSan: mainLine.complete ? formatSanLine(entry.fen, mainLine.sans) : undefined,
         requestLineMarkers: true,
+        lastMove: lastMoveText(played) ?? undefined,
       };
     }
 
@@ -424,7 +428,7 @@ export async function POST(request: NextRequest) {
         // line is illegal, show the model exactly what failed and let it rewrite
         // once; whatever is still illegal after that is replaced by a placeholder.
         if (grounding) {
-          let verified = verifyAndClean(aiResponse, entry.fen, entry.myMove);
+          let verified = verifyAndClean(aiResponse, entry.fen, entry.myMove, played);
           console.log(
             `[AI-ANALYSIS] Entry ${entry.id}: checked ${verified.checks.length} line(s), ${verified.invalid.length} illegal`
           );
@@ -445,7 +449,7 @@ export async function POST(request: NextRequest) {
             );
 
             if ('text' in retry) {
-              const retried = verifyAndClean(retry.text, entry.fen, entry.myMove);
+              const retried = verifyAndClean(retry.text, entry.fen, entry.myMove, played);
               console.log(
                 `[AI-ANALYSIS] Entry ${entry.id}: retry checked ${retried.checks.length} line(s), ${retried.invalid.length} illegal`
               );

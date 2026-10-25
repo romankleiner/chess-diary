@@ -17,6 +17,7 @@ import {
   normalizeMoveToken,
   tryMove,
 } from './position-facts';
+import type { PlayedMoves } from './position-facts';
 
 const MARKER_RE = /\[\[\s*line\s*:\s*([\s\S]*?)\]\]/gi;
 const STRAY_MARKER_RE = /\[\[\s*line\s*:?\s*|\]\]/gi;
@@ -33,6 +34,8 @@ export interface LineCheck {
   sans: string[];
   /** FEN the line was replayed from (the base position, or the one after the move played). */
   startFen: string;
+  /** The line is moves the game already played on the way to the position: history, not a suggestion. */
+  played?: boolean;
   // Only set when the line is invalid:
   failedToken?: string;
   /** 0-based index of the failing move within the line. */
@@ -99,15 +102,34 @@ export function verifyLine(baseFen: string, lineText: string, altStartFen?: stri
 }
 
 /**
+ * A line that is a run of moves the game actually played before the position
+ * (the opponent's last move, say): the latest such run, replayed from where it
+ * began, or null. Models sometimes put such moves in a marker although they are
+ * history, and replayed from the position itself they can't be legal.
+ */
+export function matchPlayed(lineText: string, played: PlayedMoves): LineCheck | null {
+  const tokens = tokenizeLine(lineText);
+  if (tokens.length === 0 || tokens.length > played.sans.length) return null;
+  for (let start = played.sans.length - tokens.length; start >= 0; start--) {
+    const check = replay(played.fens[start], tokens, lineText.trim());
+    if (check.valid && check.sans.every((san, k) => san === played.sans[start + k])) return { ...check, played: true };
+  }
+  return null;
+}
+
+/**
  * Resolve every `[[line: ...]]` marker in `text`. With a valid `baseFen`, legal
  * lines become canonical SAN (a lone move bare, longer lines numbered) and
- * illegal ones become INVALID_LINE_PLACEHOLDER. Without one, markers are just
- * unwrapped. Text without markers is returned untouched.
+ * illegal ones become INVALID_LINE_PLACEHOLDER -- except a line that is moves the
+ * game already played (given `played`), which is kept as numbered history ("16. a4").
+ * Without a valid `baseFen`, markers are just unwrapped. Text without markers is
+ * returned untouched.
  */
 export function verifyAndClean(
   text: string,
   baseFen: string | null | undefined,
   movePlayed?: string | null,
+  played?: PlayedMoves | null,
 ): VerifyResult {
   const checks: LineCheck[] = [];
   const canVerify = isValidFen(baseFen);
@@ -118,6 +140,11 @@ export function verifyAndClean(
     if (!canVerify) return inner.trim();
 
     const check = verifyLine(baseFen as string, inner, altStartFen);
+    const history = !check.valid && played ? matchPlayed(inner, played) : null;
+    if (history) {
+      checks.push(history);
+      return formatSanLine(history.startFen, history.sans, { bareSingle: false });
+    }
     checks.push(check);
     return check.valid ? formatSanLine(check.startFen, check.sans) : INVALID_LINE_PLACEHOLDER;
   });

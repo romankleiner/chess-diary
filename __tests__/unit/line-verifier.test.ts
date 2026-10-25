@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { Chess } from 'chess.js';
+import { playedMovesBefore } from '@/lib/position-facts';
 import {
   INVALID_LINE_PLACEHOLDER,
   buildCorrectionPrompt,
@@ -221,5 +223,49 @@ describe('buildCorrectionPrompt', () => {
     const prompt = buildCorrectionPrompt(invalid);
     expect(prompt).toContain('[[line: Qh5]]');
     expect(prompt).toContain('[[line: Nxe5]]');
+  });
+});
+
+// ─── moves the game already played ────────────────────────────────────────────
+
+describe('verifyAndClean — moves the game already played', () => {
+  // The position before White's 4th move in 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6: Black's last move was 3...a6
+  const PGN = '1. e4 e5 2. Nf3 Nc6 3. Bb5 a6';
+  const fenNow = () => {
+    const c = new Chess();
+    c.loadPgn(PGN);
+    return c.fen();
+  };
+  const played = () => playedMovesBefore(PGN, fenNow())!;
+
+  it('keeps the opponent’s last move as numbered history, where it used to be removed as illegal', () => {
+    const result = verifyAndClean('After [[line: a6]] the bishop must decide.', fenNow(), 'Ba4', played());
+    expect(result.text).toBe('After 3... a6 the bishop must decide.');
+    expect(result.invalid).toHaveLength(0);
+    expect(result.checks[0]).toMatchObject({ valid: true, played: true, sans: ['a6'] });
+  });
+
+  it('keeps a longer run of played moves, numbered from where it began', () => {
+    expect(verifyAndClean('The game went [[line: Bb5 a6]] so far.', fenNow(), 'Ba4', played()).text)
+      .toBe('The game went 3. Bb5 a6 so far.');
+  });
+
+  it('still removes a line that is neither legal now nor played', () => {
+    // Qh5 was never played, and is legal neither here (the knight on f3 blocks it) nor after Ba4
+    const result = verifyAndClean('Maybe [[line: Qh5]] instead.', fenNow(), 'Ba4', played());
+    expect(result.text).toBe(`Maybe ${INVALID_LINE_PLACEHOLDER} instead.`);
+    expect(result.invalid).toHaveLength(1);
+  });
+
+  it('still removes a line that starts as played moves but goes on differently', () => {
+    expect(verifyAndClean('[[line: Bb5 a5]]', fenNow(), 'Ba4', played()).text).toBe(INVALID_LINE_PLACEHOLDER);
+  });
+
+  it('treats a line legal from the position as a suggestion, as before, even if the game once played it', () => {
+    expect(verifyAndClean('Try [[line: Ba4 Nf6]].', fenNow(), 'Ba4', played()).text).toBe('Try 4. Ba4 Nf6.');
+  });
+
+  it('removes the opponent’s last move as before when it isn’t told what was played', () => {
+    expect(verifyAndClean('After [[line: a6]].', fenNow(), 'Ba4').text).toBe(`After ${INVALID_LINE_PLACEHOLDER}.`);
   });
 });

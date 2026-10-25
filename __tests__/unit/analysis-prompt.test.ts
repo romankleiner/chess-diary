@@ -258,6 +258,19 @@ describe('buildAnalysisPrompt — grounding', () => {
     expect(prompt.indexOf('Provide a brief analysis')).toBeLessThan(prompt.indexOf('Rules for concrete moves'));
   });
 
+  it('names the opponent’s last move as history, never to be put in a marker', () => {
+    const prompt = buildAnalysisPrompt('t', null, SAMPLE_FEN, null, 'detailed', '', { requestLineMarkers: true, lastMove: '16. a4' });
+    expect(prompt).toContain('the opponent\'s last move (16. a4)');
+    expect(prompt).toContain('"after 16. a4"');
+    expect(prompt).toContain('never put them in a marker');
+  });
+
+  it('still says played moves are not marked when the last move isn’t known', () => {
+    const prompt = buildAnalysisPrompt('t', null, SAMPLE_FEN, null, 'detailed', '', { requestLineMarkers: true });
+    expect(prompt).toContain('Moves already played in the game are history');
+    expect(prompt).not.toContain('opponent\'s last move (');
+  });
+
   it('asks for markers on opening-book moves too', () => {
     const prompt = buildAnalysisPrompt('t', 'e4', SAMPLE_FEN, { moveQuality: 'book' }, 'detailed', '', {
       requestLineMarkers: true,

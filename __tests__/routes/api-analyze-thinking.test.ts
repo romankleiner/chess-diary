@@ -367,6 +367,22 @@ describe('POST /api/games/analyze-thinking — grounding and line verification',
       expect(savedContent()).toBe('Consider 3. Bb5 a6 4. Ba4 next.');
     });
 
+    it('keeps a marked move the game already played as history, with no correction call', async () => {
+      // Black's last move before this position was 2...Nc6; replayed from here it can't be legal
+      fetchMock.mockResolvedValue(textResponse('After [[line: Nc6]] the e5-pawn is defended.'));
+      await run();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(savedContent()).toBe('After 2... Nc6 the e5-pawn is defended.');
+    });
+
+    it('names the opponent’s last move in the prompt', async () => {
+      fetchMock.mockResolvedValue(textResponse('Fine.'));
+      await run();
+
+      expect(requestBody().messages[0].content).toContain('the opponent\'s last move (2... Nc6)');
+    });
+
     it('leaves a response without markers exactly as written', async () => {
       fetchMock.mockResolvedValue(textResponse('A plain analysis.\n\nWith two paragraphs.'));
       await run();

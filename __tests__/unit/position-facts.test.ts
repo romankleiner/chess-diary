@@ -5,6 +5,8 @@ import {
   formatSanLine,
   historyFromPgn,
   isValidFen,
+  lastMoveText,
+  playedMovesBefore,
   normalizeMoveToken,
   uciLineToSan,
 } from '@/lib/position-facts';
@@ -249,5 +251,32 @@ describe('historyFromPgn', () => {
     expect(historyFromPgn('', RUY_FEN)).toBeNull();
     expect(historyFromPgn('1. e4 e5 2. Qh9', RUY_FEN)).toBeNull();
     expect(historyFromPgn(PGN, null)).toBeNull();
+  });
+});
+
+
+describe('playedMovesBefore and lastMoveText', () => {
+  const PGN = '1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6';
+  const AFTER_A6 = 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4';
+
+  it('gives the moves that reached the position, with the position before each', () => {
+    const played = playedMovesBefore(PGN, AFTER_A6)!;
+    expect(played.sans).toEqual(['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6']);
+    expect(played.fens).toHaveLength(7);
+    expect(played.fens.at(-1)!.split(' ').slice(0, 4).join(' ')).toBe(AFTER_A6.split(' ').slice(0, 4).join(' '));
+  });
+
+  it('names the move that led to the position, numbered as players write it', () => {
+    expect(lastMoveText(playedMovesBefore(PGN, AFTER_A6))).toBe('3... a6');
+    const afterBb5 = 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3';
+    expect(lastMoveText(playedMovesBefore(PGN, afterBb5))).toBe('3. Bb5');
+  });
+
+  it('has no last move at the start, and nothing for a position the game never reached', () => {
+    const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    expect(playedMovesBefore(PGN, start)).toEqual({ fens: [expect.any(String)], sans: [] });
+    expect(lastMoveText(playedMovesBefore(PGN, start))).toBeNull();
+    expect(playedMovesBefore(PGN, '8/8/8/8/8/8/8/K6k w - - 0 1')).toBeNull();
+    expect(playedMovesBefore('', AFTER_A6)).toBeNull();
   });
 });
