@@ -5,7 +5,7 @@ import {
 } from '@/lib/blog-directory';
 
 const entry = (over: Partial<DirectoryEntry> = {}): DirectoryEntry => ({
-  gameId: '100', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
+  gameId: '100', token: `tok${over.gameId ?? '100'}`, white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
   result: 'win', inProgress: false, startDate: '2026-07-10', endDate: '2026-07-24', timeControl: '1 day per move',
   commentedMoves: 9, hasSummary: true,
   ...over,
@@ -77,11 +77,11 @@ describe('buildDirectoryEntry', () => {
     date: '2026-07-24', pgn: PGN, timeControl: '1/86400',
   };
   const build = (over: Partial<Parameters<typeof buildDirectoryEntry>[0]> = {}) =>
-    buildDirectoryEntry({ gameId: '952794945', game, username: 'romank66', commentedMoves: 9, hasSummary: true, ...over });
+    buildDirectoryEntry({ gameId: '952794945', token: 'AbCdEfGhIjKlMnOp', game, username: 'romank66', commentedMoves: 9, hasSummary: true, ...over });
 
   it('reads the players, result, dates, time control and commentary of the game', () => {
     expect(build()).toEqual({
-      gameId: '952794945', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
+      gameId: '952794945', token: 'AbCdEfGhIjKlMnOp', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
       result: 'win', inProgress: false, startDate: '2026-07-10', endDate: '2026-07-24',
       timeControl: '1 day per move', commentedMoves: 9, hasSummary: true,
     });
@@ -142,8 +142,8 @@ describe('buildDirectoryEntry', () => {
   });
 
   it('copes with a game missing most of its fields', () => {
-    expect(buildDirectoryEntry({ gameId: '1', game: {}, commentedMoves: 0, hasSummary: false })).toEqual({
-      gameId: '1', white: '', black: '', whiteRating: null, blackRating: null, authorColor: null, opponent: '', result: null, inProgress: true,
+    expect(buildDirectoryEntry({ gameId: '1', token: 'AbCdEfGhIjKlMnOp', game: {}, commentedMoves: 0, hasSummary: false })).toEqual({
+      gameId: '1', token: 'AbCdEfGhIjKlMnOp', white: '', black: '', whiteRating: null, blackRating: null, authorColor: null, opponent: '', result: null, inProgress: true,
       startDate: null, endDate: null, timeControl: '', commentedMoves: 0, hasSummary: false,
     });
   });

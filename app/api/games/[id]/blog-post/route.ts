@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Chess } from 'chess.js';
 import { currentUserId } from '@/lib/user-id';
-import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
+import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner, getBlogByToken, getSharedBlogLink } from '@/lib/db';
+import { isBlogToken } from '@/lib/blog-link';
 import { qualitiesByPly, summarizeAnalysis } from '@/lib/analysis-utils';
 import type { MoveQualityKey } from '@/lib/analysis-utils';
 import { resolveGameDates } from '@/lib/game-dates';
@@ -9,15 +10,27 @@ import { ratingsFromPgn } from '@/lib/players';
 import { recordVisit } from '@/lib/blog-visits-server';
 import { formatSanLine, uciLineToSan } from '@/lib/position-facts';
 
-// Resolve whose game this is without requiring the viewer to be logged in.
-// A published (shared) game is readable by anyone — including signed-in users
-// who aren't the author. An unpublished game is visible only to its author
-// via their session, so they can preview a draft before sharing. The viewer is
-// returned too, so the visit can be logged as the author's own or someone else's.
-async function resolveBlogOwner(gameId: string): Promise<{ ownerId: string | null; viewerId: string | null }> {
+// Resolve which game a blog address opens, and whose it is, without requiring the
+// viewer to be signed in. `slug` is either a shared game's link token (lib/blog-link.ts),
+// which opens it for anyone, or a chess.com game id, which opens it only for:
+//   - its author, signed in -- shared or not, so they can preview a draft;
+//   - anyone, for a game shared before link tokens existed (its old link is kept).
+// Game ids are public and sequential, so by id a reader of one shared game could
+// otherwise open all the others. The viewer is returned too, so the visit can be
+// logged as the author's own or someone else's.
+async function resolveBlog(slug: string): Promise<{ gameId: string; ownerId: string; viewerId: string | null } | null> {
   // The viewer's data id, which is what the stored owner is (see lib/user-id.ts)
-  const [publishedOwner, userId] = await Promise.all([getBlogOwner(gameId), currentUserId()]);
-  return { ownerId: publishedOwner ?? userId ?? null, viewerId: userId ?? null };
+  const viewerId = await currentUserId();
+  if (isBlogToken(slug)) {
+    const shared = await getBlogByToken(slug);
+    return shared ? { ...shared, viewerId } : null;
+  }
+  const publishedOwner = await getBlogOwner(slug);
+  if (publishedOwner) {
+    if (viewerId === publishedOwner) return { gameId: slug, ownerId: publishedOwner, viewerId };
+    return (await getSharedBlogLink(slug))?.byId ? { gameId: slug, ownerId: publishedOwner, viewerId } : null;
+  }
+  return viewerId ? { gameId: slug, ownerId: viewerId, viewerId } : null;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -64,15 +77,16 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: gameId } = await params;
+    const { id: slug } = await params;
 
-    const { ownerId, viewerId } = await resolveBlogOwner(gameId);
-    if (!ownerId) {
+    const blog = await resolveBlog(slug);
+    if (!blog) {
       return NextResponse.json(
         { error: 'This blog post hasn’t been shared by its author.' },
         { status: 404 }
       );
     }
+    const { gameId, ownerId, viewerId } = blog;
 
     // Only this game's journal entries, without their pasted images: the whole
     // journal is ~80 MB of images the blog never shows (see lib/journal-copies.ts)

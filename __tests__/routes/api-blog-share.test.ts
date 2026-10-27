@@ -30,14 +30,15 @@ function makeReq(method: 'POST' | 'DELETE', gameId = gameA.id) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPublishBlog.mockResolvedValue({ token: 'AbCdEfGhIjKlMnOp', byId: false });
 });
 
 describe('POST /api/games/[id]/share', () => {
-  it('publishes the game when it exists for the caller', async () => {
+  it('publishes the game when it exists for the caller, and hands back its private link', async () => {
     mockGetGame.mockResolvedValue(gameA);
     const res = await POST(makeReq('POST'), params(gameA.id));
     expect(res.status).toBe(200);
-    expect((await res.json()).shared).toBe(true);
+    expect(await res.json()).toEqual({ shared: true, token: 'AbCdEfGhIjKlMnOp' });
     expect(mockPublishBlog).toHaveBeenCalledWith(gameA.id);
   });
 

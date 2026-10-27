@@ -5,15 +5,17 @@ vi.mock('@/lib/db', () => ({
   getGamesById: vi.fn(),
   getGamesJournal: vi.fn(),
   getSetting: vi.fn(),
+  getSharedBlogLink: vi.fn(),
 }));
 
 import { DIRECTORY_CACHE_MS, clearBlogDirectoryCache, loadBlogDirectory } from '@/lib/blog-directory-server';
-import { getGamesById, getGamesJournal, getSetting, listPublishedBlogs } from '@/lib/db';
+import { getGamesById, getGamesJournal, getSetting, getSharedBlogLink, listPublishedBlogs } from '@/lib/db';
 
 const mockPublished = vi.mocked(listPublishedBlogs);
 const mockGames     = vi.mocked(getGamesById);
 const mockJournal   = vi.mocked(getGamesJournal);
 const mockSetting   = vi.mocked(getSetting);
+const mockLink      = vi.mocked(getSharedBlogLink);
 
 const PGN = '[Date "2026.07.10"]\n\n1. e4 e5';
 const game = (id: string, over: Record<string, unknown> = {}) => ({
@@ -28,6 +30,8 @@ beforeEach(() => {
   mockGames.mockResolvedValue({});
   mockJournal.mockResolvedValue([]);
   mockSetting.mockResolvedValue('romank66');
+  // Each shared game's private link: tok<gameId>
+  mockLink.mockImplementation(async gameId => ({ token: `tok${gameId}`, byId: false }));
 });
 
 describe('loadBlogDirectory', () => {

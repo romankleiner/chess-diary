@@ -10,7 +10,7 @@ import { Waitlist } from '@clerk/nextjs';
 import WaitlistPage from '@/app/waitlist/[[...waitlist]]/page';
 
 const entry = (over: Partial<DirectoryEntry> = {}): DirectoryEntry => ({
-  gameId: '100', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
+  gameId: '100', token: `tok${over.gameId ?? '100'}`, white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
   result: 'win', inProgress: false, startDate: '2026-07-10', endDate: '2026-07-24', timeControl: '1 day per move',
   commentedMoves: 9, hasSummary: true,
   ...over,
@@ -45,7 +45,7 @@ describe('BlogDirectory', () => {
   });
 
   it('lists each game as a link to its blog', () => {
-    for (const id of ['100', '200', '300']) expect(html).toContain(`href="/blog/${id}"`);
+    for (const id of ['100', '200', '300']) expect(html).toContain(`href="/blog/tok${id}"`);
     expect(html.match(/<li /g)).toHaveLength(3);
   });
 
@@ -101,9 +101,9 @@ describe('BlogDirectory', () => {
 
     it('shows only the games that match, and says how many of how many', () => {
       const filtered = render({ query: 'middle', result: 'all' });
-      expect(filtered).toContain('href="/blog/200"');
-      expect(filtered).not.toContain('href="/blog/300"');
-      expect(filtered).not.toContain('href="/blog/100"');
+      expect(filtered).toContain('href="/blog/tok200"');
+      expect(filtered).not.toContain('href="/blog/tok300"');
+      expect(filtered).not.toContain('href="/blog/tok100"');
       expect(textOf(filtered)).toContain('Showing 1 of 3');
     });
 
@@ -135,7 +135,7 @@ describe('BlogDirectory', () => {
     it('does not say "Showing" when the search is only spaces, which filters nothing', () => {
       const blank = render({ query: '   ', result: 'all' });
       expect(textOf(blank)).not.toContain('Showing');
-      expect(blank).toContain('href="/blog/300"');
+      expect(blank).toContain('href="/blog/tok300"');
     });
   });
 

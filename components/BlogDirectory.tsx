@@ -17,6 +17,7 @@ import {
 } from '@/lib/blog-directory';
 import type { DirectoryEntry, DirectoryFilter } from '@/lib/blog-directory';
 import { DIRECTORY_KEY_STORAGE } from '@/lib/directory-key';
+import { blogPath } from '@/lib/blog-link';
 
 const RESULT_FILTERS: Array<{ value: DirectoryFilter['result']; label: string }> = [
   { value: 'all', label: 'All' },
@@ -251,7 +252,7 @@ function GameRow({ entry, onUnshare }: {
     <li className="relative rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 transition-colors hover:border-purple-400 dark:hover:border-purple-500 hover:bg-purple-50/40 dark:hover:bg-purple-900/10 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-purple-500">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Link
-          href={`/blog/${entry.gameId}`}
+          href={blogPath(entry.token)}
           className="text-lg font-semibold text-gray-900 dark:text-gray-100 after:absolute after:inset-0 after:content-[''] focus:outline-none"
         >
           {gameTitle(entry)}

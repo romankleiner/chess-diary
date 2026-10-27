@@ -8,11 +8,13 @@ vi.mock('@/lib/db', () => ({
   getAnalysis: vi.fn(),
   getSetting: vi.fn(),
   getBlogOwner: vi.fn(),
+  getBlogByToken: vi.fn(),
+  getSharedBlogLink: vi.fn(),
 }));
 vi.mock('@/lib/blog-visits-server', () => ({ recordVisit: vi.fn() }));
 
 import { POST } from '@/app/api/games/[id]/blog-post/route';
-import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner } from '@/lib/db';
+import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner, getBlogByToken, getSharedBlogLink } from '@/lib/db';
 import { recordVisit } from '@/lib/blog-visits-server';
 import { auth } from '@clerk/nextjs/server';
 
@@ -23,6 +25,8 @@ const mockGetJournal   = vi.mocked(getGamesJournal);
 const mockGetAnalysis  = vi.mocked(getAnalysis);
 const mockGetSetting   = vi.mocked(getSetting);
 const mockGetBlogOwner = vi.mocked(getBlogOwner);
+const mockGetByToken   = vi.mocked(getBlogByToken);
+const mockGetLink      = vi.mocked(getSharedBlogLink);
 const mockAuth         = vi.mocked(auth);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -44,6 +48,8 @@ beforeEach(() => {
   mockGetJournal.mockResolvedValue([]);
   mockGetAnalysis.mockResolvedValue(null);
   mockGetBlogOwner.mockResolvedValue(null); // unpublished by default
+  mockGetByToken.mockResolvedValue(null);
+  mockGetLink.mockResolvedValue(null);
   // Default: signed-in author (the global mock-clerk stub may be cleared above)
   mockAuth.mockResolvedValue({ userId: 'test-user-123' } as any);
 });
@@ -72,14 +78,18 @@ describe('POST /api/games/[id]/blog-post — anonymous access', () => {
     expect(mockGetGame).not.toHaveBeenCalled(); // bails out before touching data
   });
 
-  it('serves a shared game to an anonymous visitor using the published owner', async () => {
-    mockAuth.mockResolvedValue({ userId: null } as any);
-    mockGetBlogOwner.mockResolvedValue('owner-abc');
+  const TOKEN = 'AbCdEfGhIjKlMnOp';
+  const byToken = () => new NextRequest(`http://localhost/api/games/${TOKEN}/blog-post`, { method: 'POST' });
+
+  it('serves a shared game to an anonymous visitor through its private link, as its owner’s', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as never);
+    mockGetByToken.mockResolvedValue({ gameId: gameA.id, ownerId: 'owner-abc' });
     mockGetGame.mockResolvedValue(gameA);
     mockGetJournal.mockResolvedValue([thoughtEntry]);
 
-    const res = await POST(makeReq(), params(gameA.id));
+    const res = await POST(byToken(), params(TOKEN));
     expect(res.status).toBe(200);
+    expect(mockGetByToken).toHaveBeenCalledWith(TOKEN);
     // db reads are scoped to the published owner, not the (absent) viewer --
     // and to this one game's journal entries, not the whole journal
     expect(mockGetGame).toHaveBeenCalledWith(gameA.id, 'owner-abc');
@@ -87,13 +97,47 @@ describe('POST /api/games/[id]/blog-post — anonymous access', () => {
     expect(mockGetJournal).toHaveBeenCalledTimes(1);
   });
 
-  it('a published game takes precedence over the viewer session', async () => {
-    // A signed-in user who is NOT the author still sees the published owner's game
-    mockAuth.mockResolvedValue({ userId: 'someone-else' } as any);
-    mockGetBlogOwner.mockResolvedValue('owner-abc');
+  it('serves a signed-in reader who is not the author through the link too', async () => {
+    mockAuth.mockResolvedValue({ userId: 'someone-else' } as never);
+    mockGetByToken.mockResolvedValue({ gameId: gameA.id, ownerId: 'owner-abc' });
     mockGetGame.mockResolvedValue(gameA);
-    await POST(makeReq(), params(gameA.id));
+    expect((await POST(byToken(), params(TOKEN))).status).toBe(200);
     expect(mockGetGame).toHaveBeenCalledWith(gameA.id, 'owner-abc');
+  });
+
+  it('refuses a link that opens nothing (never made, or its game un-shared), reading no game', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as never);
+    const res = await POST(byToken(), params(TOKEN));
+    expect(res.status).toBe(404);
+    expect(mockGetGame).not.toHaveBeenCalled();
+  });
+
+  it('refuses a shared game by its chess.com id to anyone but its author: ids are public and sequential', async () => {
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetLink.mockResolvedValue({ token: TOKEN, byId: false });
+    for (const userId of [null, 'someone-else']) {
+      mockAuth.mockResolvedValue({ userId } as never);
+      expect((await POST(makeReq(), params(gameA.id))).status).toBe(404);
+    }
+    expect(mockGetGame).not.toHaveBeenCalled();
+  });
+
+  it('keeps the old link by id working for a game shared before private links existed', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as never);
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetLink.mockResolvedValue({ token: TOKEN, byId: true });
+    mockGetGame.mockResolvedValue(gameA);
+    expect((await POST(makeReq(), params(gameA.id))).status).toBe(200);
+    expect(mockGetGame).toHaveBeenCalledWith(gameA.id, 'owner-abc');
+  });
+
+  it('opens a shared game by id for its author, signed in', async () => {
+    mockAuth.mockResolvedValue({ userId: 'owner-abc' } as never);
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetLink.mockResolvedValue({ token: TOKEN, byId: false });
+    mockGetGame.mockResolvedValue(gameA);
+    expect((await POST(makeReq(), params(gameA.id))).status).toBe(200);
+    expect(mockGetLink).not.toHaveBeenCalled(); // no need to look: it's theirs
   });
 
   it('an unpublished game falls back to the author session for previews', async () => {
@@ -594,11 +638,13 @@ describe('POST /api/games/[id]/blog-post — logging the visit', () => {
     headers: { 'x-real-ip': '203.0.113.7', 'user-agent': 'Mozilla/5.0' },
   });
 
-  it('logs a reader’s view of a shared game against its author', async () => {
+  const TOKEN = 'AbCdEfGhIjKlMnOp';
+
+  it('logs a reader’s view of a shared game against its author, by game id, not link', async () => {
     mockAuth.mockResolvedValue({ userId: null } as never);
-    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetByToken.mockResolvedValue({ gameId: gameA.id, ownerId: 'owner-abc' });
     mockGetGame.mockResolvedValue(gameA);
-    await POST(visitReq(), params(gameA.id));
+    await POST(visitReq(), params(TOKEN));
 
     expect(mockRecordVisit).toHaveBeenCalledTimes(1);
     const [owner, headers, details] = mockRecordVisit.mock.calls[0];
@@ -609,10 +655,29 @@ describe('POST /api/games/[id]/blog-post — logging the visit', () => {
 
   it('logs a signed-in reader who is not the author as a visitor', async () => {
     mockAuth.mockResolvedValue({ userId: 'someone-else' } as never);
+    mockGetByToken.mockResolvedValue({ gameId: gameA.id, ownerId: 'owner-abc' });
+    mockGetGame.mockResolvedValue(gameA);
+    await POST(visitReq(), params(TOKEN));
+    expect(mockRecordVisit.mock.calls[0][2]).toMatchObject({ viewer: 'visitor' });
+  });
+
+  it('logs a reader of an old by-id link the same way', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as never);
     mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetLink.mockResolvedValue({ token: TOKEN, byId: true });
     mockGetGame.mockResolvedValue(gameA);
     await POST(visitReq(), params(gameA.id));
-    expect(mockRecordVisit.mock.calls[0][2]).toMatchObject({ viewer: 'visitor' });
+    expect(mockRecordVisit.mock.calls[0]).toEqual([
+      'owner-abc', expect.anything(), { page: 'game', gameId: gameA.id, viewer: 'visitor' },
+    ]);
+  });
+
+  it('logs nothing for a refused request', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as never);
+    mockGetBlogOwner.mockResolvedValue('owner-abc');
+    mockGetLink.mockResolvedValue({ token: TOKEN, byId: false });
+    await POST(visitReq(), params(gameA.id));
+    expect(mockRecordVisit).not.toHaveBeenCalled();
   });
 
   it('logs the author’s own look (a shared game, or a draft preview) as theirs', async () => {

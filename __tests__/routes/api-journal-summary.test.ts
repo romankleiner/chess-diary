@@ -33,7 +33,7 @@ const mockClearDirectory = vi.mocked(clearBlogDirectoryCache);
 beforeEach(() => {
   vi.clearAllMocks();
   mockSaveEntry.mockResolvedValue(undefined);
-  mockPublishBlog.mockResolvedValue(undefined);
+  mockPublishBlog.mockResolvedValue({ token: 'AbCdEfGhIjKlMnOp', byId: false });
 });
 
 // ─── GET ──────────────────────────────────────────────────────────────────────

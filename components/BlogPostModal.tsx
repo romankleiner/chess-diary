@@ -9,6 +9,7 @@ import {
   formatEval,
 } from '@/components/blog-shared';
 import type { AnalysisSummary, MoveQualityKey } from '@/lib/analysis-utils';
+import { blogPath, isBlogToken } from '@/lib/blog-link';
 
 interface BlogPostModalProps {
   gameId: string;
@@ -222,14 +223,18 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
   };
 
   const handleShareLink = async () => {
-    const url = `${window.location.origin}/blog/${gameId}`;
     setSharing(true);
     setShareError(false);
 
-    // Publish first — without this the link 404s for anyone not signed in.
+    // Publish first, which also gives the game's private link: readers open it at
+    // /blog/<token>, never by game id (lib/blog-link.ts)
+    let url: string;
     try {
       const res = await fetch(`/api/games/${gameId}/share`, { method: 'POST' });
       if (!res.ok) throw new Error('publish failed');
+      const { token } = await res.json();
+      if (!isBlogToken(token)) throw new Error('no link');
+      url = `${window.location.origin}${blogPath(token)}`;
     } catch {
       setShareError(true);
       setSharing(false);

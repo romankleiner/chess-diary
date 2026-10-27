@@ -352,10 +352,69 @@ export async function saveSettings(settings: Record<string, string>, userId?: st
 
 const PUBLIC_BLOG_KEY = 'chess-diary:public:blog';
 
-export async function publishBlog(gameId: string, userId?: string): Promise<void> {
+// ============================================================
+// Private links to shared blogs (lib/blog-link.ts)
+//   chess-diary:public:blog-links   hash: gameId → JSON { token, byId }
+//   chess-diary:public:blog-tokens  hash: token → gameId
+//
+// A shared game's blog opens for readers at /blog/<token>, a random token, so one
+// link (or the author's chess.com game ids, which are public) leads to no other.
+// The link is made when a game is shared and removed when it is un-shared, so
+// sharing again gives a fresh one. Games shared before links existed keep their
+// old /blog/<gameId> links working (byId); a shared game without a link must be
+// one of those -- the link is always made before a game joins the index -- and
+// gets its link, marked byId, the first time one is needed.
+// ============================================================
+
+const BLOG_LINKS = 'chess-diary:public:blog-links';
+const BLOG_TOKENS = 'chess-diary:public:blog-tokens';
+
+export interface BlogLink {
+  token: string;
+  /** Shared before links existed: its old /blog/<gameId> link still opens it for readers. */
+  byId: boolean;
+}
+
+/** 96 random bits as 16 characters of base64url, never all digits (see isBlogToken). */
+function newBlogToken(): string {
+  let token: string;
+  do token = randomBytes(12).toString('base64url'); while (/^\d+$/.test(token));
+  return token;
+}
+
+function parseBlogLink(raw: string | null): BlogLink | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value.token === 'string' ? { token: value.token, byId: value.byId === true } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Make a game's link, unless one exists: two at once agree on one, as only one HSETNX wins. */
+async function createBlogLink(client: Redis, gameId: string, byId: boolean): Promise<BlogLink> {
+  const candidate: BlogLink = { token: newBlogToken(), byId };
+  // The token first: if we stop between the two, a stray token opens nothing
+  // (getBlogByToken checks it is the game's link), but a link always has its token
+  await client.hset(BLOG_TOKENS, candidate.token, gameId);
+  if (await client.hsetnx(BLOG_LINKS, gameId, JSON.stringify(candidate))) return candidate;
+  await client.hdel(BLOG_TOKENS, candidate.token);
+  const existing = parseBlogLink(await client.hget(BLOG_LINKS, gameId));
+  if (!existing) throw new Error('Could not create a blog link');
+  return existing;
+}
+
+/** Share a game's blog; returns its link. */
+export async function publishBlog(gameId: string, userId?: string): Promise<BlogLink> {
   const uid = userId || await getUserId();
   const client = getRedisClient();
+  // The link first, so a game in the index without one is always an old share.
+  // Sharing a game that is shared already keeps its link (an old share's included).
+  let link = parseBlogLink(await client.hget(BLOG_LINKS, gameId));
+  if (!link) link = await createBlogLink(client, gameId, (await client.hexists(PUBLIC_BLOG_KEY, gameId)) === 1);
   await client.hset(PUBLIC_BLOG_KEY, gameId, uid);
+  return link;
 }
 
 // Public read — no auth, by design.
@@ -364,12 +423,38 @@ export async function getBlogOwner(gameId: string): Promise<string | null> {
   return client.hget(PUBLIC_BLOG_KEY, gameId);
 }
 
+/**
+ * A shared game's link, or null if the game isn't shared. A game shared before
+ * links existed gets its link here, marked byId, the first time it is asked for.
+ */
+export async function getSharedBlogLink(gameId: string): Promise<BlogLink | null> {
+  const client = getRedisClient();
+  const [owner, raw] = await Promise.all([client.hget(PUBLIC_BLOG_KEY, gameId), client.hget(BLOG_LINKS, gameId)]);
+  if (!owner) return null;
+  return parseBlogLink(raw) ?? createBlogLink(client, gameId, true);
+}
+
+/** The shared game a link token opens, and its owner; null for any other token. Public read: the token is the permission. */
+export async function getBlogByToken(token: string): Promise<{ gameId: string; ownerId: string } | null> {
+  const client = getRedisClient();
+  const gameId = await client.hget(BLOG_TOKENS, token);
+  if (!gameId) return null;
+  const [owner, raw] = await Promise.all([client.hget(PUBLIC_BLOG_KEY, gameId), client.hget(BLOG_LINKS, gameId)]);
+  // Only the game's current link, and only while it is shared
+  return owner && parseBlogLink(raw)?.token === token ? { gameId, ownerId: owner } : null;
+}
+
 export async function unpublishBlog(gameId: string, userId?: string): Promise<void> {
   const uid = userId || await getUserId();
   const client = getRedisClient();
   // Only the publisher may un-share their own game.
   const owner = await client.hget(PUBLIC_BLOG_KEY, gameId);
-  if (owner === uid) await client.hdel(PUBLIC_BLOG_KEY, gameId);
+  if (owner !== uid) return;
+  // Its link goes with it, in one step: a fresh link if it is shared again
+  const link = parseBlogLink(await client.hget(BLOG_LINKS, gameId));
+  const tx = client.multi().hdel(PUBLIC_BLOG_KEY, gameId).hdel(BLOG_LINKS, gameId);
+  if (link) tx.hdel(BLOG_TOKENS, link.token);
+  await tx.exec();
 }
 
 // Every published game and who owns it, for the public directory. Public

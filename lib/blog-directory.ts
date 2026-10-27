@@ -10,6 +10,8 @@ export type DirectoryResult = 'win' | 'draw' | 'loss';
 
 export interface DirectoryEntry {
   gameId: string;
+  /** The blog's private link token: it opens at /blog/<token> (lib/blog-link.ts). */
+  token: string;
   white: string;
   black: string;
   /** Each player's Chess.com rating in this game, when the PGN says. */
@@ -64,8 +66,9 @@ export interface StoredGame {
   timeControl?: string | null;
 }
 
-export function buildDirectoryEntry({ gameId, game, username, commentedMoves, hasSummary }: {
+export function buildDirectoryEntry({ gameId, token, game, username, commentedMoves, hasSummary }: {
   gameId: string;
+  token: string;
   game: StoredGame;
   /** The author's Chess.com name, to tell which side they played. */
   username?: string | null;
@@ -84,6 +87,7 @@ export function buildDirectoryEntry({ gameId, game, username, commentedMoves, ha
 
   return {
     gameId,
+    token,
     white,
     black,
     ...ratingsFromPgn(game.pgn),

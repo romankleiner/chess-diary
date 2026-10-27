@@ -25,7 +25,7 @@ const ALICE_KEY = 'AbCdEfGhIjKlMnOpQrStUv';   // 22 characters of base64url
 const OTHER_KEY = 'ZzZzZzZzZzZzZzZzZzZzZz';
 
 const entry = (over: Partial<DirectoryEntry> = {}): DirectoryEntry => ({
-  gameId: '100', white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
+  gameId: '100', token: `tok${over.gameId ?? '100'}`, white: 'romank66', black: 'opponent_a', whiteRating: 1523, blackRating: 1480, authorColor: 'white', opponent: 'opponent_a',
   result: 'win', inProgress: false, startDate: '2026-07-10', endDate: '2026-07-24', timeControl: '1 day per move',
   commentedMoves: 9, hasSummary: true,
   ...over,
@@ -100,7 +100,7 @@ describe('the directory page — with the key', () => {
 
     expect(mockLoad).toHaveBeenCalledWith('alice');
     expect(textOf(html)).toContain('Game blogs');
-    const order = ['300', '200', '100'].map(id => html.indexOf(`href="/blog/${id}"`));
+    const order = ['300', '200', '100'].map(id => html.indexOf(`href="/blog/tok${id}"`));
     expect(order.every(i => i > 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });

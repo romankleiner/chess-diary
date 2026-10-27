@@ -23,9 +23,10 @@ export async function POST(
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    await publishBlog(gameId);
+    // Its private link: readers open the blog at /blog/<token> (lib/blog-link.ts)
+    const link = await publishBlog(gameId);
     clearBlogDirectoryCache();
-    return NextResponse.json({ shared: true });
+    return NextResponse.json({ shared: true, token: link.token });
   } catch (error) {
     console.error('[BLOG-SHARE] Error:', error);
     return NextResponse.json(

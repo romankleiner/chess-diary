@@ -7,7 +7,7 @@
  * "Share link" writes to, and a game not in it cannot be opened by anyone else.
  * Each author has their own directory, opened by their own secret key.
  */
-import { getGamesById, getGamesJournal, getSetting, listPublishedBlogs } from '@/lib/db';
+import { getGamesById, getGamesJournal, getSetting, getSharedBlogLink, listPublishedBlogs } from '@/lib/db';
 import { buildDirectoryEntry, countCommentary } from '@/lib/blog-directory';
 import type { DirectoryEntry } from '@/lib/blog-directory';
 
@@ -37,18 +37,23 @@ async function readDirectory(): Promise<OwnedEntry[]> {
   }
 
   const perOwner = await Promise.all([...byOwner].map(async ([ownerId, gameIds]) => {
-    const [games, journal, username] = await Promise.all([
+    const [games, journal, username, links] = await Promise.all([
       getGamesById(gameIds, ownerId),
       getGamesJournal(gameIds, ownerId),
       getSetting('chesscom_username', ownerId),
+      // Each game's private link (a game shared before links existed gets its own here)
+      Promise.all(gameIds.map(gameId => getSharedBlogLink(gameId))),
     ]);
     const commentary = countCommentary(journal, new Set(gameIds));
+    const tokenOf = new Map(gameIds.map((gameId, i) => [gameId, links[i]?.token]));
 
-    // A published game whose record has gone is skipped rather than listed with nothing to open
-    return gameIds.filter(id => games[id]).map(gameId => ({
+    // A published game whose record has gone (or that was un-shared meanwhile) is
+    // skipped rather than listed with nothing to open
+    return gameIds.filter(id => games[id] && tokenOf.get(id)).map(gameId => ({
       ownerId,
       entry: buildDirectoryEntry({
         gameId,
+        token: tokenOf.get(gameId) as string,
         game: games[gameId],
         username,
         commentedMoves: commentary.get(gameId)?.commentedMoves ?? 0,
