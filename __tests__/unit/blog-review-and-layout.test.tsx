@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderWithLetters } from '../helpers/render-letters';
 import {
   EngineSummaryCard,
   GameDates,
@@ -46,7 +46,7 @@ const summary: AnalysisSummary = summarizeAnalysis({
 })!;
 
 const walkthrough = (props: Partial<React.ComponentProps<typeof GameWalkthrough>> = {}) =>
-  renderToStaticMarkup(<GameWalkthrough pgn={PGN} userColor="white" sections={[section()]} {...props} />);
+  renderWithLetters(<GameWalkthrough pgn={PGN} userColor="white" sections={[section()]} {...props} />);
 
 /** Visible text of rendered markup. */
 const textOf = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
@@ -65,7 +65,7 @@ const rowsOf = (html: string) => {
 // ─── the game's dates ─────────────────────────────────────────────────────────
 
 describe('GameDates', () => {
-  const render = (props: React.ComponentProps<typeof GameDates>) => renderToStaticMarkup(<GameDates {...props} />);
+  const render = (props: React.ComponentProps<typeof GameDates>) => renderWithLetters(<GameDates {...props} />);
   const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
   it('calls out the start and end dates separately, labelled', () => {
@@ -169,7 +169,7 @@ describe('the move counter on the board', () => {
 
 describe('the engine check — top line', () => {
   const body = (s: MoveSection, phase: 'thinking_shown' | 'complete' = 'complete') =>
-    renderToStaticMarkup(<SectionBody section={s} phase={phase} />);
+    renderWithLetters(<SectionBody section={s} phase={phase} />);
 
   const missed = section({
     engineEval: { moveQuality: 'good', centipawnLoss: 25, evaluation: 0.4, bestMoveSan: 'd4', topLine: '6. d4 exd4 7. e5 Ne4' },
@@ -226,14 +226,14 @@ describe('the engine check — top line', () => {
   });
 
   it('shows it on the older card too', () => {
-    const html = renderToStaticMarkup(<MoveSectionCard section={{ ...missed, moveNotation: null }} />);
+    const html = renderWithLetters(<MoveSectionCard section={{ ...missed, moveNotation: null }} />);
 
     expect(html).toContain('Engine&#x27;s top line:');
     expect(html).toContain('6. d4 exd4 7. e5 Ne4');
   });
 
   it('does not show a top line on the older card when my move was the top move', () => {
-    const html = renderToStaticMarkup(
+    const html = renderWithLetters(
       <MoveSectionCard section={section({ moveNotation: null, engineEval: { moveQuality: 'excellent', centipawnLoss: 0, evaluation: 0.3 } })} />
     );
     expect(html).not.toContain('top line');
@@ -241,7 +241,7 @@ describe('the engine check — top line', () => {
 });
 
 describe('the engine check — a move in a game already decided', () => {
-  const body = (s: MoveSection) => textOf(renderToStaticMarkup(<SectionBody section={s} phase="complete" />));
+  const body = (s: MoveSection) => textOf(renderWithLetters(<SectionBody section={s} phase="complete" />));
 
   // +5 → +4: a pawn short of the engine's best, graded "good" (see gradedCpLoss)
   const decided = section({
@@ -268,7 +268,7 @@ describe('the engine check — a move in a game already decided', () => {
 // ─── the engine review card ───────────────────────────────────────────────────
 
 describe('EngineSummaryCard', () => {
-  const html = renderToStaticMarkup(
+  const html = renderWithLetters(
     <EngineSummaryCard summary={summary} players={{ white: 'romank', black: 'opponent_a' }} userColor="white" />
   );
   const rows = rowsOf(html);
@@ -289,7 +289,7 @@ describe('EngineSummaryCard', () => {
   });
 
   it('marks Black as me when I played Black', () => {
-    const black = renderToStaticMarkup(
+    const black = renderWithLetters(
       <EngineSummaryCard summary={summary} players={{ white: 'romank', black: 'opponent_a' }} userColor="black" />
     );
     expect(black).toContain('Black · me');
@@ -351,7 +351,7 @@ describe('EngineSummaryCard', () => {
   });
 
   it('falls back to White and Black when the names are not known', () => {
-    const anon = renderToStaticMarkup(<EngineSummaryCard summary={summary} userColor="white" />);
+    const anon = renderWithLetters(<EngineSummaryCard summary={summary} userColor="white" />);
     expect(anon).toMatch(/block break-words">White</);
     expect(anon).toMatch(/block break-words">Black</);
   });
@@ -361,7 +361,7 @@ describe('EngineSummaryCard', () => {
       white: { ...summary.white, accuracy: 90 },
       black: { ...summary.black, accuracy: null, averageCentipawnLoss: null },
     };
-    const some = rowsOf(renderToStaticMarkup(<EngineSummaryCard summary={partial} userColor="white" />));
+    const some = rowsOf(renderWithLetters(<EngineSummaryCard summary={partial} userColor="white" />));
     expect(some['Accuracy']).toEqual(['90%', '—']);
     expect(some['Average loss per move']).toEqual(['115 cp', '—']);
 
@@ -369,14 +369,14 @@ describe('EngineSummaryCard', () => {
       white: { ...summary.white, accuracy: null, averageCentipawnLoss: null },
       black: { ...summary.black, accuracy: null, averageCentipawnLoss: null },
     };
-    const bare = rowsOf(renderToStaticMarkup(<EngineSummaryCard summary={none} userColor="white" />));
+    const bare = rowsOf(renderWithLetters(<EngineSummaryCard summary={none} userColor="white" />));
     expect(bare['Accuracy']).toBeUndefined();
     expect(bare['Average loss per move']).toBeUndefined();
     expect(bare['Moves analysed']).toBeDefined();
   });
 
   it('shows a name as text, never as markup', () => {
-    const evil = renderToStaticMarkup(
+    const evil = renderWithLetters(
       <EngineSummaryCard summary={summary} players={{ white: '<img src=x onerror=alert(1)>', black: 'b' }} userColor="white" />
     );
     expect(evil).not.toContain('<img');
@@ -413,7 +413,7 @@ describe('GameWalkthrough — the engine review at the end', () => {
   });
 
   it('appears straight away in the plain layout used when the game cannot be walked through', () => {
-    const html = renderToStaticMarkup(
+    const html = renderWithLetters(
       <GameWalkthrough
         pgn=""
         userColor="white"
@@ -430,14 +430,14 @@ describe('GameWalkthrough — the engine review at the end', () => {
   });
 
   it('comes before my own summary there', () => {
-    const html = renderToStaticMarkup(
+    const html = renderWithLetters(
       <GameWalkthrough pgn="" userColor="white" sections={[]} summary="Lesson text." analysisSummary={summary} />
     );
     expect(html.indexOf('Engine review')).toBeLessThan(html.indexOf('Overall summary'));
   });
 
   it('is left out in the plain layout when the game was not analysed', () => {
-    const html = renderToStaticMarkup(
+    const html = renderWithLetters(
       <GameWalkthrough pgn="" userColor="white" sections={[]} summary="Lesson text." analysisSummary={null} />
     );
     expect(html).not.toContain('Engine review');

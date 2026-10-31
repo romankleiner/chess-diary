@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderWithLetters } from '../helpers/render-letters';
 import { renderProse } from '@/components/blog-shared';
 
 function render(text: string): string {
-  return renderToStaticMarkup(<>{renderProse(text)}</>);
+  return renderWithLetters(<>{renderProse(text)}</>);
 }
 
 describe('renderProse', () => {
@@ -45,7 +45,7 @@ describe('renderProse', () => {
   });
 
   it('applies an optional paragraphClass to each <p>', () => {
-    const html = renderToStaticMarkup(<>{renderProse('A\n\nB', 'foo bar')}</>);
+    const html = renderWithLetters(<>{renderProse('A\n\nB', 'foo bar')}</>);
     expect(html).toBe('<p class="foo bar">A</p><p class="foo bar">B</p>');
   });
 });

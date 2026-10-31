@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderWithLetters } from '../helpers/render-letters';
 import { AUTHOR_WORDS, MoveSectionCard, SectionBody, SummaryCard, renderProse, type MoveSection } from '@/components/blog-shared';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-const author = (text: string) => renderToStaticMarkup(<>{renderProse(text, undefined, AUTHOR_WORDS)}</>);
-const plain = (text: string) => renderToStaticMarkup(<>{renderProse(text)}</>);
+const author = (text: string) => renderWithLetters(<>{renderProse(text, undefined, AUTHOR_WORDS)}</>);
+const plain = (text: string) => renderWithLetters(<>{renderProse(text)}</>);
 
 /** Text inside each element carrying the given data attribute. */
 const inside = (html: string, attribute: string) =>
@@ -187,7 +187,7 @@ describe('branch labels only in the author’s own words', () => {
   });
 
   it('reads the author’s labels and the AI’s squares differently in one entry', () => {
-    const html = renderToStaticMarkup(
+    const html = renderWithLetters(
       <SectionBody
         section={section({
           thinking: 'In (a3) I play Nf3.',
@@ -209,7 +209,7 @@ describe('branch labels only in the author’s own words', () => {
   });
 
   it('applies to the older card as well', () => {
-    const html = renderToStaticMarkup(
+    const html = renderWithLetters(
       <MoveSectionCard
         section={section({
           moveNotation: null,
@@ -228,7 +228,7 @@ describe('branch labels only in the author’s own words', () => {
   });
 
   it('applies to the overall summary, which is the author’s own too', () => {
-    const html = renderToStaticMarkup(<SummaryCard summary="In (a3) I should have played Nf3." />);
+    const html = renderWithLetters(<SummaryCard summary="In (a3) I should have played Nf3." />);
 
     expect(labelsIn(html)).toEqual(['(a3)']);
     expect(movesIn(html)).toEqual(['Nf3']);

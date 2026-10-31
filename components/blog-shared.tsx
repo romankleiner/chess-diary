@@ -10,6 +10,7 @@ import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { Chess } from 'chess.js';
 import { splitNotation } from '@/lib/notation';
+import { Figurines } from '@/components/Figurines';
 import { splitLinks } from '@/lib/linkify';
 import { chesscomProfileUrl } from '@/lib/players';
 import { formatPawns } from '@/lib/position-eval';
@@ -113,7 +114,8 @@ export function normSan(s: string): string {
 // into links, and sets chess notation ("9...Bxd2+ 10. Nxd2", "Nf3", "O-O") apart
 // from the words around it in a monospaced, tinted chip. Chips can wrap across
 // lines (box-decoration-clone repaints the tint on each line) and stay upright
-// inside italic text.
+// inside italic text. Pieces are drawn as figurines (♞f3) here and wherever the
+// blog shows a move.
 
 function Notation({ children }: { children: string }) {
   return (
@@ -121,7 +123,7 @@ function Notation({ children }: { children: string }) {
       data-notation
       className="not-italic rounded px-1 py-0.5 font-mono text-[0.9em] font-medium box-decoration-clone bg-slate-200 text-slate-900 dark:bg-slate-700/70 dark:text-slate-50"
     >
-      {children}
+      <Figurines>{children}</Figurines>
     </span>
   );
 }
@@ -370,7 +372,7 @@ export function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' 
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                   }`}
                 >
-                  {white}
+                  <Figurines>{white}</Figurines>
                 </button>
                 {black !== undefined ? (
                   <button
@@ -381,7 +383,7 @@ export function PgnViewer({ pgn, userColor }: { pgn: string; userColor: 'white' 
                         : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                     }`}
                   >
-                    {black}
+                    <Figurines>{black}</Figurines>
                   </button>
                 ) : (
                   <div className="flex-1" />
@@ -566,7 +568,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
       {/* ── Header ──────────────────────────────────────────────────── */}
       <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
         <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
-          {displayHeader}
+          <Figurines>{displayHeader}</Figurines>
         </span>
         <span className="text-xs text-gray-400">
           {new Date(section.timestamp).toLocaleString([], {
@@ -582,7 +584,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
         {section.opponentLastMove && (
           <p className="text-xs text-center text-gray-500 dark:text-gray-400">
             Opponent played{' '}
-            <span className="font-mono font-medium">{section.opponentLastMove}</span>
+            <span className="font-mono font-medium"><Figurines>{section.opponentLastMove}</Figurines></span>
           </p>
         )}
 
@@ -693,7 +695,7 @@ export function MoveSectionCard({ section }: { section: MoveSection }) {
                 <>
                   Move played:{' '}
                   <span className="font-mono font-semibold text-gray-800 dark:text-gray-200">
-                    {section.moveNotation}
+                    <Figurines>{section.moveNotation}</Figurines>
                   </span>
                 </>
               ) : undefined
@@ -908,7 +910,7 @@ export function MoveChips({ game, fromPly, toPly, viewIdx, goTo, guessPly, guess
             aria-label={quality ? `${label}, ${QUALITY_NAME[quality].toLowerCase()}` : undefined}
             className={`px-1.5 py-0.5 rounded transition-colors ${tone} ${p === guessPly ? guessCls : ''}`}
           >
-            {label}
+            <Figurines>{label}</Figurines>
           </button>
         );
       })}
@@ -1022,7 +1024,7 @@ export function GuessEvalCard({ state, color }: {
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <span className="font-medium text-gray-700 dark:text-gray-300">
           Engine check of your guess{' '}
-          <span className="font-mono font-semibold text-gray-900 dark:text-gray-100">{state.san}</span>
+          <span className="font-mono font-semibold text-gray-900 dark:text-gray-100"><Figurines>{state.san}</Figurines></span>
         </span>
         {color === 'black' && (
           <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">White&apos;s point of view</span>
@@ -1473,7 +1475,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, qualiti
       {/* ── Header ──────────────────────────────────────────────────── */}
       <div className="bg-gray-50 dark:bg-gray-700 px-4 py-2.5 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
         <span className="font-semibold text-base text-gray-800 dark:text-gray-200">
-          {resolved ? section.header : maskedHeader(section)}
+          <Figurines>{resolved ? section.header : maskedHeader(section)}</Figurines>
         </span>
         <span className="text-sm text-gray-400">
           {new Date(section.timestamp).toLocaleString([], {
@@ -1503,7 +1505,7 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, qualiti
                 {section.opponentLastMove && (
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     Opponent played{' '}
-                    <span className="font-mono font-medium">{section.opponentLastMove}</span>
+                    <span className="font-mono font-medium"><Figurines>{section.opponentLastMove}</Figurines></span>
                   </p>
                 )}
                 <p className="text-base font-medium text-purple-700 dark:text-purple-300">
@@ -1571,12 +1573,12 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, qualiti
               <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">
                 ⭐ Even better — you found the engine&apos;s top move
                 {section.engineEval?.bestMoveSan && (
-                  <>{' '}(<span className="font-mono">{section.engineEval.bestMoveSan}</span>)</>
+                  <>{' '}(<span className="font-mono"><Figurines>{section.engineEval.bestMoveSan}</Figurines></span>)</>
                 )}!
                 {section.moveNotation && (
                   <span className="font-normal text-gray-600 dark:text-gray-400">
                     {' '}I played{' '}
-                    <span className="font-mono">{section.moveNotation}</span> here.
+                    <span className="font-mono"><Figurines>{section.moveNotation}</Figurines></span> here.
                   </span>
                 )}
               </p>
@@ -1584,11 +1586,11 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, qualiti
             {feedback === 'better' && (
               <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">
                 ⭐ Better than mine — the engine rates{' '}
-                {earnedSan ? <span className="font-mono">{earnedSan}</span> : 'your move'} above the move I played, so it counts.
+                {earnedSan ? <span className="font-mono"><Figurines>{earnedSan}</Figurines></span> : 'your move'} above the move I played, so it counts.
                 {section.moveNotation && (
                   <span className="font-normal text-gray-600 dark:text-gray-400">
                     {' '}I played{' '}
-                    <span className="font-mono">{section.moveNotation}</span> here.
+                    <span className="font-mono"><Figurines>{section.moveNotation}</Figurines></span> here.
                   </span>
                 )}
               </p>
@@ -1596,11 +1598,11 @@ function WalkthroughMoveCard({ section, game, startPly, guessPly, state, qualiti
             {feedback === 'equal' && (
               <p className="text-sm text-green-600 dark:text-green-400 font-medium">
                 ✓ As good as mine — the engine rates{' '}
-                {earnedSan ? <span className="font-mono">{earnedSan}</span> : 'your move'} the same as the move I played, so it counts.
+                {earnedSan ? <span className="font-mono"><Figurines>{earnedSan}</Figurines></span> : 'your move'} the same as the move I played, so it counts.
                 {section.moveNotation && (
                   <span className="font-normal text-gray-600 dark:text-gray-400">
                     {' '}I played{' '}
-                    <span className="font-mono">{section.moveNotation}</span> here.
+                    <span className="font-mono"><Figurines>{section.moveNotation}</Figurines></span> here.
                   </span>
                 )}
               </p>

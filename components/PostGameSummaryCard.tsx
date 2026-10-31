@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { Figurines } from '@/components/Figurines';
 
 interface Statistics {
   totalMoves: number;
@@ -131,7 +132,7 @@ export default function PostGameSummaryCard({ entry, onDelete }: PostGameSummary
           {/* Collapsed preview of reflections */}
           {!expanded && (reflections?.lessonsLearned || reflections?.overall) && (
             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 line-clamp-1 italic">
-              &ldquo;{reflections.lessonsLearned || reflections.overall}&rdquo;
+              &ldquo;<Figurines>{(reflections.lessonsLearned || reflections.overall) as string}</Figurines>&rdquo;
             </p>
           )}
         </div>
@@ -199,7 +200,7 @@ export default function PostGameSummaryCard({ entry, onDelete }: PostGameSummary
             <div className="space-y-3">
               {reflections?.overall && (
                 <p data-summary-overall className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
-                  {reflections.overall}
+                  <Figurines>{reflections.overall}</Figurines>
                 </p>
               )}
               {reflections?.whatWentWell && (
@@ -279,7 +280,7 @@ function ReflectionSection({
         <span>{icon}</span> {title}
       </h4>
       <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
-        {text}
+        <Figurines>{text}</Figurines>
       </p>
     </div>
   );

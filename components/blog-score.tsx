@@ -9,6 +9,7 @@ import {
   PENALTY_CAP, REVEALED_MATCH_SHARE, TRY_MULTIPLIERS,
 } from '@/lib/guess-score';
 import type { PositionOutcome, PositionScore, ScoreSummary } from '@/lib/guess-score';
+import { Figurines } from '@/components/Figurines';
 
 /** A score with a proper minus sign. */
 export const formatPoints = (points: number): string => (points < 0 ? `−${Math.abs(points)}` : String(points));
@@ -156,7 +157,7 @@ export function ScoreCard({ summary, rows }: { summary: ScoreSummary; rows: Scor
           {rows.map((row, i) => (
             <li key={i} className="flex items-baseline justify-between gap-3 py-1.5 text-base">
               <span className="min-w-0 text-gray-800 dark:text-gray-200">
-                {row.header}
+                <Figurines>{row.header}</Figurines>
                 <span className="ml-2 text-sm text-gray-600 dark:text-gray-400">
                   {OUTCOME_LABEL[row.score?.outcome ?? 'open']}
                 </span>

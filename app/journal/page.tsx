@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { GrammarCheck } from './grammar-check';
 import PostGameSummaryCard from '@/components/PostGameSummaryCard';
+import { Figurines } from '@/components/Figurines';
 import { formatPawnsFine } from '@/lib/position-eval';
 import { gameFilterGroups } from '@/lib/game-filter-groups';
 
@@ -1301,7 +1302,7 @@ export default function JournalPage() {
                 </div>
                 {lastOpponentMove && (
                   <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-                    🟡 Opponent&apos;s last move: <span className="font-mono">{lastOpponentMove.san}</span>
+                    🟡 Opponent&apos;s last move: <span className="font-mono"><Figurines>{lastOpponentMove.san}</Figurines></span>
                     <span className="text-gray-500 dark:text-gray-400 ml-1">
                       ({lastOpponentMove.from}→{lastOpponentMove.to})
                     </span>
@@ -1632,7 +1633,7 @@ export default function JournalPage() {
                                 )}
                                 {entry.moveNumber && entry.moveNotation && (
                                   <span className="font-semibold text-sm">
-                                    Move {entry.moveNumber}: {entry.moveNotation}
+                                    Move {entry.moveNumber}: <Figurines>{entry.moveNotation}</Figurines>
                                   </span>
                                 )}
                               </div>
@@ -1744,7 +1745,7 @@ export default function JournalPage() {
                                       </a>
                                     );
                                   }
-                                  return part;
+                                  return <Figurines key={i}>{part}</Figurines>;
                                 });
                               };
                               
@@ -1804,13 +1805,13 @@ export default function JournalPage() {
                                     : san;
                                   return (
                                     <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                                      🟡 Opponent&apos;s move: <span className="font-mono">{label}</span>
+                                      🟡 Opponent&apos;s move: <span className="font-mono"><Figurines>{label}</Figurines></span>
                                     </p>
                                   );
                                 })()}
                                 {entry.myMove && (
                                   <p className="text-sm font-bold text-green-700 dark:text-green-400">
-                                    ✓ My Move: {entry.myMove}
+                                    ✓ My Move: <Figurines>{entry.myMove}</Figurines>
                                   </p>
                                 )}
                               </div>
@@ -1867,9 +1868,9 @@ export default function JournalPage() {
                                       {entry.aiReview.engineEval !== undefined &&
                                         ` Eval: ${entry.aiReview.engineEval > 0 ? '+' : ''}${entry.aiReview.engineEval.toFixed(2)}`
                                       }
-                                      {entry.aiReview.engineBestMove &&
-                                        ` • Best: ${entry.aiReview.engineBestMove}`
-                                      }
+                                      {entry.aiReview.engineBestMove && (
+                                        <> • Best: <Figurines>{entry.aiReview.engineBestMove}</Figurines></>
+                                      )}
                                     </div>
 
                                     {/* Separator */}
@@ -1877,7 +1878,7 @@ export default function JournalPage() {
 
                                     {/* Content */}
                                     <div className="text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap">
-                                      {entry.aiReview.content}
+                                      <Figurines>{entry.aiReview.content}</Figurines>
                                     </div>
 
                                     {/* Actions */}
@@ -1971,7 +1972,7 @@ export default function JournalPage() {
 
                                 {/* Content */}
                                 <div className="text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap">
-                                  {entry.postReview.content}
+                                  <Figurines>{entry.postReview.content}</Figurines>
                                 </div>
 
                                 {/* Actions */}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderWithLetters } from '../helpers/render-letters';
 import { Chess } from 'chess.js';
 import { GameWalkthrough, MoveChips, MoveQualityLegend, type MoveSection } from '@/components/blog-shared';
 import { qualitiesByPly, type MoveQualityKey } from '@/lib/analysis-utils';
@@ -69,7 +69,7 @@ const SANS = ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6'];
 const QUALITIES: (MoveQualityKey | null)[] = ['book', 'excellent', 'good', 'inaccuracy', 'blunder', 'mistake'];
 
 const chips = (props: Partial<React.ComponentProps<typeof MoveChips>> = {}) => {
-  const html = renderToStaticMarkup(
+  const html = renderWithLetters(
     <MoveChips game={{ sans: SANS }} fromPly={0} toPly={5} viewIdx={0} goTo={() => {}} qualities={QUALITIES} {...props} />,
   );
   return [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map(([, attrs, text]) => ({
@@ -155,7 +155,7 @@ const section: MoveSection = {
   plyIndex: 4, engineEval: null, aiReview: null, postReview: null,
 };
 const walkthrough = (moveQualities: (MoveQualityKey | null)[] | null) =>
-  renderToStaticMarkup(<GameWalkthrough pgn={PGN} userColor="white" sections={[section]} moveQualities={moveQualities} />);
+  renderWithLetters(<GameWalkthrough pgn={PGN} userColor="white" sections={[section]} moveQualities={moveQualities} />);
 
 describe('GameWalkthrough — move colours', () => {
   it('colours none of the moves leading to a move not yet guessed: that would hint at the answer', () => {
@@ -180,7 +180,7 @@ describe('GameWalkthrough — move colours', () => {
 
 describe('MoveQualityLegend', () => {
   it('shows every category in its colour, best to worst', () => {
-    const html = renderToStaticMarkup(<MoveQualityLegend />);
+    const html = renderWithLetters(<MoveQualityLegend />);
     const names = [...html.matchAll(/<span class="[^"]*(bg-\w+-100)[^"]*">(\w+)<\/span>/g)].map(m => [m[2], m[1]]);
     expect(names).toEqual([
       ['Book', 'bg-purple-100'], ['Excellent', 'bg-green-100'], ['Good', 'bg-blue-100'],

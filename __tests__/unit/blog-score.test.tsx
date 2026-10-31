@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderWithLetters } from '../helpers/render-letters';
 import { GameWalkthrough, type MoveSection } from '@/components/blog-shared';
 import { OUTCOME_LABEL, ScoreBreakdown, ScoreCard, ScoreLegend, TriesLeft, formatPoints } from '@/components/blog-score';
 import { summarizeScores, type PositionScore } from '@/lib/guess-score';
@@ -29,13 +29,13 @@ describe('TriesLeft', () => {
   const dots = (html: string, kind: 'left' | 'used') => (html.match(new RegExp(`data-try="${kind}"`, 'g')) ?? []).length;
 
   it.each([[3, 3, 0], [2, 2, 1], [1, 1, 2], [0, 0, 3]])('with %d left shows %d filled and %d used', (left, filled, used) => {
-    const html = renderToStaticMarkup(<TriesLeft left={left} />);
+    const html = renderWithLetters(<TriesLeft left={left} />);
     expect(dots(html, 'left')).toBe(filled);
     expect(dots(html, 'used')).toBe(used);
   });
 
   it('says how many are left to a screen reader, and hides the dots from one', () => {
-    const html = renderToStaticMarkup(<TriesLeft left={2} />);
+    const html = renderWithLetters(<TriesLeft left={2} />);
     expect(html).toContain('aria-label="2 of 3 tries left"');
     expect(html).toContain('role="img"');
     expect(html).toContain('aria-hidden="true"');
@@ -45,7 +45,7 @@ describe('TriesLeft', () => {
 // ─── one move's score ─────────────────────────────────────────────────────────
 
 describe('ScoreBreakdown', () => {
-  const html = renderToStaticMarkup(
+  const html = renderWithLetters(
     <ScoreBreakdown
       score={score({
         points: 40,
@@ -78,12 +78,12 @@ describe('ScoreBreakdown', () => {
   });
 
   it('shows a negative total with a minus sign', () => {
-    const negative = renderToStaticMarkup(<ScoreBreakdown score={score({ points: -30, lines: [{ label: 'Blunder: a3', points: -30 }] })} />);
+    const negative = renderWithLetters(<ScoreBreakdown score={score({ points: -30, lines: [{ label: 'Blunder: a3', points: -30 }] })} />);
     expect(negative).toMatch(/data-score-total[^>]*>−30</);
   });
 
   it('shows a line worth nothing in neutral grey, as neither a gain nor a loss', () => {
-    const skipped = renderToStaticMarkup(<ScoreBreakdown score={score({ outcome: 'skipped', points: 0, lines: [{ label: 'Skipped', points: 0 }] })} />);
+    const skipped = renderWithLetters(<ScoreBreakdown score={score({ outcome: 'skipped', points: 0, lines: [{ label: 'Skipped', points: 0 }] })} />);
     const row = skipped.match(/<dd class="([^"]*)">0</)![1];
     expect(row).toContain('text-gray-600');
     expect(row).not.toMatch(/green|red/);
@@ -91,7 +91,7 @@ describe('ScoreBreakdown', () => {
 
   it('says a guess is still being checked only while one is', () => {
     expect(textOf(html)).not.toContain('Still checking');
-    const pending = renderToStaticMarkup(<ScoreBreakdown score={score()} pending />);
+    const pending = renderWithLetters(<ScoreBreakdown score={score()} pending />);
     expect(textOf(pending)).toContain('Still checking one of your earlier guesses');
   });
 
@@ -101,7 +101,7 @@ describe('ScoreBreakdown', () => {
   });
 
   it('escapes anything in a label that is not text', () => {
-    const evil = renderToStaticMarkup(<ScoreBreakdown score={score({ lines: [{ label: 'Blunder: <img src=x onerror=alert(1)>', points: -30 }] })} />);
+    const evil = renderWithLetters(<ScoreBreakdown score={score({ lines: [{ label: 'Blunder: <img src=x onerror=alert(1)>', points: -30 }] })} />);
     expect(evil).not.toContain('<img');
     expect(evil).toContain('&lt;img');
   });
@@ -123,7 +123,7 @@ describe('ScoreCard', () => {
     { header: 'Move 9: d4', score: scores[2] },
     { header: 'Move 12: Qh5', score: scores[3] },
   ];
-  const html = renderToStaticMarkup(<ScoreCard summary={summary} rows={rows} />);
+  const html = renderWithLetters(<ScoreCard summary={summary} rows={rows} />);
   const text = textOf(html);
 
   it('shows the total out of a flawless game, as a percentage', () => {
@@ -157,15 +157,15 @@ describe('ScoreCard', () => {
   it('praises a score over 100% and no other', () => {
     expect(text).not.toContain('out-thought');
     const over = summarizeScores([score({ outcome: 'better', points: 200 })], 1);
-    expect(textOf(renderToStaticMarkup(<ScoreCard summary={over} rows={[{ header: 'Move 3', score: score({ outcome: 'better', points: 200 }) }]} />)))
+    expect(textOf(renderWithLetters(<ScoreCard summary={over} rows={[{ header: 'Move 3', score: score({ outcome: 'better', points: 200 }) }]} />)))
       .toContain('You out-thought the author');
     const exact = summarizeScores([score()], 1);
-    expect(textOf(renderToStaticMarkup(<ScoreCard summary={exact} rows={[{ header: 'Move 3', score: score() }]} />))).not.toContain('out-thought');
+    expect(textOf(renderWithLetters(<ScoreCard summary={exact} rows={[{ header: 'Move 3', score: score() }]} />))).not.toContain('out-thought');
   });
 
   it('shows a move never reached as not played, scoring nothing', () => {
     const partial = summarizeScores([scores[0]], 2);
-    const card = renderToStaticMarkup(
+    const card = renderWithLetters(
       <ScoreCard summary={partial} rows={[{ header: 'Move 3: Bb5', score: scores[0] }, { header: 'Move 6', score: null }]} />,
     );
     expect(textOf(card)).toContain('Not played');
@@ -181,7 +181,7 @@ describe('ScoreCard', () => {
 
   it('shows a negative total, and its percentage, with a minus sign', () => {
     const owed = summarizeScores([score({ outcome: 'out_of_tries', points: -30 })], 1);
-    const card = renderToStaticMarkup(<ScoreCard summary={owed} rows={[]} />);
+    const card = renderWithLetters(<ScoreCard summary={owed} rows={[]} />);
     expect(card).toMatch(/data-score-total[^>]*>−30</);
     expect(textOf(card)).toContain('−30%');
     expect(textOf(card)).not.toContain('-30');
@@ -192,7 +192,7 @@ describe('ScoreCard', () => {
   });
 
   it('escapes a move name that is not text', () => {
-    const evil = renderToStaticMarkup(<ScoreCard summary={summary} rows={[{ header: '<img src=x onerror=alert(1)>', score: scores[0] }]} />);
+    const evil = renderWithLetters(<ScoreCard summary={summary} rows={[{ header: '<img src=x onerror=alert(1)>', score: scores[0] }]} />);
     expect(evil).not.toContain('<img');
   });
 });
@@ -200,7 +200,7 @@ describe('ScoreCard', () => {
 // ─── the rules ────────────────────────────────────────────────────────────────
 
 describe('ScoreLegend', () => {
-  const html = renderToStaticMarkup(<ScoreLegend />);
+  const html = renderWithLetters(<ScoreLegend />);
   const text = textOf(html);
 
   it('is a closed disclosure, so it does not crowd the introduction', () => {
@@ -245,7 +245,7 @@ describe('GameWalkthrough — scoring', () => {
     engineEval: { moveQuality: 'excellent', centipawnLoss: 0, evaluation: 0.3 }, aiReview: null, postReview: null,
     ...over,
   });
-  const html = renderToStaticMarkup(<GameWalkthrough pgn={PGN} userColor="white" sections={[section()]} />);
+  const html = renderWithLetters(<GameWalkthrough pgn={PGN} userColor="white" sections={[section()]} />);
 
   it('explains the scoring beside the introduction', () => {
     expect(textOf(html)).toContain('Every move is scored');

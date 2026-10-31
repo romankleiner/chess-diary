@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderWithLetters } from '../helpers/render-letters';
 import { GuessEvalCard, GameWalkthrough, formatEval, type GuessEvalState, type MoveSection } from '@/components/blog-shared';
 import { compareGuess } from '@/lib/guess-eval';
 import type { PositionEval } from '@/lib/position-eval';
@@ -21,7 +21,7 @@ const done = (
 });
 
 const card = (state: GuessEvalState, color: 'white' | 'black' = 'white') =>
-  renderToStaticMarkup(<GuessEvalCard state={state} color={color} />);
+  renderWithLetters(<GuessEvalCard state={state} color={color} />);
 
 /** The text of each <dt>/<dd> pair, e.g. { 'After your move': '+0.2' }. */
 const rowsOf = (html: string): Record<string, string> => {
@@ -202,7 +202,7 @@ describe('GameWalkthrough — before any guess', () => {
   };
 
   it('shows no engine check until the reader makes a move', () => {
-    const html = renderToStaticMarkup(
+    const html = renderWithLetters(
       <GameWalkthrough pgn="1. e4 e5 2. Nf3 Nc6" sections={[section]} userColor="white" />,
     );
     expect(html).not.toContain('Engine check of your guess');

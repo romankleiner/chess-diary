@@ -313,6 +313,12 @@ Both players are shown with their rating and a link to their Chess.com profile, 
   - **`startsLine`.** The list form `b1)` is a label only where it opens a line. `renderInline` passes `startsLine: false` for text that carries on after a bold phrase (and for the bold text itself) and for the pieces after a web address, so `**Note:** b1) go on` still treats `b1` as a move, as before. The bracketed form needs no such rule.
   - Not applied to the Word export or the copy-to-clipboard text, which have no chips.
 
+### `lib/figurine.ts`, `components/Figurines.tsx` — Pieces drawn as figurines
+Moves are shown in figurine notation, `♞f3` for `Nf3`: on the blog (prose chips, move lists, engine lines, headings, the score card) and in the diary (the Journal page's entries, AI comments, post-game reviews and move labels; the game page; the post-game summary card). Display only: what is stored, typed, copied to the clipboard or exported to Word keeps the letters.
+
+- **Which letters.** `<Figurines>` runs any text through `splitNotation` and changes only the moves it finds, so a word (`Bad`, `Kasparov`) or a hand-typed move that isn't notation keeps its letters. Within a move, `splitPieces` takes the letter a piece move opens with (`Nbd2`, `R1e2`, `Qh4+`) and a promotion's piece (`e8=Q`); pawns and castling are unchanged.
+- **The symbols.** One per piece whichever side moves, as in print: the solid shapes (♚♛♜♝♞), which stay legible at text size. Monospace fonts lack them, so each sits in a span naming fonts that draw them (Segoe UI Symbol, Noto Sans Symbols 2, DejaVu Sans, Apple Symbols) and `font-variant-emoji: text`. The span carries the letter as `data-figurine`; tests about something other than the symbols read markup through `renderWithLetters` (`__tests__/helpers/render-letters.ts`), which puts the letters back.
+
 ### `lib/opening-book.ts` — Opening Book Lookup
 Reads a Polyglot binary opening book from `data/opening-book.bin` using Zobrist hashing. Returns candidate moves for a position. Pure file I/O — no network calls. Used during analysis to tag book moves.
 

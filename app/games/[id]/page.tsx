@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { Figurines } from '@/components/Figurines';
 
 interface Game {
   id: string;
@@ -170,10 +171,10 @@ export default function GamePage() {
               >
                 {entry.moveNumber && entry.moveNotation && (
                   <p className="font-semibold text-sm mb-2">
-                    Move {entry.moveNumber}: {entry.moveNotation}
+                    Move {entry.moveNumber}: <Figurines>{entry.moveNotation}</Figurines>
                   </p>
                 )}
-                <p className="text-sm whitespace-pre-wrap">{entry.content}</p>
+                <p className="text-sm whitespace-pre-wrap"><Figurines>{entry.content}</Figurines></p>
                 {(entry.opponentLastMove || entry.myMove) && (
                   <div className="mt-2 flex flex-wrap gap-4">
                     {entry.opponentLastMove && (
@@ -181,14 +182,14 @@ export default function GamePage() {
                         🟡 Opponent&apos;s move: <span className="font-mono">
                           {(() => {
                             const parts = entry.opponentLastMove!.split('|');
-                            return parts.length === 3 ? `${parts[0]} (${parts[1]}-${parts[2]})` : parts[0];
+                            return <Figurines>{parts.length === 3 ? `${parts[0]} (${parts[1]}-${parts[2]})` : parts[0]}</Figurines>;
                           })()}
                         </span>
                       </p>
                     )}
                     {entry.myMove && (
                       <p className="text-sm font-bold text-green-700 dark:text-green-400">
-                        ✓ My Move: {entry.myMove}
+                        ✓ My Move: <Figurines>{entry.myMove}</Figurines>
                       </p>
                     )}
                   </div>
