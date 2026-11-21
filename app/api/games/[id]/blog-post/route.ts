@@ -3,6 +3,7 @@ import { Chess } from 'chess.js';
 import { currentUserId } from '@/lib/user-id';
 import { getGame, getGamesJournal, getAnalysis, getSetting, getBlogOwner, getBlogByToken, getSharedBlogLink } from '@/lib/db';
 import { isBlogToken } from '@/lib/blog-link';
+import { PIECE_NOTATION_SETTING, pieceNotation } from '@/lib/figurine';
 import { qualitiesByPly, summarizeAnalysis } from '@/lib/analysis-utils';
 import type { MoveQualityKey } from '@/lib/analysis-utils';
 import { resolveGameDates } from '@/lib/game-dates';
@@ -90,11 +91,12 @@ export async function POST(
 
     // Only this game's journal entries, without their pasted images: the whole
     // journal is ~80 MB of images the blog never shows (see lib/journal-copies.ts)
-    const [game, journalEntries, analysis, username] = await Promise.all([
+    const [game, journalEntries, analysis, username, storedNotation] = await Promise.all([
       getGame(gameId, ownerId),
       getGamesJournal([gameId], ownerId),
       getAnalysis(gameId, ownerId),
       getSetting('chesscom_username', ownerId),
+      getSetting(PIECE_NOTATION_SETTING, ownerId),
     ]);
 
     if (!game) {
@@ -320,6 +322,8 @@ export async function POST(
       userColor,
       analysisSummary: summarizeAnalysis(analysis),
       moveQualities,
+      // The author's choice of figurines or letters, for every reader
+      pieceNotation: pieceNotation(storedNotation),
       gameMeta: {
         white:       game.white       || '',
         black:       game.black       || '',

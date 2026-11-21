@@ -10,6 +10,8 @@ import {
 } from '@/components/blog-shared';
 import type { AnalysisSummary, MoveQualityKey } from '@/lib/analysis-utils';
 import { blogPath, isBlogToken } from '@/lib/blog-link';
+import { PieceNotationProvider } from '@/components/Figurines';
+import { pieceNotation, type PieceNotation } from '@/lib/figurine';
 
 interface BlogPostModalProps {
   gameId: string;
@@ -157,6 +159,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
   const [userColor, setUserColor] = useState<'white' | 'black'>('white');
   const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null);
   const [moveQualities, setMoveQualities] = useState<(MoveQualityKey | null)[] | null>(null);
+  const [notation, setNotation]   = useState<PieceNotation>('figurines');
   const [players, setPlayers]     = useState<
     { white: string; black: string; whiteRating?: number | null; blackRating?: number | null } | undefined
   >(undefined);
@@ -182,6 +185,7 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
       setUserColor(data.userColor || 'white');
       setAnalysisSummary(data.analysisSummary ?? null);
       setMoveQualities(data.moveQualities ?? null);
+      setNotation(pieceNotation(data.pieceNotation));
       setPlayers(data.gameMeta ? {
         white: data.gameMeta.white,
         black: data.gameMeta.black,
@@ -300,15 +304,17 @@ export default function BlogPostModal({ gameId, opponent, result, onClose }: Blo
           {status === 'done' && (
             /* Same walkthrough (and gated summary) the public /blog page
                renders, so the preview matches exactly what readers will see. */
-            <GameWalkthrough
-              pgn={pgn}
-              sections={sections}
-              userColor={userColor}
-              summary={summary}
-              analysisSummary={analysisSummary}
-              moveQualities={moveQualities}
-              players={players}
-            />
+            <PieceNotationProvider notation={notation}>
+              <GameWalkthrough
+                pgn={pgn}
+                sections={sections}
+                userColor={userColor}
+                summary={summary}
+                analysisSummary={analysisSummary}
+                moveQualities={moveQualities}
+                players={players}
+              />
+            </PieceNotationProvider>
           )}
         </div>
 

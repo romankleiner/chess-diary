@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { Figurines } from '@/components/Figurines';
+import { Figurines, PieceNotationProvider } from '@/components/Figurines';
+import { PIECE_NOTATION_SETTING, pieceNotation, type PieceNotation } from '@/lib/figurine';
 
 interface Game {
   id: string;
@@ -36,10 +37,19 @@ export default function GamePage() {
   const [game, setGame] = useState<Game | null>(null);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notation, setNotation] = useState<PieceNotation>('figurines');
 
   useEffect(() => {
     loadGameData();
   }, [gameId]);
+
+  // Figurines or letters, as chosen on the Settings page; figurines if it can't be read
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(res => res.json())
+      .then(data => setNotation(pieceNotation(data.settings?.[PIECE_NOTATION_SETTING])))
+      .catch(() => {});
+  }, []);
 
   const loadGameData = async () => {
     try {
@@ -163,6 +173,7 @@ export default function GamePage() {
             </Link>
           </div>
         ) : (
+          <PieceNotationProvider notation={notation}>
           <div className="space-y-4">
             {entries.map((entry) => (
               <div
@@ -200,6 +211,7 @@ export default function GamePage() {
               </div>
             ))}
           </div>
+          </PieceNotationProvider>
         )}
       </div>
 

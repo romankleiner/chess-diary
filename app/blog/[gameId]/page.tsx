@@ -6,6 +6,8 @@ import { useParams } from 'next/navigation';
 import { MoveSection, GameWalkthrough, GameDates, GamePlayers, ResultBadge } from '@/components/blog-shared';
 import { directoryPath, storedDirectoryKey } from '@/lib/directory-key';
 import type { AnalysisSummary, MoveQualityKey } from '@/lib/analysis-utils';
+import { PieceNotationProvider } from '@/components/Figurines';
+import { pieceNotation, type PieceNotation } from '@/lib/figurine';
 
 interface GameMeta {
   white: string;
@@ -26,6 +28,7 @@ interface BlogData {
   userColor: 'white' | 'black';
   analysisSummary?: AnalysisSummary | null;
   moveQualities?: (MoveQualityKey | null)[];
+  pieceNotation?: PieceNotation;   // the author's choice; absent from older responses
   gameMeta: GameMeta;
 }
 
@@ -148,15 +151,17 @@ export default function BlogPage() {
             {/* Game walkthrough: the game is the backbone — the reader plays
                 through it from move 1, journal entries unlock as guess points
                 along the way, and the overall summary unlocks at the end. */}
-            <GameWalkthrough
-              pgn={data.pgn}
-              sections={data.sections}
-              userColor={data.userColor}
-              summary={data.summary}
-              analysisSummary={data.analysisSummary}
-              moveQualities={data.moveQualities}
-              players={{ white: data.gameMeta.white, black: data.gameMeta.black }}
-            />
+            <PieceNotationProvider notation={pieceNotation(data.pieceNotation)}>
+              <GameWalkthrough
+                pgn={data.pgn}
+                sections={data.sections}
+                userColor={data.userColor}
+                summary={data.summary}
+                analysisSummary={data.analysisSummary}
+                moveQualities={data.moveQualities}
+                players={{ white: data.gameMeta.white, black: data.gameMeta.black }}
+              />
+            </PieceNotationProvider>
           </>
         )}
       </main>

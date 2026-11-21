@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { GrammarCheck } from './grammar-check';
 import PostGameSummaryCard from '@/components/PostGameSummaryCard';
-import { Figurines } from '@/components/Figurines';
+import { Figurines, PieceNotationProvider } from '@/components/Figurines';
+import { PIECE_NOTATION_SETTING, pieceNotation, type PieceNotation } from '@/lib/figurine';
 import { formatPawnsFine } from '@/lib/position-eval';
 import { gameFilterGroups } from '@/lib/game-filter-groups';
 
@@ -70,6 +71,7 @@ export default function JournalPage() {
   const [allGames, setAllGames] = useState<Game[]>([]);
   const [gamesFetchedAt, setGamesFetchedAt] = useState<number>(Date.now());
   const [username, setUsername] = useState<string>('');
+  const [notation, setNotation] = useState<PieceNotation>('figurines');
   const [showAllGames, setShowAllGames] = useState(false);
   const [currentGameId, setCurrentGameId] = useState<string | null>(null);
   const [currentFen, setCurrentFen] = useState<string | null>(null);
@@ -264,6 +266,7 @@ export default function JournalPage() {
       const response = await fetch('/api/settings');
       const data = await response.json();
       setUsername(data.settings?.chesscom_username || '');
+      setNotation(pieceNotation(data.settings?.[PIECE_NOTATION_SETTING]));
     } catch (error) {
       console.error('Error loading username:', error);
     }
@@ -900,6 +903,7 @@ export default function JournalPage() {
   }, {});
 
   return (
+    <PieceNotationProvider notation={notation}>
     <div className="space-y-6">
       {/* Restore Draft Banner */}
       {showRestoreDraft && (
@@ -2005,5 +2009,6 @@ export default function JournalPage() {
         )}
       </div>
     </div>
+    </PieceNotationProvider>
   );
 }

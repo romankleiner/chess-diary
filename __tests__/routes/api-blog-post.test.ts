@@ -54,6 +54,34 @@ beforeEach(() => {
   mockAuth.mockResolvedValue({ userId: 'test-user-123' } as any);
 });
 
+// ─── Figurines or letters ─────────────────────────────────────────────────────
+
+describe('POST /api/games/[id]/blog-post — the author’s choice of figurines or letters', () => {
+  it('says figurines when the author has not chosen', async () => {
+    mockGetGame.mockResolvedValue(gameA);
+    const json = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(json.pieceNotation).toBe('figurines');
+  });
+
+  it('says letters when the author chose them', async () => {
+    mockGetGame.mockResolvedValue(gameA);
+    mockGetSetting.mockImplementation(async (key: string) => (key === 'piece_notation' ? 'letters' : null));
+    const json = await (await POST(makeReq(), params(gameA.id))).json();
+    expect(json.pieceNotation).toBe('letters');
+  });
+
+  it('reads the author’s setting, not the reader’s', async () => {
+    mockAuth.mockResolvedValue({ userId: null } as never);
+    mockGetByToken.mockResolvedValue({ gameId: gameA.id, ownerId: 'owner-abc' });
+    mockGetGame.mockResolvedValue(gameA);
+    mockGetSetting.mockImplementation(async (key: string, userId?: string) =>
+      (key === 'piece_notation' && userId === 'owner-abc' ? 'letters' : null));
+    const json = await (await POST(makeReq('AbCdEfGhIjKlMnOp'), params('AbCdEfGhIjKlMnOp'))).json();
+    expect(json.pieceNotation).toBe('letters');
+    expect(mockGetSetting).toHaveBeenCalledWith('piece_notation', 'owner-abc');
+  });
+});
+
 // ─── 404 on missing game ──────────────────────────────────────────────────────
 
 describe('POST /api/games/[id]/blog-post — 404', () => {

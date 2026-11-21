@@ -17,6 +17,17 @@ export type PieceLetter = 'K' | 'Q' | 'R' | 'B' | 'N';
 
 export const FIGURINE: Record<PieceLetter, string> = { K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞' };
 
+/**
+ * The author's choice, on the Settings page, for their diary and their blog (its
+ * readers see what the author chose). Stored in the settings hash under this key.
+ */
+export const PIECE_NOTATION_SETTING = 'piece_notation';
+export type PieceNotation = 'figurines' | 'letters';
+
+/** A stored setting read as a choice: figurines unless the author asked for letters. */
+export const pieceNotation = (stored: string | null | undefined): PieceNotation =>
+  stored === 'letters' ? 'letters' : 'figurines';
+
 export interface FigurineSegment {
   text: string;
   /** Set where `text` is a piece's letter, to be shown as FIGURINE[piece]. */

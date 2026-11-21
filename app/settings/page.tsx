@@ -8,6 +8,7 @@ import {
   newerModelHint,
   type ModelInfo,
 } from '@/lib/model-catalog';
+import { pieceNotation, type PieceNotation } from '@/lib/figurine';
 
 // Mirrors the response of GET /api/models.
 interface ModelCatalog {
@@ -21,6 +22,7 @@ interface Settings {
   analysis_depth?: string;
   ai_analysis_verbosity?: 'brief' | 'concise' | 'detailed' | 'extensive';
   ai_model?: string;
+  piece_notation?: PieceNotation;
 }
 
 export default function SettingsPage() {
@@ -138,6 +140,26 @@ export default function SettingsPage() {
           />
           <p className="text-xs text-gray-500 mt-1">
             Used to fetch your games and determine your color in games
+          </p>
+        </div>
+
+        {/* Chess pieces in text */}
+        <div>
+          <label htmlFor="piece-notation" className="block text-sm font-medium mb-2">
+            Chess Pieces in Text
+          </label>
+          <select
+            id="piece-notation"
+            value={pieceNotation(settings.piece_notation)}
+            onChange={(e) => updateSetting('piece_notation', e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600"
+          >
+            <option value="figurines">Symbols — ♞f3, ♝xe5, e8=♛</option>
+            <option value="letters">Letters — Nf3, Bxe5, e8=Q</option>
+          </select>
+          <p className="text-xs text-gray-500 mt-1">
+            How moves show their pieces in your diary and in your blog — readers of your blog see what you choose here.
+            What you type, copy and export to Word always uses letters.
           </p>
         </div>
 

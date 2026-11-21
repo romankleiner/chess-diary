@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { splitPieces } from '@/lib/figurine';
-import { Figurines } from '@/components/Figurines';
+import { pieceNotation, splitPieces } from '@/lib/figurine';
+import { Figurines, PieceNotationProvider } from '@/components/Figurines';
 
 const shown = (text: string) =>
   renderToStaticMarkup(<Figurines>{text}</Figurines>).replace(/<span[^>]*>(.)<\/span>/gu, '$1');
@@ -59,5 +59,35 @@ describe('Figurines', () => {
   it('sets each symbol apart in a font that has it, labelled with its letter', () => {
     const html = renderToStaticMarkup(<Figurines>Nf3</Figurines>);
     expect(html).toMatch(/^<span data-figurine="N" class="[^"]*Segoe_UI_Symbol[^"]*">♞<\/span>f3$/);
+  });
+});
+
+describe('the author’s choice of figurines or letters', () => {
+  const under = (notation: 'figurines' | 'letters', text: string) =>
+    renderToStaticMarkup(<PieceNotationProvider notation={notation}><p><Figurines>{text}</Figurines></p></PieceNotationProvider>);
+
+  it('shows the text just as it is when the author chose letters', () => {
+    expect(under('letters', '9...Bxd2+ 10. Nxd2 e8=Q')).toBe('<p>9...Bxd2+ 10. Nxd2 e8=Q</p>');
+  });
+
+  it('draws figurines when the author chose them, and when nothing says otherwise', () => {
+    expect(under('figurines', 'Nf3')).toContain('♞');
+    expect(renderToStaticMarkup(<Figurines>Nf3</Figurines>)).toContain('♞');
+  });
+
+  it('reaches every move inside it, however deep', () => {
+    const html = renderToStaticMarkup(
+      <PieceNotationProvider notation="letters">
+        <div><span><Figurines>Qh4+</Figurines></span><em><Figurines>Kg1</Figurines></em></div>
+      </PieceNotationProvider>,
+    );
+    expect(html).not.toContain('data-figurine');
+    expect(html).toContain('Qh4+');
+  });
+
+  it('reads the stored setting: letters only when asked for, figurines otherwise', () => {
+    expect(pieceNotation('letters')).toBe('letters');
+    expect(pieceNotation('figurines')).toBe('figurines');
+    for (const stored of [null, undefined, '', 'Letters', 'nonsense']) expect(pieceNotation(stored)).toBe('figurines');
   });
 });
