@@ -321,7 +321,11 @@ Moves are shown in figurine notation, `♞f3` for `Nf3`: on the blog (prose chip
 - **The symbols.** One per piece whichever side moves, as in print: the solid shapes (♚♛♜♝♞), which stay legible at text size. Monospace fonts lack them, so each sits in a span naming fonts that draw them (Segoe UI Symbol, Noto Sans Symbols 2, DejaVu Sans, Apple Symbols) and `font-variant-emoji: text`. The span carries the letter as `data-figurine`; tests about something other than the symbols read markup through `renderWithLetters` (`__tests__/helpers/render-letters.ts`), which puts the letters back.
 
 ### `lib/opening-book.ts` — Opening Book Lookup
-Reads a Polyglot binary opening book from `data/opening-book.bin` using Zobrist hashing. Returns candidate moves for a position. Pure file I/O — no network calls. Used during analysis to tag book moves.
+Reads a Polyglot binary opening book from `public/books/opening-book.bin` (or `data/opening-book.bin` locally) using Zobrist hashing. Returns candidate moves for a position. Pure file I/O — no network calls. Used during analysis to tag book moves.
+
+- **The book.** dec2015 (69 MB, 4.3 million entries), which replaced Titans (1.9 MB) in November 2026: Titans had nothing at all after 1.e4 c5 2.c3 Nc6, for one, so a game in that line lost its book moves at move 3.
+- **Bundled with one route.** `next.config.js` includes the file in the analysis route's function only (`outputFileTracingIncludes`); it used to go into all 36 API routes, which was harmless at 1.9 MB but not at 69.
+- **A move is checked by its position**, not by how the game got there, so a move can be book again after some that weren't, when the game transposes into a known position. (With Titans, 6.Nf3 in 1.e4 c5 2.c3 Nc6 3.d4 cxd4 4.cxd4 d5 5.exd5 Qxd5 was book after six moves that weren't: the same position arises from 2...d5 3.exd5 Qxd5 4.d4 cxd4 5.cxd4 Nc6.) Stopping at the first move out of book was tried and dropped: a book doesn't list every sideline.
 
 ### `lib/board-image-request.ts`, `lib/board-image-storage.ts`, `/api/board-image` — Board Diagram Cache
 Board diagrams are PNGs drawn by `https://fen2image.chessvision.ai` and kept in Vercel Blob (public), keyed by the position (placement, side to move, castling, en passant) and the side it is drawn from. The daily cron deletes images older than 90 days.

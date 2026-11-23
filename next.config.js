@@ -4,12 +4,16 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: '2mb',
     },
-    // Explicitly bundle the Polyglot opening book with all API routes.
-    // Vercel's file-tracing won't auto-detect a runtime-computed fs path,
-    // so we declare it here to ensure it's included in the function bundle.
-    outputFileTracingIncludes: {
-      '/api/**/*': ['./public/books/opening-book.bin'],
-    },
+  },
+  // Explicitly bundle the Polyglot opening book (69 MB) with the one route that
+  // reads it, the engine analysis: Vercel's file-tracing won't auto-detect a
+  // runtime-computed fs path. A key matches every route whose path contains it,
+  // so the AI analysis route (analyze-thinking) is excluded again.
+  outputFileTracingIncludes: {
+    '/api/games/analyze': ['./public/books/opening-book.bin'],
+  },
+  outputFileTracingExcludes: {
+    '/api/games/analyze-thinking': ['./public/books/**'],
   },
   // The blog is unlisted: ask search engines not to index it (app/blog/layout.tsx
   // says the same in the pages' <meta>). The data its pages load is covered too.
