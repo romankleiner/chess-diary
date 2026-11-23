@@ -5,6 +5,7 @@ import {
   formatPawnsFine,
   isMatePawns,
   parseChessApiEval,
+  parseStockfishOnlineEval,
   roundPawns,
   engineFen,
   terminalEval,
@@ -120,6 +121,59 @@ describe('parseChessApiEval', () => {
 
   it('leaves depth null when the reply does not say', () => {
     expect(parseChessApiEval({ eval: 0.1 })?.depth).toBeNull();
+  });
+});
+
+// ─── reading stockfish.online ─────────────────────────────────────────────────
+
+describe('parseStockfishOnlineEval', () => {
+  // Real replies, from asking it at depth 12
+  it('reads an ordinary evaluation, its best move and its line', () => {
+    const reply = { success: true, evaluation: 1.08, mate: null, bestmove: 'bestmove d2d4 ponder c7c5', continuation: 'd2d4 c7c5 d4c5 e7e6' };
+    expect(parseStockfishOnlineEval(reply)).toEqual({
+      pawns: 1.08, mate: null, depth: null, bestMove: 'd2d4', pv: ['d2d4', 'c7c5', 'd4c5', 'e7e6'],
+    });
+  });
+
+  it('scores from White’s side whoever is to move, as chess-api.com does', () => {
+    // Black to move and a queen up: negative, as for White to move
+    const reply = { success: true, evaluation: -5.84, mate: null, bestmove: 'bestmove e8e7 ponder g1h1', continuation: 'e8e7 g1h1 d2b2' };
+    expect(parseStockfishOnlineEval(reply)?.pawns).toBe(-5.84);
+  });
+
+  it('reads a forced mate for White (the count arrives as a string) as +100 pawns', () => {
+    const reply = { success: true, evaluation: null, mate: '1', bestmove: 'bestmove a1a8', continuation: 'a1a8' };
+    expect(parseStockfishOnlineEval(reply)).toMatchObject({ pawns: MATE_PAWNS, mate: 1, bestMove: 'a1a8', pv: ['a1a8'] });
+  });
+
+  it('reads a forced mate for Black as -100 pawns', () => {
+    const reply = { success: true, evaluation: null, mate: -1, bestmove: 'bestmove a8a1', continuation: 'a8a1' };
+    expect(parseStockfishOnlineEval(reply)).toMatchObject({ pawns: -MATE_PAWNS, mate: -1 });
+  });
+
+  it('turns down a finished game, whose mate: 0 says nothing of who won (terminalEval works those out)', () => {
+    expect(parseStockfishOnlineEval({ success: true, evaluation: null, mate: 0, bestmove: 'bestmove (none)', continuation: null })).toBeNull();
+  });
+
+  it('rejects its failures, which arrive as HTTP 200', () => {
+    expect(parseStockfishOnlineEval({ success: false, error: 'Depth must be less than 16' })).toBeNull();
+  });
+
+  it('rejects a reply with no usable evaluation, or that is not an object', () => {
+    expect(parseStockfishOnlineEval({ success: true, evaluation: null, mate: null })).toBeNull();
+    expect(parseStockfishOnlineEval({ success: true, evaluation: 'lots' })).toBeNull();
+    expect(parseStockfishOnlineEval({ evaluation: 0.3 })).toBeNull();
+    expect(parseStockfishOnlineEval(null)).toBeNull();
+    expect(parseStockfishOnlineEval('0.3')).toBeNull();
+  });
+
+  it('copes without a best move or a line', () => {
+    expect(parseStockfishOnlineEval({ success: true, evaluation: 0.2 })).toMatchObject({ pawns: 0.2, bestMove: '', pv: [] });
+    expect(parseStockfishOnlineEval({ success: true, evaluation: 0.2, bestmove: 'bestmove (none)' })?.bestMove).toBe('');
+  });
+
+  it('keeps the evaluation inside ±100 pawns', () => {
+    expect(parseStockfishOnlineEval({ success: true, evaluation: 4000 })?.pawns).toBe(100);
   });
 });
 

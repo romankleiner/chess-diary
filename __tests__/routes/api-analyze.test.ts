@@ -93,10 +93,13 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
   const fetchMock = vi.fn();
 
   let POST: any;
+  // Forgets, between tests, that chess-api.com failed (the route's copy of the module)
+  let resetEngines: () => void;
 
   beforeAll(async () => {
     process.env.VERCEL = '1';
     process.env.ENGINE_RETRY_PAUSE_MS = '0'; // no real pause before asking the engine again
+    process.env.STOCKFISH_ONLINE_SPACING_MS = '0'; // nor between calls to stockfish.online
     vi.resetModules();
 
     vi.doMock('@/lib/db', () => ({
@@ -111,11 +114,13 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
 
     const mod = await import('@/app/api/games/analyze/route');
     POST = mod.POST;
+    resetEngines = (await import('@/lib/position-eval-server')).resetPositionEvalCache;
   });
 
   afterAll(() => {
     delete process.env.VERCEL;
     delete process.env.ENGINE_RETRY_PAUSE_MS;
+    delete process.env.STOCKFISH_ONLINE_SPACING_MS;
     vi.unstubAllGlobals();
     vi.doUnmock('@/lib/db');
     vi.doUnmock('@se-oss/stockfish');
@@ -125,6 +130,7 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchMock.mockReset();
+    resetEngines();
     isBookMove.mockResolvedValue(false); // out of book unless a test says otherwise
     saveAnalysis.mockResolvedValue(undefined);
     saveGame.mockResolvedValue(undefined);
@@ -159,23 +165,23 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
 
   // ── Integration: calculateAccuracy + getMoveQuality through a batch ─────────
   //
-  // PGN: "1. e4 e5" — 2 moves, 4 chess-api.com calls (before/after each move).
+  // PGN: "1. e4 e5" — 2 moves, 3 chess-api.com calls: the start position, then the
+  // position after each move (which is also the one the next move is played from).
   //
   // chess-api.com returns eval in pawn units (white-POV, positive = white ahead).
   // Route converts: cpScore = data.eval * 100
   //
   // Call sequence (mocked):
-  //   1. Starting pos before e4 → eval: 0.0   → 0cp
-  //   2. After e4              → eval: -2.0   → -200cp   (white blundered)
-  //   3. Before e5 (same pos)  → eval: -2.0   → -200cp
-  //   4. After e5              → eval: -2.5   → -250cp
+  //   1. Starting pos before e4    → eval: 0.0   → 0cp
+  //   2. After e4 (= before e5)    → eval: -2.0  → -200cp   (white blundered)
+  //   3. After e5                  → eval: -2.5  → -250cp
   //
   // White move (e4): cpLoss = max(0, 0 − (−200)) = 200 → 'mistake'
   // Black move (e5): cpLoss = max(0, −250 − (−200)) = max(0, −50) = 0 → 'excellent'
   //
-  // The "before" responses name an engine best move that is NOT the move played
-  // (d2d4 for White, g8f6 for Black). The route zeroes the loss of any move that
-  // matches the engine's best move, so reusing the played move here (as an
+  // The positions before each move name an engine best move that is NOT the move
+  // played (d2d4 for White, g8f6 for Black). The route zeroes the loss of any move
+  // that matches the engine's best move, so reusing the played move here (as an
   // earlier version of this mock did with e2e4) would hide the 200 cp loss.
 
   const makeEval = (evalPawns: number, move: string) => ({
@@ -187,8 +193,7 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
   function queueChessApiResponses() {
     fetchMock
       .mockResolvedValueOnce(makeEval(0.0, 'd2d4'))    // before e4 — engine prefers d4
-      .mockResolvedValueOnce(makeEval(-2.0, 'e7e5'))   // after e4
-      .mockResolvedValueOnce(makeEval(-2.0, 'g8f6'))   // before e5 — engine prefers Nf6
+      .mockResolvedValueOnce(makeEval(-2.0, 'g8f6'))   // after e4, before e5 — engine prefers Nf6
       .mockResolvedValueOnce(makeEval(-2.5, 'd2d4'));  // after e5
   }
 
@@ -254,8 +259,8 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     });
     // 4 plies, not yet analysed (other tests mark the shared game analysed)
     getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6', analysisCompleted: false });
-    // 3 moves in the batch × 2 evaluations each (before and after the move)
-    for (let i = 0; i < 6; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
+    // 3 moves in the batch: the start position, then the position after each move
+    for (let i = 0; i < 4; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
 
     const res = await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 0 }));
     const body = await res.json();
@@ -274,20 +279,46 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     const failure = { ok: false, status: 429, statusText: 'Too Many Requests', json: async () => ({}), text: async () => '' };
     const fourPlies = { ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6', analysisCompleted: false };
 
+    /** What stockfish.online sends back */
+    const sfEval = (evalPawns: number, move: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, evaluation: evalPawns, mate: null, bestmove: `bestmove ${move}`, continuation: move }),
+    });
+    /** Answers each engine API from its own queue of replies, in turn; an empty queue is a network error */
+    function engines(chessApi: object[], stockfishOnline: object[] = []) {
+      fetchMock.mockImplementation(async (url: string) => {
+        const next = (String(url).includes('stockfish.online') ? stockfishOnline : chessApi).shift();
+        if (!next) throw new TypeError('fetch failed');
+        return next;
+      });
+    }
+    const asked = () => fetchMock.mock.calls.map(([url]) => new URL(String(url)).hostname);
+
     beforeEach(() => {
       vi.spyOn(console, 'log').mockImplementation(() => {});
       vi.spyOn(console, 'warn').mockImplementation(() => {});
       vi.spyOn(console, 'error').mockImplementation(() => {});
     });
 
-    it('asks again once, and carries on when the second try answers', async () => {
+    it('asks stockfish.online instead, and carries on with it', async () => {
       getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 e5' });
-      fetchMock
-        .mockResolvedValueOnce(failure)                   // before e4: refused…
-        .mockResolvedValueOnce(makeEval(0.3, 'd2d4'))     // …answered on the second try
-        .mockResolvedValueOnce(makeEval(0.3, 'e7e5'))
-        .mockResolvedValueOnce(makeEval(0.3, 'g8f6'))
-        .mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
+      engines([failure], [sfEval(0.3, 'd2d4'), sfEval(0.3, 'g8f6'), sfEval(0.3, 'd2d4')]);
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      expect(body).toMatchObject({ completed: true, stalled: false });
+      expect(body.analysis.moves.map((m: { move: string }) => m.move)).toEqual(['e4', 'e5']);
+      expect(body.analysis.moves.map((m: { bestMove: string }) => m.bestMove)).toEqual(['d2d4', 'g8f6']);
+      // chess-api.com once; after that it is passed over rather than waited on for every position
+      expect(asked()).toEqual(['chess-api.com', 'stockfish.online', 'stockfish.online', 'stockfish.online']);
+      expect(body.analysis.engine).toBe('stockfish.online');
+      expect(saveGame.mock.calls[0][1].analysisEngine).toBe('stockfish.online');
+    });
+
+    it('asks again once when neither engine answers, and carries on when the second try does', async () => {
+      getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 e5' });
+      engines([failure], [failure, sfEval(0.3, 'd2d4'), sfEval(0.3, 'g8f6'), sfEval(0.3, 'd2d4')]);
 
       const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
 
@@ -295,30 +326,68 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
       expect(body.analysis.moves.map((m: { move: string }) => m.move)).toEqual(['e4', 'e5']);
     });
 
+    it('measures a move with one engine: when chess-api.com fails between its two positions, the one before is asked of stockfish.online too', async () => {
+      getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 e5' });
+      engines(
+        [makeEval(1.0, 'd2d4'), failure],     // e4 before: +1.0 says chess-api.com; e4 after: refused
+        [
+          sfEval(0.2, 'e7e5'),                 // e4 after (and e5 before)
+          sfEval(0.2, 'g1f3'),                 // e4 before, again: +0.2 says stockfish.online
+          sfEval(0.2, 'd2d4'),                 // e5 after
+        ],
+      );
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      // Not the 80 cp that +1.0 from one engine and +0.2 from the other would make it
+      expect(body.analysis.moves[0]).toMatchObject({ move: 'e4', centipawnLoss: 0, bestMove: 'g1f3' });
+      expect(body.analysis.engine).toBe('stockfish.online');
+    });
+
+    it('stops at that move if stockfish.online can’t evaluate the position before it', async () => {
+      getGame.mockResolvedValue(fourPlies);
+      engines([makeEval(1.0, 'd2d4'), failure], [sfEval(0.2, 'e7e5'), failure, failure]);
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      expect(body).toMatchObject({ completed: false, stalled: true, nextMoveIndex: 0 });
+    });
+
+    it('names both engines when they shared the game, across batches', async () => {
+      getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 e5' });
+      getAnalysis.mockResolvedValue({
+        engine: 'chess-api.com',
+        moves: [{ moveNumber: 1, color: 'white', move: 'e4', centipawnLoss: 0, gradedLoss: 0 }],
+      });
+      engines([failure], [sfEval(0.3, 'g8f6'), sfEval(0.3, 'd2d4')]);
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 1 }))).json();
+
+      expect(body).toMatchObject({ completed: true, stalled: false });
+      expect(body.analysis.engine).toBe('chess-api.com + stockfish.online');
+      expect(saveGame.mock.calls[0][1].analysisEngine).toBe('chess-api.com + stockfish.online');
+    });
+
     it('stops at a move it still can’t evaluate, never skipping it, and says where to resume', async () => {
       getGame.mockResolvedValue(fourPlies);
-      fetchMock
-        .mockResolvedValueOnce(makeEval(0.3, 'd2d4'))     // e4 before
-        .mockResolvedValueOnce(makeEval(0.3, 'e7e5'))     // e4 after
-        .mockResolvedValueOnce(failure)                   // e5 before: refused
-        .mockResolvedValueOnce(failure);                  // …and again
+      engines(
+        [makeEval(0.3, 'd2d4'), makeEval(0.3, 'e7e5'), failure], // e4 before and after; e5 after: refused
+        [failure, failure],                                     // …and by stockfish.online, twice
+      );
       // (anything after would be Nf3 — it must not be reached)
 
       const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
 
       expect(body).toMatchObject({ success: true, completed: false, stalled: true, nextMoveIndex: 1 });
       expect(body.analysis.moves.map((m: { move: string }) => m.move)).toEqual(['e4']);
-      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(asked()).toEqual(['chess-api.com', 'chess-api.com', 'chess-api.com', 'stockfish.online', 'stockfish.online']);
       expect(saveAnalysis).toHaveBeenCalledOnce();         // e4 is kept
       expect(saveGame).not.toHaveBeenCalled();             // and the game is not marked analysed
     });
 
     it('stops on the position after a move too', async () => {
       getGame.mockResolvedValue(fourPlies);
-      fetchMock
-        .mockResolvedValueOnce(makeEval(0.3, 'd2d4'))     // e4 before
-        .mockResolvedValueOnce(failure)                   // e4 after: refused
-        .mockResolvedValueOnce(failure);
+      engines([makeEval(0.3, 'd2d4'), failure], [failure, failure]); // e4 before; e4 after: refused by both
 
       const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
 
@@ -349,13 +418,13 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
 
     it('works out a final checkmate itself, which chess-api.com won’t evaluate, so the last move isn’t lost', async () => {
       getGame.mockResolvedValue({ ...fourPlies, pgn: '1. f3 e5 2. g4 Qh4#' });
-      // Seven positions go to the engine; the mate after 2...Qh4# does not
-      for (let i = 0; i < 7; i++) fetchMock.mockResolvedValueOnce(makeEval(-0.5, 'a2a3'));
+      // Four positions go to the engine; the mate after 2...Qh4# does not
+      for (let i = 0; i < 4; i++) fetchMock.mockResolvedValueOnce(makeEval(-0.5, 'a2a3'));
 
       const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
 
       expect(body).toMatchObject({ completed: true, stalled: false });
-      expect(fetchMock).toHaveBeenCalledTimes(7);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
       const mate = body.analysis.moves.at(-1);
       expect(mate).toMatchObject({ move: 'Qh4#', evaluation: -100, centipawnLoss: 0 });
     });
@@ -363,12 +432,13 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     it('sends the engine positions without an en passant square, which it rejects', async () => {
       // 1. e4 c5 2. e5 d5: exd6 e.p. is possible, so chess.js writes "d6" after 2...d5
       getGame.mockResolvedValue({ ...fourPlies, pgn: '1. e4 c5 2. e5 d5' });
-      for (let i = 0; i < 8; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'a2a3'));
+      for (let i = 0; i < 5; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'a2a3'));
 
       const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
 
       expect(body).toMatchObject({ completed: true, stalled: false });
       const sent = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).fen.split(' ')[3]);
+      expect(sent).toHaveLength(5); // the last one is the position after 2...d5
       expect(sent.every((ep: string) => ep === '-')).toBe(true);
     });
 
@@ -389,7 +459,7 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
       return null;
     });
     getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6', analysisCompleted: true });
-    for (let i = 0; i < 6; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
+    for (let i = 0; i < 4; i++) fetchMock.mockResolvedValueOnce(makeEval(0.3, 'd2d4'));
 
     const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id, startMoveIndex: 0 }))).json();
 
@@ -440,6 +510,43 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     expect(body.analysis.whiteAccuracy).toBe(calculateAccuracy([0, 35]));
   });
 
+  it('evaluates each position once: the one after a move is the one the next move is played from', async () => {
+    getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' });
+    fetchMock
+      .mockResolvedValueOnce(makeEval(0.3, 'd2d4'))    // the start
+      .mockResolvedValueOnce(makeEval(0.3, 'c7c5'))    // after e4
+      .mockResolvedValueOnce(makeEval(0.3, 'd2d4'))    // after e5
+      .mockResolvedValueOnce(makeEval(0.3, 'b8c6'))    // after Nf3
+      .mockResolvedValueOnce(makeEval(0.3, 'd2d4'));   // after Nc6
+
+    const { analysis, completed } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+    expect(completed).toBe(true);
+    const fens = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).fen);
+    expect(fens).toHaveLength(5);
+    expect(new Set(fens).size).toBe(5);
+    // Each move's best move comes from the evaluation after the move before it
+    expect(analysis.moves.map((m: { bestMove: string }) => m.bestMove)).toEqual(['d2d4', 'c7c5', 'd2d4', 'b8c6']);
+  });
+
+  it('begins no move once the batch’s time is up, leaving the rest to the next batch', async () => {
+    process.env.ANALYSIS_BATCH_BUDGET_MS = '-1'; // already out of time once the first move is done
+    try {
+      getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6', analysisCompleted: false });
+      fetchMock.mockResolvedValue(makeEval(0.3, 'd2d4'));
+
+      const body = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
+
+      // One move is always made, so every batch gets somewhere
+      expect(body).toMatchObject({ success: true, completed: false, stalled: false, nextMoveIndex: 1 });
+      expect(body.analysis.moves.map((m: { move: string }) => m.move)).toEqual(['e4']);
+      expect(saveAnalysis).toHaveBeenCalledOnce();
+      expect(saveGame).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.ANALYSIS_BATCH_BUDGET_MS;
+    }
+  });
+
   it('analysis includes engine: chess-api.com', async () => {
     getGame.mockResolvedValue(gameWithPgn);
     queueChessApiResponses();
@@ -451,10 +558,9 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
   it('zeroes the loss when the player played the engine’s best move', async () => {
     getGame.mockResolvedValue(gameWithPgn);
     // Same evals as the mistake scenario, but the engine's pick for White IS e2e4,
-    // so the two independent evaluations disagreeing is treated as noise.
+    // so the two searches disagreeing is treated as noise.
     fetchMock
       .mockResolvedValueOnce(makeEval(0.0, 'e2e4'))
-      .mockResolvedValueOnce(makeEval(-2.0, 'e7e5'))
       .mockResolvedValueOnce(makeEval(-2.0, 'g8f6'))
       .mockResolvedValueOnce(makeEval(-2.5, 'd2d4'));
 
@@ -469,12 +575,9 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
     getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' });
     fetchMock
       .mockResolvedValueOnce(makeEval(5.0, 'e2e4'))   // before e4 (e4 is the best move)
-      .mockResolvedValueOnce(makeEval(5.0, 'e7e5'))   // after e4
-      .mockResolvedValueOnce(makeEval(5.0, 'e7e5'))   // before e5 (e5 is the best move)
-      .mockResolvedValueOnce(makeEval(5.0, 'd2d4'))   // after e5
-      .mockResolvedValueOnce(makeEval(5.0, 'd2d4'))   // before Nf3
-      .mockResolvedValueOnce(makeEval(4.0, 'b8c6'))   // after Nf3: White gave a pawn away
-      .mockResolvedValueOnce(makeEval(4.0, 'b8c6'))   // before Nc6 (Nc6 is the best move)
+      .mockResolvedValueOnce(makeEval(5.0, 'e7e5'))   // after e4, before e5 (e5 is the best move)
+      .mockResolvedValueOnce(makeEval(5.0, 'd2d4'))   // after e5, before Nf3
+      .mockResolvedValueOnce(makeEval(4.0, 'b8c6'))   // after Nf3: White gave a pawn away (Nc6 is the best move)
       .mockResolvedValueOnce(makeEval(4.0, 'd2d4'));  // after Nc6
 
     const { analysis } = await (await POST(makeAnalyzeReq({ gameId: gameA.id }))).json();
@@ -510,12 +613,9 @@ describe('POST /api/games/analyze — Vercel path (chess-api.com)', () => {
       getGame.mockResolvedValue({ ...gameWithPgn, pgn: '1. e4 e5 2. Nf3 Nc6' });
       fetchMock
         .mockResolvedValueOnce(makeEval(0.0, 'd2d4'))    // before e4
-        .mockResolvedValueOnce(makeEval(-2.0, 'e7e5'))   // after e4
-        .mockResolvedValueOnce(makeEval(-2.0, 'g8f6'))   // before e5
-        .mockResolvedValueOnce(makeEval(-2.0, 'd2d4'))   // after e5   (Black loses nothing)
-        .mockResolvedValueOnce(makeEval(-2.0, 'd2d4'))   // before Nf3
-        .mockResolvedValueOnce(makeEval(-3.0, 'b8c6'))   // after Nf3  (White loses 100 cp)
-        .mockResolvedValueOnce(makeEval(-3.0, 'g8f6'))   // before Nc6
+        .mockResolvedValueOnce(makeEval(-2.0, 'g8f6'))   // after e4, before e5
+        .mockResolvedValueOnce(makeEval(-2.0, 'd2d4'))   // after e5, before Nf3   (Black loses nothing)
+        .mockResolvedValueOnce(makeEval(-3.0, 'g8f6'))   // after Nf3, before Nc6  (White loses 100 cp)
         .mockResolvedValueOnce(makeEval(-3.0, 'd2d4'));  // after Nc6
       isBookMove.mockImplementation(async (_fen: string, uci: string) => uci === 'e2e4');
 

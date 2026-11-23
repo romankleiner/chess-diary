@@ -11,6 +11,15 @@
  *   - A position that is already checkmate or stalemate is NOT evaluated: it
  *     answers HTTP 200 with `type: "error"` and no eval. A reader's move can
  *     produce exactly such a position, so those are worked out here instead.
+ *
+ * When chess-api.com doesn't answer, stockfish.online stands in for it. Its replies:
+ *   - `evaluation` is in pawns from WHITE's point of view too.
+ *   - A forced mate comes back as `evaluation: null` with a signed `mate` count
+ *     (negative = Black mates), a number or a string; `mate: 0` is a finished
+ *     game, checkmate or stalemate alike.
+ *   - `bestmove` reads "bestmove e2e4 ponder e7e5", and `continuation` is the
+ *     line as one string of moves.
+ *   - It refuses a depth of 16 or more.
  */
 import { Chess } from 'chess.js';
 
@@ -81,17 +90,54 @@ export function parseChessApiEval(body: unknown): PositionEval | null {
   const pawns = typeof raw === 'string' ? Number(raw) : raw;
   if (typeof pawns !== 'number' || !Number.isFinite(pawns)) return null;
 
-  let mate: number | null = null;
-  if (data.mate !== null && data.mate !== undefined && data.mate !== '') {
-    const parsed = Number(data.mate);
-    if (Number.isFinite(parsed)) mate = parsed;
-  }
-
   return {
     pawns: Math.max(-MATE_PAWNS, Math.min(MATE_PAWNS, pawns)),
-    mate,
+    mate: readMateCount(data.mate),
     depth: typeof data.depth === 'number' ? data.depth : null,
   };
+}
+
+/** An evaluation with the move the engine would play and the line it expects, in UCI. */
+export interface PositionEvalWithLine extends PositionEval {
+  /** '' when the engine named none */
+  bestMove: string;
+  pv: string[];
+}
+
+/** A move count, as either engine API writes it: a number or a string. null if absent or unreadable. */
+function readMateCount(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Read a stockfish.online response body. Returns null for anything that is not
+ * a usable evaluation: its failures (`success: false`, which arrive as HTTP 200),
+ * and a finished game (`mate: 0`), which says nothing of who won -- terminalEval
+ * works those out instead. It doesn't say how deep it searched (depth is null).
+ */
+export function parseStockfishOnlineEval(body: unknown): PositionEvalWithLine | null {
+  if (!body || typeof body !== 'object') return null;
+  const data = body as Record<string, unknown>;
+  if (data.success !== true) return null;
+
+  const mate = readMateCount(data.mate);
+  if (mate === 0) return null;
+
+  let pawns: number;
+  if (mate !== null) {
+    pawns = mate > 0 ? MATE_PAWNS : -MATE_PAWNS;
+  } else {
+    const raw = typeof data.evaluation === 'string' ? Number(data.evaluation) : data.evaluation;
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+    pawns = Math.max(-MATE_PAWNS, Math.min(MATE_PAWNS, raw));
+  }
+
+  const named = typeof data.bestmove === 'string' ? data.bestmove.match(/^bestmove\s+(\S+)/)?.[1] : undefined;
+  const pv = typeof data.continuation === 'string' ? data.continuation.split(/\s+/).filter(Boolean) : [];
+
+  return { pawns, mate, depth: null, bestMove: named && named !== '(none)' ? named : '', pv };
 }
 
 /**

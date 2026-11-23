@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 // Only fetch is stubbed -- the real route drives the real validation, cache and parser.
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
+process.env.STOCKFISH_ONLINE_SPACING_MS = '0'; // no real wait between calls to stockfish.online
 
 import { GET } from '@/app/api/eval/route';
 import { resetPositionEvalCache } from '@/lib/position-eval-server';
@@ -115,17 +116,33 @@ describe('GET /api/eval — evaluating', () => {
 });
 
 describe('GET /api/eval — when the engine API fails', () => {
-  it('answers 502 and says not to cache it', async () => {
-    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+  beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => {}));
+
+  it('answers with stockfish.online instead when chess-api.com fails', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, evaluation: 0.46, mate: null, bestmove: 'bestmove e7e5' }) });
+    const res = await GET(makeReq(q(START_FEN, '&depth=18')));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ pawns: 0.46, mate: null, depth: 15 });
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/^https:\/\/stockfish\.online\/.*depth=15/);
+  });
+
+  it('answers 502 and says not to cache it when neither engine answers', async () => {
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
     const res = await GET(makeReq(q(START_FEN)));
 
     expect(res.status).toBe(502);
     expect((await res.json()).error).toMatch(/could not evaluate/i);
     expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('answers 502 for the engine API’s HTTP-200 error replies too', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ type: 'error', error: 'INVALID_INPUT' }) });
+  it('answers 502 for the engine APIs’ HTTP-200 error replies too', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ type: 'error', error: 'INVALID_INPUT' }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: false, error: 'busy' }) });
     expect((await GET(makeReq(q(START_FEN)))).status).toBe(502);
   });
 });

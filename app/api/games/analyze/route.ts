@@ -4,7 +4,8 @@ import { getGame, getAnalysis, getSetting, setGameProgress, getGameProgress, cle
 import { Stockfish } from '@se-oss/stockfish';
 import { calculateAccuracy, getMoveQuality, gradedCpLoss } from '@/lib/analysis-utils';
 import { isBookMove } from '@/lib/opening-book';
-import { engineFen, terminalEval } from '@/lib/position-eval';
+import { terminalEval } from '@/lib/position-eval';
+import { fetchEngineEval, type EngineName } from '@/lib/position-eval-server';
 import {
   setProgress as setInMemProgress,
   clearProgress as clearInMemProgress,
@@ -51,81 +52,50 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// ========== CHESS-API.COM EVALUATION (for Vercel) ==========
-async function getChessApiEval(fen: string, depth: number = 18): Promise<{ score: number; bestMove: string; pv?: string[] } | null> {
-  try {
-    const url = `https://chess-api.com/v1`;
+// ========== ENGINE API EVALUATION (for Vercel) ==========
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        fen: engineFen(fen), // without an en passant square, which the engine rejects
-        depth: depth,
-      }),
-      signal: AbortSignal.timeout(10000), // 10 s per call — don't let one hung request stall the batch
-    });
+/** Pause before asking the engines a second time when none of them answers. */
+const ENGINE_RETRY_PAUSE_MS = Number(process.env.ENGINE_RETRY_PAUSE_MS ?? 1500);
+/** Per call -- don't let one hung request stall the batch. */
+const ENGINE_TIMEOUT_MS = 10_000;
 
-    if (!response.ok) {
-      console.log('[CHESS-API] Response not OK:', response.status, response.statusText);
-      return null;
-    }
-
-    const data = await response.json();
-
-    // chess-api.com returns eval in pawn units from white's perspective.
-    // Accept both `eval` (documented) and `score` (seen in some responses).
-    const rawEval = data.eval ?? data.score;
-    if (rawEval !== undefined) {
-      const cpScore = rawEval * 100;
-      const bestMove = data.move || '';
-
-      // Normalize PV to array
-      let pv: string[] = [];
-      const pvRaw = data.continuationArr;
-      if (pvRaw) {
-        if (typeof pvRaw === 'string') {
-          pv = pvRaw.split(' ').filter(m => m.length > 0);
-        } else if (Array.isArray(pvRaw)) {
-          pv = pvRaw;
-        }
-      }
-
-      console.log(`[CHESS-API] Got eval=${cpScore}, move=${bestMove}, PV:`, pv);
-      return { score: cpScore, bestMove, pv };
-    }
-
-    // Log unexpected shapes so we can diagnose API changes or rate-limit responses
-    console.warn('[CHESS-API] Unexpected response shape:', JSON.stringify(data).slice(0, 200));
-    return null;
-  } catch (error) {
-    console.error('[CHESS-API] API error:', error);
-    return null;
-  }
+interface MoveEval {
+  /** Centipawns, from White's point of view */
+  score: number;
+  bestMove: string;
+  pv: string[];
+  /** Which engine answered; none for a position the game ended in */
+  engine?: EngineName;
 }
 
-/** Pause before asking chess-api.com a second time when it fails to answer. */
-const ENGINE_RETRY_PAUSE_MS = Number(process.env.ENGINE_RETRY_PAUSE_MS ?? 1500);
-
 /**
- * One evaluation, asked again once after a pause if chess-api.com fails to answer
- * (an error status, a timeout, an unexpected reply). It refuses at times -- most
- * likely rate limiting after many calls in a row -- and a second try often works.
+ * One evaluation: from chess-api.com, or from stockfish.online when chess-api.com
+ * fails to answer (see fetchEngineEval) -- asked again once after a pause if neither
+ * does. They refuse at times, most likely rate limiting after many calls in a row,
+ * and a second try often works. `engine` asks that one engine only.
  *
  * A position the game has ended in is worked out here instead (terminalEval):
  * chess-api.com answers checkmate or stalemate with an error, which left the last
  * move of every game ending in mate unanalysed, and now would stop the analysis there.
  */
-async function getChessApiEvalWithRetry(fen: string, depth: number) {
+async function evaluatePosition(fen: string, depth: number, engine?: EngineName): Promise<MoveEval | null> {
   const finished = terminalEval(fen);
-  if (finished) return { score: finished.pawns * 100, bestMove: '', pv: [] as string[] };
-  const first = await getChessApiEval(fen, depth);
-  if (first) return first;
-  await new Promise(resolve => setTimeout(resolve, ENGINE_RETRY_PAUSE_MS));
-  return getChessApiEval(fen, depth);
+  if (finished) return { score: finished.pawns * 100, bestMove: '', pv: [] };
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1) await new Promise(resolve => setTimeout(resolve, ENGINE_RETRY_PAUSE_MS));
+    try {
+      const result = await fetchEngineEval(fen, depth, { timeoutMs: ENGINE_TIMEOUT_MS, engine });
+      return { score: result.pawns * 100, bestMove: result.bestMove, pv: result.pv, engine: result.engine };
+    } catch (error) {
+      console.warn(`[ENGINE] Try ${attempt} failed:`, error instanceof Error ? error.message : error);
+    }
+  }
+  return null;
 }
+
+/** The engines an analysis was made with, as stored: "chess-api.com", or "chess-api.com + stockfish.online". */
+const ENGINE_ORDER: EngineName[] = ['chess-api.com', 'stockfish.online'];
+const engineLabel = (used: Set<string>) => ENGINE_ORDER.filter(e => used.has(e)).join(' + ');
 
 async function analyzeGameChessApiBatched(
   pgn: string,
@@ -142,6 +112,8 @@ async function analyzeGameChessApiBatched(
   nextMoveIndex: number;
   /** The engine couldn't be reached for the move at nextMoveIndex: the batch stopped there, to be resumed */
   stalled: boolean;
+  /** The engines the moves so far were evaluated with, earlier batches' included (see engineLabel) */
+  engine: string;
 }> {
   console.log(`[CHESS-API] Batch analysis starting at move ${startMoveIndex}, batch size ${batchSize}`);
   const chess = new Chess();
@@ -166,6 +138,10 @@ async function analyzeGameChessApiBatched(
   const analyses: any[] = [...existingMoves];
   const whiteLosses: number[] = [];
   const blackLosses: number[] = [];
+  // Which engines evaluated the moves, those of earlier batches included
+  const enginesUsed = new Set<string>(
+    startMoveIndex > 0 && typeof existingAnalysis?.engine === 'string' ? existingAnalysis.engine.split(' + ') : [],
+  );
   
   // Re-calculate losses from existing moves (graded as getAnalysis read them)
   for (const move of existingMoves) {
@@ -186,7 +162,25 @@ async function analyzeGameChessApiBatched(
   // it instead, and the caller resumes from there.
   let stoppedAt: number | null = null;
 
+  // No move is begun once this much of the batch's time has gone; the next batch
+  // carries on from there. A slow engine, or the spacing stockfish.online needs,
+  // must not take a batch past the 60 s Vercel allows. (Read here, for tests.)
+  const budgetMs = Number(process.env.ANALYSIS_BATCH_BUDGET_MS ?? 35_000);
+  const batchStarted = Date.now();
+  let endAt = endMoveIndex;
+
+  // The position after a move is the one the next move is played from, so its
+  // evaluation serves for both: half the engine calls, and no two evaluations of
+  // the same position to disagree
+  let carried: MoveEval | null = null;
+
   for (let i = startMoveIndex; i < endMoveIndex; i++) {
+    if (i > startMoveIndex && Date.now() - batchStarted > budgetMs) {
+      console.log(`[CHESS-API] Out of time after ${i - startMoveIndex} moves: the next batch carries on from move ${i + 1}`);
+      endAt = i;
+      break;
+    }
+
     const move = history[i];
     const isWhiteMove = chess.turn() === 'w';
 
@@ -204,7 +198,7 @@ async function analyzeGameChessApiBatched(
       const isBook = await isBookMove(fenBefore, uciPlayed);
       // ── End book detection ────────────────────────────────────────────────
 
-      const evalBefore = await getChessApiEvalWithRetry(fenBefore, depth);
+      let evalBefore = carried ?? await evaluatePosition(fenBefore, depth);
 
       if (!evalBefore) {
         console.log(`[CHESS-API] Stopping at move ${i + 1}: no evaluation of the position before it`);
@@ -214,7 +208,7 @@ async function analyzeGameChessApiBatched(
 
       chess.move(move.san);
       const fenAfter = chess.fen();
-      const evalAfter = await getChessApiEvalWithRetry(fenAfter, depth);
+      const evalAfter = await evaluatePosition(fenAfter, depth);
 
       if (!evalAfter) {
         console.log(`[CHESS-API] Stopping at move ${i + 1}: no evaluation of the position after it`);
@@ -222,7 +216,20 @@ async function analyzeGameChessApiBatched(
         break;
       }
 
-      // chess-api.com always returns eval from white's perspective.
+      // chess-api.com failed between the two, so the other engine answered for the
+      // position after: measure the move with that one too, as two engines (searching
+      // to different depths) can disagree by more than the move lost
+      if (evalBefore.engine && evalAfter.engine && evalBefore.engine !== evalAfter.engine) {
+        evalBefore = await evaluatePosition(fenBefore, depth, evalAfter.engine);
+        if (!evalBefore) {
+          console.log(`[CHESS-API] Stopping at move ${i + 1}: no evaluation of the position before it from ${evalAfter.engine}`);
+          stoppedAt = i;
+          break;
+        }
+      }
+      for (const { engine } of [evalBefore, evalAfter]) if (engine) enginesUsed.add(engine);
+
+      // Both engines return evaluations from white's perspective.
       // evalBefore and evalAfter are both in centipawns, white-POV.
       const evalBeforeWhite = evalBefore.score;
       const evalAfterWhite = evalAfter.score;
@@ -237,7 +244,7 @@ async function analyzeGameChessApiBatched(
       cpLoss = Math.max(0, Math.round(cpLoss));
 
       // If the player played the engine's top move, CP loss is exactly zero by
-      // definition — the two independent API calls inevitably disagree slightly
+      // definition — the searches before and after it inevitably disagree slightly
       // on the eval, so don't penalise the best move with noise.
       const uciMovePlayed = move.from + move.to + (move.promotion || '');
       if (evalBefore.bestMove && uciMovePlayed === evalBefore.bestMove) {
@@ -282,6 +289,7 @@ async function analyzeGameChessApiBatched(
       });
 
       console.log(`[CHESS-API] Move ${i + 1}/${history.length} analyzed: ${move.san}, CP loss = ${cpLoss}${isBook ? ' (book)' : ''}`);
+      carried = evalAfter;
     } catch (error) {
       console.error(`[CHESS-API] Error analyzing move ${i + 1}, stopping there:`, error);
       stoppedAt = i;
@@ -292,8 +300,8 @@ async function analyzeGameChessApiBatched(
   const whiteAccuracy = calculateAccuracy(whiteLosses);
   const blackAccuracy = calculateAccuracy(blackLosses);
   const stalled = stoppedAt !== null;
-  const nextMoveIndex = stoppedAt ?? endMoveIndex;
-  const completed = !stalled && endMoveIndex >= history.length;
+  const nextMoveIndex = stoppedAt ?? endAt;
+  const completed = !stalled && endAt >= history.length;
 
   console.log(`[CHESS-API] Batch ${stalled ? 'stopped' : 'complete'}. Analyzed ${nextMoveIndex}/${history.length}. White: ${whiteAccuracy}%, Black: ${blackAccuracy}%`);
 
@@ -304,6 +312,7 @@ async function analyzeGameChessApiBatched(
     completed,
     nextMoveIndex,
     stalled,
+    engine: engineLabel(enginesUsed) || 'chess-api.com',
   };
 }
 
@@ -494,8 +503,10 @@ export async function POST(request: NextRequest) {
     
     if (IS_VERCEL) {
       // Batch size inversely proportional to depth to fit within the 60 s limit.
-      // Each move needs 2 chess-api.com calls at ~1-2 s each → ~3-4 s/move worst-case.
-      // Targeting ≤45 s/batch to leave headroom for Redis saves and cold starts.
+      // Each move needs one engine call (the position after it; the one before is
+      // the previous move's), plus one to start the batch: ~1-2 s each from
+      // chess-api.com, ~2.5 s from stockfish.online (spaced to its rate limit). A batch
+      // that runs short of time ends early anyway, and the next one carries on.
       // depth ≤10 → 12 moves/batch, depth ≤14 → 8, depth ≤18 → 5, higher → 3
       const batchSize = depth <= 10 ? 12 : depth <= 14 ? 8 : depth <= 18 ? 5 : 3;
       const batchResult = await analyzeGameChessApiBatched(game.pgn, depth, userColor, gameId, startMoveIndex, batchSize);
@@ -522,13 +533,13 @@ export async function POST(request: NextRequest) {
         blackAccuracy: batchResult.blackAccuracy,
         moves: batchResult.moves,
         depth: depth,
-        engine: 'chess-api.com',
+        engine: batchResult.engine,
       };
-      
+
       if (batchResult.completed) {
         game.analysisCompleted = true;
         game.analysisDepth = depth;
-        game.analysisEngine = 'chess-api.com';
+        game.analysisEngine = batchResult.engine;
         console.log(`[ANALYZE] Vercel analysis complete - set flags for game ${gameId}`);
         clearInMemProgress(gameId);
         await Promise.all([
